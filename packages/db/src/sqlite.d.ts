@@ -12,3 +12,11 @@ declare module 'node:sqlite' {
     run(...params: any[]): { changes: number | bigint; lastInsertRowid: number | bigint };
   }
 }
+
+declare module 'node:fs' {
+  export * from 'fs';
+}
+
+declare module 'node:path' {
+  export * from 'path';
+}
