@@ -11,7 +11,9 @@
   },
   "dependencies": {
     "@inklly/shared": "1.0.0",
-    "@types/node": "^20.11.0"
+    "@types/node": "^20.11.0",
+    "pg": "^8.23.1",
+    "@types/pg": "^8.23.1"
   },
   "devDependencies": {
     "typescript": "^5.4.5"

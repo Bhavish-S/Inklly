@@ -29,7 +29,7 @@ export function createApp(db?: DatabaseService): express.Express {
   }
   app.use('/downloads', express.static(downloadsDir));
 
-  const database = db || DatabaseService.getInstance(process.env.DB_PATH || path.join(process.cwd(), 'data', 'inklly.db'));
+  const database = db || DatabaseService.getInstance(process.env.DATABASE_URL || process.env.DB_PATH || path.join(process.cwd(), 'data', 'inklly.db'));
   seedDatabase(database);
 
   app.get(['/health', '/api/v1/health'], (_req, res) => {
