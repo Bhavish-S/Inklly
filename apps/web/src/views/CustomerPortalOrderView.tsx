@@ -722,10 +722,13 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               jobId: `job-${finalToken}`,
-              shopId: shop.id || 'shop-campus-1',
+              shopId: shop.id || '',
               printerId: 'Canon LBP2900',
               fileName: documents[0]?.fileName || 'Customer_Document.pdf',
-              documentUrl: documents[0]?.fileUrl || documents[0]?.previewUrl || '',
+              storageKey: documents[0]?.storageKey || '',
+              documentUrl: documents[0]?.storageKey
+                ? `http://localhost:4000/${documents[0].storageKey}`
+                : (documents[0]?.fileUrl || documents[0]?.previewUrl || ''),
               options: {
                 copies: 1,
                 pageRange: '1',

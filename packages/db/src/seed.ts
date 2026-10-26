@@ -7,7 +7,7 @@ import { UserRepository } from './repositories/user-repository';
 import { AgentRepository } from './repositories/agent-repository';
 import { ROLE_PRESETS } from '@inklly/shared';
 
-export function seedDatabase(db: DatabaseService): void {
+export function seedDatabase(db: DatabaseService, forceDemoSeed: boolean = false): void {
   const shopRepo = new ShopRepository(db);
   const pricingRepo = new PricingRepository(db);
   const printerRepo = new PrinterRepository(db);
@@ -17,7 +17,51 @@ export function seedDatabase(db: DatabaseService): void {
 
   const now = new Date().toISOString();
 
-  // 1. Organization & Shop
+  // 1. Platform Super Admin & Developer Users (Always seeded for system administration)
+  if (!userRepo.getUserByEmail('admin@inklly.com')) {
+    userRepo.createUser(
+      {
+        id: 'user-admin-1',
+        email: 'admin@inklly.com',
+        phone: '+91 99999 00000',
+        fullName: 'Inklly Super Admin',
+        role: 'PLATFORM_OWNER',
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      },
+      '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9' // sha256 of admin123
+    );
+  }
+
+  if (!userRepo.getUserByEmail('dev@inklly.com')) {
+    userRepo.createUser(
+      {
+        id: 'user-dev-1',
+        email: 'dev@inklly.com',
+        phone: '+91 99999 11111',
+        fullName: 'Inklly Developer API',
+        role: 'DEVELOPER',
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      },
+      '87274af01876341455b32d805946f272871bb42effa6604dccf28bb027afa82b' // sha256 of dev123
+    );
+  }
+
+  // 2. Only seed demo merchants if explicitly requested or in test runner
+  const shouldSeedDemos =
+    forceDemoSeed ||
+    process.env.NODE_ENV === 'test' ||
+    process.env.npm_lifecycle_event === 'test' ||
+    process.env.SEED_DEMOS === 'true';
+
+  if (!shouldSeedDemos) {
+    return;
+  }
+
+  // 3. Organization & Shop (for automated test suite)
   const orgId = 'org-campus-network';
   const shopId = 'shop-campus-1';
 

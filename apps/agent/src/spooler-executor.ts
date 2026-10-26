@@ -4,6 +4,7 @@ import * as os from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { PrintCommandTicket, SpoolerResult } from '@inklly/shared';
+import { PrinterDiscoveryService, DiscoveredPrinter } from './printer-discovery';
 
 const execFileAsync = promisify(execFile);
 
@@ -102,23 +103,52 @@ export class SpoolerExecutor {
       return null;
     }
 
-    // Determine target printer name (prefer Canon LBP2900 if detected, or ticket.printerId)
+    // Determine target printer name dynamically (supports Canon, HP, Epson, Brother, PDF, etc.)
     let targetPrinter = printerOverride || ticket.printerId;
-    if (!targetPrinter || targetPrinter === 'printer-hp-laserjet' || targetPrinter.startsWith('printer-')) {
-      targetPrinter = 'Canon LBP2900';
+    try {
+      const detected: DiscoveredPrinter[] = await PrinterDiscoveryService.discoverPrinters();
+      const match = detected.find((p: DiscoveredPrinter) => p.name.toLowerCase() === (targetPrinter || '').toLowerCase());
+      if (match) {
+        targetPrinter = match.name;
+      } else {
+        const canon = detected.find((p: DiscoveredPrinter) => /canon/i.test(p.name));
+        const physical = detected.find((p: DiscoveredPrinter) => !/pdf|xps|onenote|fax/i.test(p.name));
+        const defaultP = detected.find((p: DiscoveredPrinter) => p.isDefault);
+        targetPrinter = canon?.name || physical?.name || defaultP?.name || (detected[0]?.name || 'Canon LBP2900');
+      }
+    } catch {
+      if (!targetPrinter || targetPrinter.startsWith('printer-')) {
+        targetPrinter = 'Canon LBP2900';
+      }
     }
 
     // Prepare printable PDF document
     let filePath = ticket.documentUrl;
     let isTempFile = false;
 
+    // Check if authentic uploaded document exists on disk via storageKey or uploads folder
+    const customKey = (ticket as any).storageKey as string | undefined;
+    const candidatePaths = [
+      customKey ? path.join(process.cwd(), customKey) : '',
+      customKey ? path.join('D:', 'Inkly', 'Source Code', 'apps', 'server', customKey) : '',
+      ticket.fileName && ticket.shopId ? path.join('D:', 'Inkly', 'Source Code', 'apps', 'server', 'uploads', ticket.shopId, ticket.fileName) : '',
+    ].filter(Boolean);
+
+    for (const cp of candidatePaths) {
+      if (fs.existsSync(cp)) {
+        filePath = cp;
+        console.log(`[Inklly Spooler] Located authentic uploaded document on disk: ${filePath}`);
+        break;
+      }
+    }
+
     // Download remote document if URL provided
-    if (filePath && (filePath.startsWith('http://') || filePath.startsWith('https://'))) {
+    if ((!filePath || !fs.existsSync(filePath)) && ticket.documentUrl && (ticket.documentUrl.startsWith('http://') || ticket.documentUrl.startsWith('https://'))) {
       try {
         const tempDir = path.join(process.cwd(), 'temp');
         if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
         const localPath = path.join(tempDir, `${ticket.jobId}-${ticket.fileName || 'job.pdf'}`);
-        const res = await fetch(filePath);
+        const res = await fetch(ticket.documentUrl);
         if (res.ok) {
           const buffer = Buffer.from(await res.arrayBuffer());
           fs.writeFileSync(localPath, buffer);

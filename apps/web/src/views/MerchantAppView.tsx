@@ -60,125 +60,7 @@ export interface DemoMerchant {
   features: string[];
 }
 
-export const DEMO_MERCHANTS: DemoMerchant[] = [
-  {
-    id: 'merchant-starter-99',
-    shopCode: 'quickprint99',
-    name: 'QuickPrint Corner',
-    tagline: 'Single Counter Xerox & Fast Document Print',
-    ownerName: 'Anil Kumar',
-    phone: '+91 98111 22233',
-    email: 'counter@quickprint99.in',
-    planTier: 'starter',
-    planBadge: 'STARTER · ₹99/mo',
-    planPriceText: '₹99 / month',
-    billingCycle: 'monthly',
-    maxPrinters: 1,
-    monthlyOrderLimit: 500,
-    whatsappBotEnabled: false,
-    tokenDisplayEnabled: false,
-    customBrandingEnabled: false,
-    shiftReconciliationEnabled: false,
-    multiBranchEnabled: false,
-    apiAccessEnabled: false,
-    accentColor: '#4F46E5',
-    features: ['1 Connected Printer (Canon LBP2900)', 'Up to 500 orders/mo', 'Self-service QR Portal', 'Standard Cash on Counter'],
-  },
-  {
-    id: 'merchant-growth-monthly',
-    shopCode: 'campus1',
-    name: 'Campus Print Express',
-    tagline: 'High Speed Quality Printing & Photocopying',
-    ownerName: 'Rahul Sharma',
-    phone: '+91 98765 43210',
-    email: 'counter@campusprint.in',
-    planTier: 'growth',
-    planBadge: 'GROWTH · ₹199/mo',
-    planPriceText: '₹199 / month (Most Popular)',
-    billingCycle: 'monthly',
-    maxPrinters: 3,
-    monthlyOrderLimit: 3000,
-    whatsappBotEnabled: true,
-    tokenDisplayEnabled: true,
-    customBrandingEnabled: false,
-    shiftReconciliationEnabled: false,
-    multiBranchEnabled: false,
-    apiAccessEnabled: false,
-    accentColor: '#4D64E6',
-    features: ['Up to 3 Printers Connected', 'Up to 3,000 orders/mo', 'Dedicated WhatsApp Bot Intake', 'Digital Token Display Screen', 'Hardware-safe Spooler Guard'],
-  },
-  {
-    id: 'merchant-growth-yearly',
-    shopCode: 'hostelprint',
-    name: 'Hostel FastPrint',
-    tagline: '24/7 Student Self-Service Document Hub',
-    ownerName: 'Vikram Joshi',
-    phone: '+91 98222 33344',
-    email: 'print@hostelfastprint.in',
-    planTier: 'growth',
-    planBadge: 'GROWTH YEARLY · ₹159/mo',
-    planPriceText: '₹159 / month (Billed Yearly - 20% Off)',
-    billingCycle: 'yearly',
-    maxPrinters: 3,
-    monthlyOrderLimit: 3000,
-    whatsappBotEnabled: true,
-    tokenDisplayEnabled: true,
-    customBrandingEnabled: false,
-    shiftReconciliationEnabled: false,
-    multiBranchEnabled: false,
-    apiAccessEnabled: false,
-    accentColor: '#059669',
-    features: ['Annual 20% Plan Savings', '3 Printers Connected', 'WhatsApp Bot & Token Display', 'Priority Queue Processing'],
-  },
-  {
-    id: 'merchant-pro-monthly',
-    shopCode: 'metro-xerox',
-    name: 'Metro Xerox Hub',
-    tagline: 'Multi-Counter High-Capacity Xerox, Plotting & Binding Center',
-    ownerName: 'Sanjay Deshmukh',
-    phone: '+91 98333 44455',
-    email: 'orders@metroxeroxhub.in',
-    planTier: 'pro',
-    planBadge: 'PRO · ₹499/mo',
-    planPriceText: '₹499 / month',
-    billingCycle: 'monthly',
-    maxPrinters: 8,
-    monthlyOrderLimit: 'Unlimited',
-    whatsappBotEnabled: true,
-    tokenDisplayEnabled: true,
-    customBrandingEnabled: true,
-    shiftReconciliationEnabled: true,
-    multiBranchEnabled: false,
-    apiAccessEnabled: false,
-    accentColor: '#7C3AED',
-    features: ['Up to 8 Printers with Smart Load Balancing', 'Unlimited Monthly Orders', 'Shift Cash Reconciliation & Z-Report', 'Custom Store Branding & Logo Upload'],
-  },
-  {
-    id: 'merchant-scale-enterprise',
-    shopCode: 'apex-univ',
-    name: 'Apex University Print Network',
-    tagline: 'Campus-Wide Unified Printing & Cloud Spooler Fleet',
-    ownerName: 'Dr. R. K. Verma',
-    phone: '+91 98444 55566',
-    email: 'admin@apexuniversity.ac.in',
-    planTier: 'scale',
-    planBadge: 'SCALE · ₹899/mo',
-    planPriceText: '₹899 / month (Enterprise Franchise)',
-    billingCycle: 'yearly',
-    maxPrinters: 999,
-    monthlyOrderLimit: 'Unlimited',
-    whatsappBotEnabled: true,
-    tokenDisplayEnabled: true,
-    customBrandingEnabled: true,
-    shiftReconciliationEnabled: true,
-    multiBranchEnabled: true,
-    apiAccessEnabled: true,
-    branches: ['Central Library Branch', 'Engineering Gate 2', 'South Campus Hostel 4'],
-    customDomain: 'print.apexuniversity.ac.in',
-    accentColor: '#0284C7',
-    features: ['Unlimited Printers & Counters', 'Multi-Branch Franchise Switcher', 'White-Label Custom Domain (print.apexuniv.in)', 'Developer API & Webhook Management'],
-  },
-];
+export const DEMO_MERCHANTS: DemoMerchant[] = [];
 
 export interface MerchantAppViewProps {
   onNavigate?: (path: string) => void;
@@ -248,24 +130,47 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     name: liveShop.name,
     tagline: liveShop.tagline || 'High Speed Quality Printing & Photocopying',
     ownerName: liveUser?.fullName || 'Shop Owner',
-    phone: liveShop.phone || '+91 98765 43210',
+    phone: liveShop.phone || '',
     email: liveShop.email || liveUser?.email || 'shop@inklly.com',
-    planTier: 'growth',
-    planBadge: 'PRO SHOP · ACTIVE',
-    planPriceText: '₹199 / month',
+    planTier: liveShop.planTier || 'starter',
+    planBadge: `${(liveShop.planTier || 'STARTER').toUpperCase()} · ACTIVE`,
+    planPriceText: liveShop.planTier === 'starter' ? '₹99 / month' : '₹199 / month',
     billingCycle: 'monthly',
-    maxPrinters: 3,
-    monthlyOrderLimit: 3000,
-    whatsappBotEnabled: true,
+    maxPrinters: liveShop.planTier === 'starter' ? 1 : 3,
+    monthlyOrderLimit: 1000,
+    whatsappBotEnabled: false,
     tokenDisplayEnabled: true,
     customBrandingEnabled: false,
     shiftReconciliationEnabled: false,
     multiBranchEnabled: false,
-    branches: ['Main Counter', 'Xerox Desk'],
+    branches: ['Main Counter'],
     apiAccessEnabled: true,
     accentColor: '#4D64E6',
-    features: ['1 Connected Printer (Canon LBP2900)', 'Self-service QR Portal', 'Standard Cash on Counter'],
-  } : (DEMO_MERCHANTS.find((m) => m.id === selectedMerchantId) || DEMO_MERCHANTS[1]);
+    features: ['1 Connected Printer', 'Self-service QR Portal', 'Standard Cash on Counter'],
+  } : {
+    id: 'my-shop',
+    shopCode: 'my-shop',
+    name: 'My Print Shop',
+    tagline: 'High Speed Quality Printing & Photocopying',
+    ownerName: 'Shop Owner',
+    phone: '',
+    email: '',
+    planTier: 'starter',
+    planBadge: 'STARTER · ₹99/mo',
+    planPriceText: '₹99 / month',
+    billingCycle: 'monthly',
+    maxPrinters: 1,
+    monthlyOrderLimit: 1000,
+    whatsappBotEnabled: false,
+    tokenDisplayEnabled: true,
+    customBrandingEnabled: false,
+    shiftReconciliationEnabled: false,
+    multiBranchEnabled: false,
+    branches: ['Main Counter'],
+    apiAccessEnabled: false,
+    accentColor: '#4D64E6',
+    features: ['1 Connected Printer', 'Self-service QR Portal', 'Standard Cash on Counter'],
+  };
 
   // Dynamic Real Scannable QR State
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
@@ -363,69 +268,8 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   };
 
   const handleSwitchMerchant = (merchantId: string) => {
-    const target = DEMO_MERCHANTS.find((m) => m.id === merchantId);
-    if (!target) return;
     setSelectedMerchantId(merchantId);
-    setShopName(target.name);
-    setShopTagline(target.tagline);
-    setCurrentPlan(target.planBadge);
-    setSelectedPlanTier(target.planTier);
     setMerchantMenuOpen(false);
-
-    // Adjust printer limits according to plan
-    if (target.planTier === 'starter') {
-      setDetectedPrinters([
-        {
-          name: 'Canon LBP2900',
-          driver: 'Canon LBP2900 Advanced Printing Software',
-          port: 'USB001',
-          status: 'Ready',
-          isDefault: true,
-          isPhysical: true,
-          supportsColor: false,
-          supportsDuplex: false,
-          tray: 'Auto-Select (Tray 1: A4 Standard)',
-        },
-      ]);
-    } else {
-      setDetectedPrinters([
-        {
-          name: 'Canon LBP2900',
-          driver: 'Canon LBP2900 Advanced Printing Software',
-          port: 'USB001',
-          status: 'Ready',
-          isDefault: true,
-          isPhysical: true,
-          supportsColor: false,
-          supportsDuplex: false,
-          tray: 'Auto-Select (Tray 1: A4 Standard)',
-        },
-        {
-          name: 'Microsoft Print to PDF',
-          driver: 'Microsoft Print To PDF (Color/Duplex Spooler)',
-          port: 'PORTPROMPT:',
-          status: 'Ready',
-          isDefault: false,
-          isPhysical: false,
-          supportsColor: true,
-          supportsDuplex: true,
-          tray: 'Auto-Select (Virtual Spooler)',
-        },
-        {
-          name: 'Solid Edge PS Printer 3.0',
-          driver: 'Siemens SE PDF Driver (PostScript)',
-          port: 'SE_PORT:',
-          status: 'Ready',
-          isDefault: false,
-          isPhysical: false,
-          supportsColor: true,
-          supportsDuplex: true,
-          tray: 'Auto-Select',
-        },
-      ]);
-    }
-
-    setGlobalToast(`Switched active merchant to ${target.name} (${target.planBadge}). Extra features unlocked!`);
   };
 
   const [setupTab, setSetupTab] = useState<
