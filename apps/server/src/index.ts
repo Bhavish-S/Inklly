@@ -1,0 +1,67 @@
+import express from 'express';
+import cors from 'cors';
+import * as path from 'node:path';
+import { DatabaseService, seedDatabase } from '@inklly/db';
+import { createPortalRoutes } from './routes/portal-routes';
+import { createAuthRoutes } from './routes/auth-routes';
+import { createMerchantRoutes } from './routes/merchant-routes';
+import { createPaymentRoutes } from './routes/payment-routes';
+import { createAgentRoutes } from './routes/agent-routes';
+import { createAdminRoutes } from './routes/admin-routes';
+import { createDeveloperRoutes } from './routes/developer-routes';
+
+export function createApp(db?: DatabaseService): express.Express {
+  const app = express();
+  app.use(cors());
+  app.use(express.json({ limit: '10mb' }));
+
+  const database = db || DatabaseService.getInstance(process.env.DB_PATH || path.join(process.cwd(), 'data', 'inklly.db'));
+  seedDatabase(database);
+
+  app.get(['/health', '/api/v1/health'], (_req, res) => {
+    res.json({
+      status: 'HEALTHY',
+      service: 'Inklly Backend Server',
+      timestamp: new Date().toISOString(),
+      version: '1.0.0',
+    });
+  });
+
+  // Website Enquiry Endpoint
+  app.post('/api/v1/enquiry', (req, res) => {
+    console.log('[Inklly Server] New Website Enquiry received:', req.body);
+    res.status(201).json({
+      success: true,
+      message: 'Enquiry received successfully. Our team will contact you shortly.',
+      data: req.body,
+    });
+  });
+
+  // Mount API routers
+  app.use('/api/v1/portal', createPortalRoutes(database));
+  app.use('/api/v1/auth', createAuthRoutes(database));
+  app.use('/api/v1/merchant', createMerchantRoutes(database));
+  app.use('/api/v1/payments', createPaymentRoutes(database));
+  app.use('/api/v1/agent', createAgentRoutes(database));
+  app.use('/api/v1/platform', createAdminRoutes(database));
+  app.use('/api/v1/developer', createDeveloperRoutes(database));
+
+  // Global Error Handler
+  app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    console.error('[Inklly Server Error]:', err);
+    res.status(500).json({ error: 'Internal Server Error', message: err.message });
+  });
+
+  return app;
+}
+
+if (require.main === module) {
+  const PORT = process.env.PORT || 4000;
+  const app = createApp();
+  app.listen(PORT, () => {
+    console.log(`🚀 [Inklly Server] listening on http://localhost:${PORT}`);
+    console.log(`📄 [QR Portal] http://localhost:${PORT}/api/v1/portal/shop/campus1`);
+    console.log(`⚙️  [Merchant API] http://localhost:${PORT}/api/v1/merchant/dashboard`);
+    console.log(`🔌 [Agent Poll] http://localhost:${PORT}/api/v1/agent/poll-commands?shopId=shop-campus-1`);
+  });
+}

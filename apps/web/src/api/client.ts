@@ -1,0 +1,265 @@
+const API_BASE = 'http://localhost:4000/api/v1';
+
+function getHeaders(customHeaders: Record<string, string> = {}): Record<string, string> {
+  const token = localStorage.getItem('inklly_token');
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...customHeaders,
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+export const api = {
+  // Public Customer QR Portal
+  async getShop(shopCode: string) {
+    const res = await fetch(`${API_BASE}/portal/shop/${shopCode}`);
+    if (!res.ok) throw new Error('Shop offline or not found');
+    return res.json();
+  },
+
+  async getQuote(quoteRequest: any) {
+    const res = await fetch(`${API_BASE}/portal/quote`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(quoteRequest),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Failed to calculate quote');
+    }
+    return res.json();
+  },
+
+  async submitOrder(orderPayload: any) {
+    const res = await fetch(`${API_BASE}/portal/orders`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(orderPayload),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Failed to submit order');
+    }
+    return res.json();
+  },
+
+  async getOrderStatus(orderId: string) {
+    const res = await fetch(`${API_BASE}/portal/orders/${orderId}`);
+    if (!res.ok) throw new Error('Order not found');
+    return res.json();
+  },
+
+  // Auth
+  async login(email: string, password: string) {
+    const res = await fetch(`${API_BASE}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Login failed');
+    }
+    return res.json();
+  },
+
+  async getMe() {
+    const res = await fetch(`${API_BASE}/auth/me`, {
+      headers: getHeaders(),
+    });
+    if (!res.ok) throw new Error('Unauthenticated');
+    return res.json();
+  },
+
+  // Merchant Operating Workspace
+  async getDashboard() {
+    const res = await fetch(`${API_BASE}/merchant/dashboard`, {
+      headers: getHeaders(),
+    });
+    if (!res.ok) throw new Error('Failed to load merchant dashboard');
+    return res.json();
+  },
+
+  async getOrders(statusFilter?: string) {
+    const url = statusFilter && statusFilter !== 'ALL'
+      ? `${API_BASE}/merchant/orders?status=${statusFilter}`
+      : `${API_BASE}/merchant/orders`;
+    const res = await fetch(url, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Failed to load orders');
+    return res.json();
+  },
+
+  async updateOrderStatus(orderId: string, status: string) {
+    const res = await fetch(`${API_BASE}/merchant/orders/${orderId}/status`, {
+      method: 'PATCH',
+      headers: getHeaders(),
+      body: JSON.stringify({ status }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Failed to transition order status');
+    }
+    return res.json();
+  },
+
+  async dispatchPrint(orderId: string) {
+    const res = await fetch(`${API_BASE}/merchant/orders/${orderId}/print`, {
+      method: 'POST',
+      headers: getHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Print dispatch failed');
+    }
+    return res.json();
+  },
+
+  async collectCash(orderId: string) {
+    const res = await fetch(`${API_BASE}/payments/orders/${orderId}/collect-cash`, {
+      method: 'POST',
+      headers: getHeaders(),
+    });
+    if (!res.ok) throw new Error('Failed to record cash');
+    return res.json();
+  },
+
+  async getRates() {
+    const res = await fetch(`${API_BASE}/merchant/rates`, { headers: getHeaders() });
+    return res.json();
+  },
+
+  async updateRate(rateData: any) {
+    const res = await fetch(`${API_BASE}/merchant/rates`, {
+      method: 'PUT',
+      headers: getHeaders(),
+      body: JSON.stringify(rateData),
+    });
+    return res.json();
+  },
+
+  async getPrinters() {
+    const res = await fetch(`${API_BASE}/merchant/printers`, { headers: getHeaders() });
+    return res.json();
+  },
+
+  async addPrinter(printerData: any) {
+    const res = await fetch(`${API_BASE}/merchant/printers`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(printerData),
+    });
+    return res.json();
+  },
+
+  async getStaff() {
+    const res = await fetch(`${API_BASE}/merchant/staff`, { headers: getHeaders() });
+    return res.json();
+  },
+
+  async addStaff(staffData: any) {
+    const res = await fetch(`${API_BASE}/merchant/staff`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(staffData),
+    });
+    return res.json();
+  },
+
+  async getBotTemplates() {
+    const res = await fetch(`${API_BASE}/merchant/bot-templates`, { headers: getHeaders() });
+    return res.json();
+  },
+
+  async updateBotTemplate(templateData: any) {
+    const res = await fetch(`${API_BASE}/merchant/bot-templates`, {
+      method: 'PUT',
+      headers: getHeaders(),
+      body: JSON.stringify(templateData),
+    });
+    return res.json();
+  },
+
+  // Platform Owner Console
+  async getPlatformOverview() {
+    const res = await fetch(`${API_BASE}/platform/overview`, {
+      headers: getHeaders({ 'x-user-role': 'PLATFORM_OWNER' }),
+    });
+    return res.json();
+  },
+
+  async getPlatformMerchants() {
+    const res = await fetch(`${API_BASE}/platform/merchants`, {
+      headers: getHeaders({ 'x-user-role': 'PLATFORM_OWNER' }),
+    });
+    return res.json();
+  },
+
+  async updateMerchantStatus(orgId: string, updates: any) {
+    const res = await fetch(`${API_BASE}/platform/merchants/${orgId}/status`, {
+      method: 'PATCH',
+      headers: getHeaders({ 'x-user-role': 'PLATFORM_OWNER' }),
+      body: JSON.stringify(updates),
+    });
+    return res.json();
+  },
+
+  async getPlatformLedger(domain?: string) {
+    const url = domain ? `${API_BASE}/platform/ledger?domain=${domain}` : `${API_BASE}/platform/ledger`;
+    const res = await fetch(url, {
+      headers: getHeaders({ 'x-user-role': 'PLATFORM_OWNER' }),
+    });
+    return res.json();
+  },
+
+  async getAuditLogs() {
+    const res = await fetch(`${API_BASE}/platform/audit-logs`, {
+      headers: getHeaders({ 'x-user-role': 'PLATFORM_OWNER' }),
+    });
+    return res.json();
+  },
+
+  // Developer Portal
+  async getOpenApiSpec() {
+    const res = await fetch(`${API_BASE}/developer/openapi.json`);
+    return res.json();
+  },
+
+  async getApiKeys() {
+    const res = await fetch(`${API_BASE}/developer/keys`, { headers: getHeaders() });
+    return res.json();
+  },
+
+  async getWebhooks() {
+    const res = await fetch(`${API_BASE}/developer/webhooks`, { headers: getHeaders() });
+    return res.json();
+  },
+
+  async createApiKey(keyData: any) {
+    const res = await fetch(`${API_BASE}/developer/keys`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(keyData),
+    });
+    return res.json();
+  },
+
+  async revokeApiKey(keyId: string) {
+    const res = await fetch(`${API_BASE}/developer/keys/${keyId}`, {
+      method: 'DELETE',
+      headers: getHeaders(),
+    });
+    return res.json();
+  },
+
+  async testWebhook(targetUrl: string) {
+    const res = await fetch(`${API_BASE}/developer/test-webhook`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ targetUrl }),
+    });
+    return res.json();
+  },
+};

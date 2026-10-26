@@ -1,0 +1,19 @@
+{
+  "name": "@inklly/db",
+  "version": "1.0.0",
+  "description": "Multi-tenant relational database and repository layer for Inklly",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test dist/test/*.test.js",
+    "seed": "node dist/seed.js"
+  },
+  "dependencies": {
+    "@inklly/shared": "1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "@types/node": "^20.11.0"
+  }
+}
