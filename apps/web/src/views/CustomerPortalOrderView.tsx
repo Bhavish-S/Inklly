@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api/client';
+import { DocumentViewer } from '../components/DocumentViewer';
 import {
   InkllyMark,
   Logo,
@@ -19,6 +20,28 @@ import {
   CameraIcon,
   MessageSquareIcon,
 } from '../components/icons';
+
+const detectPdfPageCount = async (file: File): Promise<number> => {
+  if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+    return 1;
+  }
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const text = new TextDecoder('latin1').decode(arrayBuffer);
+    const countMatches = [...text.matchAll(/\/Type\s*\/Pages[^>]*\/Count\s+(\d+)/g)];
+    if (countMatches.length > 0) {
+      const highest = Math.max(...countMatches.map((m) => parseInt(m[1], 10)));
+      if (highest > 0) return highest;
+    }
+    const pageMatches = text.match(/\/Type\s*\/Page\b/g);
+    if (pageMatches && pageMatches.length > 0) {
+      return pageMatches.length;
+    }
+  } catch (err) {
+    console.warn('PDF page count detection error:', err);
+  }
+  return 1;
+};
 
 interface DocumentItem {
   id: string;
@@ -99,36 +122,18 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
       });
   }, [shopCode]);
 
-  // State
-  const [documents, setDocuments] = useState<DocumentItem[]>([
-    {
-      id: 'doc-1',
-      fileName: 'Project_Report_Final_Draft_v2.pdf',
-      fileSizeText: '2.4 MB',
-      pageCount: 2,
-      previewUrl: '',
-      rotation: 0,
-      filter: 'natural',
-      brightness: 100,
-      contrast: 100,
-      cropBox: { x: 5, y: 5, width: 90, height: 90 },
-      options: {
-        colorMode: 'bw',
-        duplexMode: 'simplex',
-        paperSize: 'A4',
-        orientation: 'portrait',
-        copies: 1,
-        pageRange: 'All',
-      },
-    },
-  ]);
+  // State - Initialized empty for real customer uploads
+  const [documents, setDocuments] = useState<DocumentItem[]>([]);
 
   const [activeDocIndex, setActiveDocIndex] = useState<number>(0);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [showOptionsAccordion, setShowOptionsAccordion] = useState<boolean>(true);
   const [globalCopies, setGlobalCopies] = useState<number>(1);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [reviewModalOpen, setReviewModalOpen] = useState<boolean>(false);
+  const [targetPaymentMethod, setTargetPaymentMethod] = useState<'CASH' | 'ONLINE'>('CASH');
   const [paymentModalOpen, setPaymentModalOpen] = useState<boolean>(false);
   const [upiTimer, setUpiTimer] = useState<number>(300);
   const [upiCopied, setUpiCopied] = useState<boolean>(false);
@@ -199,22 +204,35 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
 
   const activeDoc = documents[activeDocIndex] || documents[0];
 
-  // Upload handler with real server intake and progress
+  // Upload handler with real server intake, validation and error recovery
   const handleFileSelect = (files: FileList | null) => {
     if (!files || files.length === 0) return;
 
-    setUploadProgress(25);
+    setUploadError(null);
     const fileList = Array.from(files);
+
+    // Validate size limit (max 25MB per file)
+    const oversized = fileList.find((f) => f.size > 25 * 1024 * 1024);
+    if (oversized) {
+      setUploadError(`File "${oversized.name}" exceeds the 25 MB limit. Please select a smaller file.`);
+      return;
+    }
+
+    setUploadProgress(25);
 
     Promise.all(
       fileList.map((f, i) => {
-        return new Promise<DocumentItem>((resolve) => {
+        return new Promise<DocumentItem>((resolve, reject) => {
           const reader = new FileReader();
+          reader.onerror = () => {
+            reject(new Error(`Failed to read file ${f.name}`));
+          };
           reader.onload = async () => {
             const base64 = (reader.result as string) || '';
-            const estPages = Math.max(1, Math.round(f.size / (150 * 1024)));
+            const detectedPages = await detectPdfPageCount(f);
+            const localBlobUrl = URL.createObjectURL(f);
             let storageKey = '';
-            let fileUrl = URL.createObjectURL(f);
+            let serverFileUrl = '';
 
             try {
               const uploadRes = await api.uploadDocument({
@@ -222,13 +240,13 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                 fileData: base64,
                 mimeType: f.type || 'application/pdf',
                 shopId: shop.id || 'shop-campus-1',
-                pageCount: estPages,
+                pageCount: detectedPages,
               });
               if (uploadRes?.storageKey) {
                 storageKey = uploadRes.storageKey;
               }
               if (uploadRes?.fileUrl) {
-                fileUrl = uploadRes.fileUrl;
+                serverFileUrl = uploadRes.fileUrl;
               }
             } catch (err) {
               console.warn('Document upload warning, fallback to local buffer:', err);
@@ -239,10 +257,10 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
               file: f,
               fileName: f.name,
               fileSizeText: `${(f.size / (1024 * 1024)).toFixed(1)} MB`,
-              pageCount: estPages,
-              previewUrl: fileUrl,
+              pageCount: detectedPages,
+              previewUrl: localBlobUrl,
               storageKey,
-              fileUrl,
+              fileUrl: localBlobUrl,
               rotation: 0,
               filter: 'natural',
               brightness: 100,
@@ -261,14 +279,20 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
           reader.readAsDataURL(f);
         });
       })
-    ).then((newDocs) => {
-      setUploadProgress(100);
-      setTimeout(() => {
-        setDocuments((current) => [...current, ...newDocs]);
-        setActiveDocIndex(documents.length);
+    )
+      .then((newDocs) => {
+        setUploadProgress(100);
+        setTimeout(() => {
+          setDocuments((current) => [...current, ...newDocs]);
+          setActiveDocIndex(documents.length);
+          setUploadProgress(null);
+        }, 300);
+      })
+      .catch((err: any) => {
+        console.error('File read error:', err);
         setUploadProgress(null);
-      }, 300);
-    });
+        setUploadError(err.message || 'Failed to upload document. Please try again.');
+      });
   };
 
   const removeDocument = (index: number, e: React.MouseEvent) => {
@@ -495,87 +519,139 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
     canvas.width = 440;
     canvas.height = 580;
 
-    // Draw document background
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // Save state for rotation & filter
-    ctx.save();
-    ctx.translate(canvas.width / 2, canvas.height / 2);
-    ctx.rotate((editorRotation * Math.PI) / 180);
-    ctx.translate(-canvas.width / 2, -canvas.height / 2);
-
-    // Filter simulation
     let filterString = `brightness(${editorBrightness}%) contrast(${editorContrast}%)`;
     if (editorFilter === 'grayscale') filterString += ' grayscale(100%)';
     if (editorFilter === 'bw_doc') filterString += ' grayscale(100%) contrast(220%) brightness(110%)';
     if (editorFilter === 'enhanced') filterString += ' contrast(130%) brightness(105%)';
+
+    const drawCropOverlay = () => {
+      const cropX = (editorCrop.x / 100) * canvas.width;
+      const cropY = (editorCrop.y / 100) * canvas.height;
+      const cropW = (editorCrop.width / 100) * canvas.width;
+      const cropH = (editorCrop.height / 100) * canvas.height;
+
+      // Semi-transparent shroud outside crop box
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+      ctx.fillRect(0, 0, canvas.width, cropY);
+      ctx.fillRect(0, cropY + cropH, canvas.width, canvas.height - (cropY + cropH));
+      ctx.fillRect(0, cropY, cropX, cropH);
+      ctx.fillRect(cropX + cropW, cropY, canvas.width - (cropX + cropW), cropH);
+
+      // Green border around crop
+      ctx.strokeStyle = '#10B981';
+      ctx.lineWidth = 2.5;
+      ctx.strokeRect(cropX, cropY, cropW, cropH);
+
+      // 8 Draggable Corner/Edge Handles
+      const handleSize = 10;
+      ctx.fillStyle = '#10B981';
+      const handles = [
+        { x: cropX, y: cropY },
+        { x: cropX + cropW / 2, y: cropY },
+        { x: cropX + cropW, y: cropY },
+        { x: cropX + cropW, y: cropY + cropH / 2 },
+        { x: cropX + cropW, y: cropY + cropH },
+        { x: cropX + cropW / 2, y: cropY + cropH },
+        { x: cropX, y: cropY + cropH },
+        { x: cropX, y: cropY + cropH / 2 },
+      ];
+      handles.forEach((h) => {
+        ctx.fillRect(h.x - handleSize / 2, h.y - handleSize / 2, handleSize, handleSize);
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(h.x - handleSize / 2, h.y - handleSize / 2, handleSize, handleSize);
+      });
+    };
+
+    const isImageFile =
+      activeDoc?.file?.type?.startsWith('image/') ||
+      /\.(jpg|jpeg|png|webp|bmp|gif|svg)$/i.test(activeDoc?.fileName || '');
+
+    if (isImageFile && (activeDoc?.previewUrl || activeDoc?.fileUrl)) {
+      const img = new Image();
+      img.onload = () => {
+        if (!canvasRef.current) return;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#1E293B';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.save();
+        ctx.translate(canvas.width / 2, canvas.height / 2);
+        ctx.rotate((editorRotation * Math.PI) / 180);
+        ctx.translate(-canvas.width / 2, -canvas.height / 2);
+        ctx.filter = filterString;
+
+        const maxW = canvas.width - 32;
+        const maxH = canvas.height - 32;
+        const scale = Math.min(maxW / (img.naturalWidth || 1), maxH / (img.naturalHeight || 1));
+        const w = (img.naturalWidth || 300) * scale;
+        const h = (img.naturalHeight || 400) * scale;
+        const x = (canvas.width - w) / 2;
+        const y = (canvas.height - h) / 2;
+
+        ctx.drawImage(img, x, y, w, h);
+        ctx.restore();
+
+        drawCropOverlay();
+      };
+      img.src = activeDoc?.previewUrl || activeDoc?.fileUrl || '';
+      return;
+    }
+
+    // For PDF / Document files: Render clean real document representation
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.save();
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate((editorRotation * Math.PI) / 180);
+    ctx.translate(-canvas.width / 2, -canvas.height / 2);
     ctx.filter = filterString;
 
-    // Mock document content preview
-    ctx.fillStyle = '#1E293B';
-    ctx.font = 'bold 22px Inter, sans-serif';
-    ctx.fillText(activeDoc?.fileName || 'Document Preview', 30, 60);
+    // Document header badge
+    ctx.fillStyle = '#4D64E6';
+    ctx.fillRect(30, 30, 110, 26);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = 'bold 12px Inter, sans-serif';
+    ctx.fillText(`${activeDoc?.pageCount || 1} PAGE DOCUMENT`, 38, 47);
 
+    // Real document file title
+    ctx.fillStyle = '#0F172A';
+    ctx.font = 'bold 18px Inter, sans-serif';
+    const rawTitle = activeDoc?.fileName || 'Document Preview';
+    const displayTitle = rawTitle.length > 28 ? `${rawTitle.substring(0, 25)}...` : rawTitle;
+    ctx.fillText(displayTitle, 30, 85);
+
+    // Print specifications subtitle
     ctx.fillStyle = '#64748B';
-    ctx.font = '14px Inter, sans-serif';
-    ctx.fillText('Project Specifications & Executive Summary', 30, 90);
-    ctx.fillText('Authorized by Inklly Operations Engine', 30, 110);
+    ctx.font = '12px Inter, sans-serif';
+    const colorLabel = activeDoc?.options?.colorMode === 'color' ? 'Full Colour' : 'B&W Monochrome';
+    const sidesLabel = activeDoc?.options?.duplexMode === 'duplex_auto' ? 'Two-Sided (Duplex)' : 'Single-Sided';
+    ctx.fillText(`${activeDoc?.options?.paperSize || 'A4'} • ${colorLabel} • ${sidesLabel}`, 30, 108);
 
-    // Paragraph lines simulation
-    ctx.fillStyle = '#CBD5E1';
-    for (let y = 140; y < 480; y += 18) {
-      const lineWidth = y % 4 === 0 ? 280 : 380;
+    // Realistic document layout lines
+    ctx.strokeStyle = '#E2E8F0';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(30, 125);
+    ctx.lineTo(410, 125);
+    ctx.stroke();
+
+    ctx.fillStyle = '#E2E8F0';
+    for (let y = 145; y < 490; y += 18) {
+      const lineWidth = y % 54 === 0 ? 240 : (y % 36 === 0 ? 320 : 380);
       ctx.fillRect(30, y, lineWidth, 8);
     }
 
-    // A sample table preview inside canvas
-    ctx.fillStyle = '#E2E8F0';
-    ctx.fillRect(30, 490, 380, 50);
-    ctx.fillStyle = '#475569';
-    ctx.font = '12px Inter, sans-serif';
-    ctx.fillText('Section 1.1: Verification Tokens & Edge Spooler Config', 40, 520);
+    // Document footer with page indicator
+    ctx.fillStyle = '#94A3B8';
+    ctx.font = 'bold 11px Inter, sans-serif';
+    ctx.fillText(`Page 1 of ${activeDoc?.pageCount || 1}`, 30, 530);
+    ctx.fillText(`${activeDoc?.fileSizeText || ''}`, 330, 530);
 
     ctx.restore();
-
-    // Draw Crop Box Overlay
-    const cropX = (editorCrop.x / 100) * canvas.width;
-    const cropY = (editorCrop.y / 100) * canvas.height;
-    const cropW = (editorCrop.width / 100) * canvas.width;
-    const cropH = (editorCrop.height / 100) * canvas.height;
-
-    // Semi-transparent shroud outside crop box
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
-    ctx.fillRect(0, 0, canvas.width, cropY);
-    ctx.fillRect(0, cropY + cropH, canvas.width, canvas.height - (cropY + cropH));
-    ctx.fillRect(0, cropY, cropX, cropH);
-    ctx.fillRect(cropX + cropW, cropY, canvas.width - (cropX + cropW), cropH);
-
-    // Green border around crop
-    ctx.strokeStyle = '#10B981';
-    ctx.lineWidth = 2.5;
-    ctx.strokeRect(cropX, cropY, cropW, cropH);
-
-    // 8 Draggable Corner/Edge Handles
-    const handleSize = 10;
-    ctx.fillStyle = '#10B981';
-    const handles = [
-      { x: cropX, y: cropY },
-      { x: cropX + cropW / 2, y: cropY },
-      { x: cropX + cropW, y: cropY },
-      { x: cropX + cropW, y: cropY + cropH / 2 },
-      { x: cropX + cropW, y: cropY + cropH },
-      { x: cropX + cropW / 2, y: cropY + cropH },
-      { x: cropX, y: cropY + cropH },
-      { x: cropX, y: cropY + cropH / 2 },
-    ];
-    handles.forEach((h) => {
-      ctx.fillRect(h.x - handleSize / 2, h.y - handleSize / 2, handleSize, handleSize);
-      ctx.strokeStyle = '#FFFFFF';
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(h.x - handleSize / 2, h.y - handleSize / 2, handleSize, handleSize);
-    });
+    drawCropOverlay();
   }, [editorOpen, editorRotation, editorFilter, editorBrightness, editorContrast, editorCrop, activeDoc]);
 
   // Submit Order (Cash on Counter or Online UPI)
@@ -639,6 +715,25 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
           localStorage.setItem('inklly_live_orders', JSON.stringify([orderRecord, ...stored]));
           localStorage.setItem(`inklly_order_${finalOrderId}`, JSON.stringify(orderRecord));
           localStorage.setItem(`inklly_order_${finalToken}`, JSON.stringify(orderRecord));
+
+          // Automatic Silent Spooling to local Windows Agent on port 8765
+          fetch('http://127.0.0.1:8765/jobs/spool', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              jobId: `job-${finalToken}`,
+              shopId: shop.id || 'shop-campus-1',
+              printerId: 'Canon LBP2900',
+              fileName: documents[0]?.fileName || 'Customer_Document.pdf',
+              documentUrl: documents[0]?.fileUrl || documents[0]?.previewUrl || '',
+              options: {
+                copies: 1,
+                pageRange: '1',
+                color: documents[0]?.options.colorMode === 'color',
+                duplex: documents[0]?.options.duplexMode === 'duplex_auto',
+              },
+            }),
+          }).catch(() => {});
         } catch (err) {
           console.warn('LocalStorage error', err);
         }
@@ -909,7 +1004,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
           <button
             type="button"
             onClick={() => setIntakeMode('documents')}
-            className={`py-2 px-1 rounded-xl transition-all flex flex-col items-center gap-1 cursor-pointer ${
+            className={`min-h-[44px] py-2 px-1 rounded-xl transition-all flex flex-col items-center justify-center gap-1 cursor-pointer ${
               intakeMode === 'documents'
                 ? 'bg-white text-indigo-700 shadow-md font-black ring-1 ring-black/5'
                 : 'text-slate-600 hover:text-slate-900'
@@ -921,7 +1016,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
           <button
             type="button"
             onClick={() => setIntakeMode('id_card')}
-            className={`py-2 px-1 rounded-xl transition-all flex flex-col items-center gap-1 cursor-pointer ${
+            className={`min-h-[44px] py-2 px-1 rounded-xl transition-all flex flex-col items-center justify-center gap-1 cursor-pointer ${
               intakeMode === 'id_card'
                 ? 'bg-white text-indigo-700 shadow-md font-black ring-1 ring-black/5'
                 : 'text-slate-600 hover:text-slate-900'
@@ -933,7 +1028,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
           <button
             type="button"
             onClick={() => setIntakeMode('passport_photo')}
-            className={`py-2 px-1 rounded-xl transition-all flex flex-col items-center gap-1 cursor-pointer ${
+            className={`min-h-[44px] py-2 px-1 rounded-xl transition-all flex flex-col items-center justify-center gap-1 cursor-pointer ${
               intakeMode === 'passport_photo'
                 ? 'bg-white text-indigo-700 shadow-md font-black ring-1 ring-black/5'
                 : 'text-slate-600 hover:text-slate-900'
@@ -945,7 +1040,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
           <button
             type="button"
             onClick={() => setIntakeMode('whatsapp_lookup')}
-            className={`py-2 px-1 rounded-xl transition-all flex flex-col items-center gap-1 cursor-pointer ${
+            className={`min-h-[44px] py-2 px-1 rounded-xl transition-all flex flex-col items-center justify-center gap-1 cursor-pointer ${
               intakeMode === 'whatsapp_lookup'
                 ? 'bg-white text-indigo-700 shadow-md font-black ring-1 ring-black/5'
                 : 'text-slate-600 hover:text-slate-900'
@@ -975,7 +1070,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                     fileInputRef.current?.click();
                   }
                 }}
-                className="text-xs font-bold text-indigo-600 hover:text-indigo-700 bg-indigo-50 hover:bg-indigo-100/80 px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1"
+                className="min-h-[36px] text-xs font-bold text-indigo-600 hover:text-indigo-700 bg-indigo-50 hover:bg-indigo-100/80 px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1"
               >
                 <CropIcon size={13} />
                 Auto-crop & enhance
@@ -997,7 +1092,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                   handleFileSelect(e.dataTransfer.files);
                 }
               }}
-              className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all duration-200 group ${
+              className={`border-2 border-dashed rounded-2xl p-5 sm:p-6 text-center cursor-pointer transition-all duration-200 group ${
                 isDragging
                   ? 'border-indigo-600 bg-indigo-100/70 scale-[1.01] shadow-md shadow-indigo-500/10'
                   : 'border-indigo-200 hover:border-indigo-500 bg-indigo-50/30 hover:bg-indigo-50/60'
@@ -1015,21 +1110,48 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                 <UploadCloudIcon size={24} />
               </div>
               <div className="text-sm font-bold text-slate-800 mb-1">
-                Tap to browse or drop your files here
+                Tap to select documents or drop files here
               </div>
-              <div className="text-[11px] text-slate-400">
-                PDF, Word, Excel, PowerPoint, TXT, Images or ZIP • Max 10 MB per file
+              <div className="text-[11px] text-slate-500">
+                PDF, Word, Excel, PowerPoint, TXT, Images • Max 25 MB per file
               </div>
             </div>
 
+            {/* Upload Error Banner */}
+            {uploadError && (
+              <div role="alert" className="mt-3 p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-center justify-between text-xs text-rose-800 animate-fadeIn">
+                <div className="flex items-center gap-2">
+                  <span>⚠️</span>
+                  <span>{uploadError}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUploadError(null);
+                    fileInputRef.current?.click();
+                  }}
+                  className="min-h-[36px] px-2 py-1 bg-white border border-rose-300 font-bold rounded-lg text-rose-700 hover:bg-rose-50"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+
             {/* Upload Progress Overlay */}
             {uploadProgress !== null && (
-              <div className="mt-3 p-3 bg-amber-50/80 border border-amber-200 rounded-xl">
+              <div 
+                className="mt-3 p-3 bg-amber-50/80 border border-amber-200 rounded-xl"
+                role="progressbar"
+                aria-valuenow={uploadProgress}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-label="Document upload progress"
+              >
                 <div className="flex justify-between text-xs font-bold text-amber-800 mb-1">
                   <span>Uploading document...</span>
                   <span>{uploadProgress}%</span>
                 </div>
-                <div className="w-full bg-amber-200 h-2 rounded-full overflow-hidden">
+                <div className="w-full bg-amber-200 h-2.5 rounded-full overflow-hidden">
                   <div
                     className="bg-amber-600 h-full transition-all duration-200 rounded-full"
                     style={{ width: `${uploadProgress}%` }}
@@ -1396,67 +1518,24 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
               ))}
             </div>
 
-            {/* Active Document Canvas Preview with Overlay Tags */}
-            <div className="relative bg-slate-950 rounded-2xl overflow-hidden min-h-[260px] flex flex-col items-center justify-center p-4 border border-slate-800 shadow-inner group">
-              {/* Document Paper Simulation */}
-              <div
-                className="w-48 h-64 bg-white rounded shadow-lg p-3 text-left relative overflow-hidden transition-transform group-hover:scale-102"
-                style={{
-                  transform: `rotate(${activeDoc.rotation}deg)`,
-                  filter:
-                    activeDoc.filter === 'bw_doc'
-                      ? 'grayscale(100%) contrast(180%)'
-                      : activeDoc.filter === 'grayscale'
-                      ? 'grayscale(100%)'
-                      : activeDoc.filter === 'enhanced'
-                      ? 'contrast(125%) brightness(105%)'
-                      : 'none',
+            {/* Real Interactive Document & PDF Preview with Actual Pages and Content */}
+            {activeDoc && (
+              <DocumentViewer
+                fileName={activeDoc.fileName}
+                fileUrl={activeDoc.fileUrl || activeDoc.previewUrl}
+                pageCount={activeDoc.pageCount}
+                rotation={activeDoc.rotation}
+                options={activeDoc.options}
+                onOpenEditor={openEditorForActiveDoc}
+                onPageCountDetected={(detected) => {
+                  if (detected && detected !== activeDoc.pageCount) {
+                    setDocuments((prev) =>
+                      prev.map((d, i) => (i === activeDocIndex ? { ...d, pageCount: detected } : d))
+                    );
+                  }
                 }}
-              >
-                <div className="text-[11px] font-bold text-slate-900 truncate mb-1">
-                  {activeDoc.fileName}
-                </div>
-                <div className="h-1 bg-indigo-500 w-12 rounded mb-2"></div>
-                <div className="space-y-1">
-                  <div className="h-1.5 bg-slate-200 rounded w-full"></div>
-                  <div className="h-1.5 bg-slate-200 rounded w-5/6"></div>
-                  <div className="h-1.5 bg-slate-200 rounded w-4/6"></div>
-                  <div className="h-1.5 bg-slate-100 rounded w-full"></div>
-                  <div className="h-1.5 bg-slate-100 rounded w-3/4"></div>
-                </div>
-                <div className="mt-4 p-1.5 bg-slate-50 border border-slate-200 rounded text-[8px] text-slate-500">
-                  {activeDoc.pageCount} page(s) • Ready to spool
-                </div>
-              </div>
-
-              {/* Floating "✎ Edit" Button (Part 2 spec) */}
-              <button
-                type="button"
-                onClick={openEditorForActiveDoc}
-                className="absolute top-3 right-3 bg-indigo-600/90 hover:bg-indigo-600 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg backdrop-blur-sm flex items-center gap-1.5 transition-all"
-              >
-                ✎ Edit Document
-              </button>
-
-              {/* Tags bar at bottom of preview canvas */}
-              <div className="absolute bottom-3 left-3 right-3 flex flex-wrap gap-1.5 justify-center">
-                <span className="bg-black/70 text-slate-200 backdrop-blur-md text-[10px] font-semibold px-2 py-0.5 rounded-md border border-white/10">
-                  {activeDoc.options.colorMode === 'bw' ? 'B&W' : 'Colour'}
-                </span>
-                <span className="bg-black/70 text-slate-200 backdrop-blur-md text-[10px] font-semibold px-2 py-0.5 rounded-md border border-white/10">
-                  {activeDoc.options.duplexMode === 'simplex' ? 'Single Sided' : 'Back-to-Back'}
-                </span>
-                <span className="bg-black/70 text-slate-200 backdrop-blur-md text-[10px] font-semibold px-2 py-0.5 rounded-md border border-white/10">
-                  {activeDoc.options.orientation}
-                </span>
-                <span className="bg-black/70 text-slate-200 backdrop-blur-md text-[10px] font-semibold px-2 py-0.5 rounded-md border border-white/10">
-                  {activeDoc.options.paperSize}
-                </span>
-                <span className="bg-black/70 text-slate-200 backdrop-blur-md text-[10px] font-semibold px-2 py-0.5 rounded-md border border-white/10">
-                  Fit to page
-                </span>
-              </div>
-            </div>
+              />
+            )}
 
             {/* PRINT OPTIONS ACCORDION */}
             <div className="border border-slate-200 rounded-xl overflow-hidden">
@@ -1521,19 +1600,19 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                       <button
                         type="button"
                         onClick={() => updateActiveOptions({ duplexMode: 'simplex' })}
-                        className={`p-3 rounded-2xl border text-left transition-all ${
+                        className={`min-h-[52px] p-3 rounded-2xl border text-left transition-all ${
                           activeDoc.options.duplexMode === 'simplex'
                             ? 'border-indigo-600 bg-indigo-50/70 text-indigo-950 font-bold ring-2 ring-indigo-500/20 shadow-xs'
                             : 'border-slate-200 text-slate-700 hover:bg-slate-50'
                         }`}
                       >
                         <div className="font-bold text-xs mb-1">📄 Single Sided</div>
-                        <div className="text-[10px] text-slate-500">1 side per page</div>
+                        <div className="text-[10px] text-slate-500">1 side per sheet</div>
                       </button>
                       <button
                         type="button"
                         onClick={() => updateActiveOptions({ duplexMode: 'duplex_auto' })}
-                        className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden ${
+                        className={`min-h-[52px] p-3 rounded-2xl border text-left transition-all relative overflow-hidden ${
                           activeDoc.options.duplexMode === 'duplex_auto'
                             ? 'border-indigo-600 bg-indigo-50/70 text-indigo-950 font-bold ring-2 ring-indigo-500/20 shadow-xs'
                             : 'border-slate-200 text-slate-700 hover:bg-slate-50'
@@ -1545,10 +1624,10 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                     </div>
                   </div>
 
-                  {/* Paper Size & Orientation */}
+                  {/* Paper Size & Orientation with Accessible 44px Heights */}
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-slate-600 font-semibold mb-1">Paper Size</label>
+                      <label className="block text-slate-700 font-semibold mb-1">Paper Size</label>
                       <select
                         value={activeDoc.options.paperSize}
                         onChange={(e) =>
@@ -1556,15 +1635,15 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                             paperSize: e.target.value as 'A4' | 'A3' | 'Legal',
                           })
                         }
-                        className="w-full p-2 rounded-lg border border-slate-200 text-slate-800 bg-white"
+                        className="w-full min-h-[44px] p-2.5 rounded-xl border border-slate-200 text-slate-800 bg-white font-medium"
                       >
-                        <option value="A4">A4 (Standard)</option>
+                        <option value="A4">A4 (Standard Xerox)</option>
                         <option value="A3">A3 (Large Ledger - 2x Rate)</option>
                         <option value="Legal">Legal (8.5×14")</option>
                       </select>
                     </div>
                     <div>
-                      <label className="block text-slate-600 font-semibold mb-1">Orientation</label>
+                      <label className="block text-slate-700 font-semibold mb-1">Orientation</label>
                       <select
                         value={activeDoc.options.orientation}
                         onChange={(e) =>
@@ -1572,7 +1651,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                             orientation: e.target.value as 'auto' | 'portrait' | 'landscape',
                           })
                         }
-                        className="w-full p-2 rounded-lg border border-slate-200 text-slate-800 bg-white"
+                        className="w-full min-h-[44px] p-2.5 rounded-xl border border-slate-200 text-slate-800 bg-white font-medium"
                       >
                         <option value="auto">Auto Detect</option>
                         <option value="portrait">Portrait</option>
@@ -1585,7 +1664,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                   <div>
                     <label className="block text-slate-700 font-bold mb-1 flex items-center justify-between">
                       <span>Paper Media & GSM</span>
-                      <span className="text-[10px] text-slate-400 font-normal">Grade surcharge</span>
+                      <span className="text-[10px] text-slate-500 font-normal">Grade surcharge</span>
                     </label>
                     <select
                       value={activeDoc.options.paperType || 'standard_75'}
@@ -1594,7 +1673,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                           paperType: e.target.value as any,
                         })
                       }
-                      className="w-full p-2 rounded-lg border border-slate-200 text-slate-800 bg-white font-medium"
+                      className="w-full min-h-[44px] p-2.5 rounded-xl border border-slate-200 text-slate-800 bg-white font-medium"
                     >
                       <option value="standard_75">Standard 75 GSM Copier Paper (Base Rate)</option>
                       <option value="bond_85">Bond Paper 85 GSM (+₹0.50/sheet)</option>
@@ -1604,7 +1683,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                     </select>
                   </div>
 
-                  {/* Finishing & Binding Add-ons */}
+                  {/* Finishing & Binding Add-ons with 44px min touch targets */}
                   <div>
                     <label className="block text-slate-700 font-bold mb-1 flex items-center justify-between">
                       <span>Post-Print Finishing & Binding</span>
@@ -1622,7 +1701,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                           key={item.id}
                           type="button"
                           onClick={() => updateActiveOptions({ finishing: item.id as any })}
-                          className={`p-2 rounded-xl border text-left transition-all ${
+                          className={`min-h-[44px] p-2.5 rounded-xl border text-left transition-all ${
                             (activeDoc.options.finishing || 'none') === item.id
                               ? 'border-indigo-600 bg-indigo-50/70 text-indigo-950 font-bold ring-1 ring-indigo-500/30'
                               : 'border-slate-200 text-slate-700 hover:bg-slate-50'
@@ -1647,76 +1726,165 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
         )}
       </div>
 
-      {/* 3. STICKY BOTTOM ACTION BAR */}
-      <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 py-3 px-4 shadow-xl">
-        <div className="max-w-md mx-auto flex items-center justify-between gap-2.5">
+      {/* 3. STICKY BOTTOM ACTION BAR (44px min touch targets & safe area padding) */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 pt-3 pb-[max(12px,env(safe-area-inset-bottom))] px-3 sm:px-4 shadow-xl">
+        <div className="max-w-md mx-auto flex items-center justify-between gap-2">
           {/* Left: Total Calculation */}
-          <div className="flex-shrink-0">
-            <div className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
+          <div className="flex-shrink-0 min-w-[70px]">
+            <div className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">
               Total Quote
             </div>
             <div className="text-xl font-extrabold text-slate-900 leading-tight">
               ₹{grandTotal.toFixed(2)}
             </div>
-            <div className="text-[10px] text-slate-500">
+            <div className="text-[10px] text-slate-500 truncate">
               {totalPagesCount}p • {documents.length} doc{documents.length > 1 ? 's' : ''}
             </div>
           </div>
 
-          {/* Center: Copies Stepper */}
-          <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-1 border border-slate-200/80">
+          {/* Center: Copies Stepper with 44px Touch Targets */}
+          <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-1 border border-slate-200">
             <button
               type="button"
               onClick={() => setGlobalCopies(Math.max(1, globalCopies - 1))}
-              className="w-7 h-7 rounded-lg bg-white text-slate-700 font-bold hover:bg-slate-50 flex items-center justify-center shadow-xs text-sm cursor-pointer"
+              className="w-10 h-10 min-w-[40px] min-h-[40px] sm:w-11 sm:h-11 sm:min-w-[44px] sm:min-h-[44px] rounded-lg bg-white text-slate-800 font-bold hover:bg-slate-50 flex items-center justify-center shadow-xs text-base active:bg-slate-200 transition-colors cursor-pointer"
               title="Decrease copies"
+              aria-label="Decrease number of copies"
             >
               −
             </button>
-            <span className="w-5 text-center font-bold text-xs text-slate-800">
+            <span className="w-6 text-center font-bold text-sm text-slate-900" aria-label={`${globalCopies} copies`}>
               {globalCopies}
             </span>
             <button
               type="button"
               onClick={() => setGlobalCopies(globalCopies + 1)}
-              className="w-7 h-7 rounded-lg bg-white text-slate-700 font-bold hover:bg-slate-50 flex items-center justify-center shadow-xs text-sm cursor-pointer"
+              className="w-10 h-10 min-w-[40px] min-h-[40px] sm:w-11 sm:h-11 sm:min-w-[44px] sm:min-h-[44px] rounded-lg bg-white text-slate-800 font-bold hover:bg-slate-50 flex items-center justify-center shadow-xs text-base active:bg-slate-200 transition-colors cursor-pointer"
               title="Increase copies"
+              aria-label="Increase number of copies"
             >
               +
             </button>
           </div>
 
-          {/* Right: Dual Actions (Cash or Instant UPI) */}
-          <div className="flex items-center gap-1.5 flex-1 justify-end">
+          {/* Right: Dual Actions (Cash or Instant UPI) with Review Trigger */}
+          <div className="flex items-center gap-1.5 flex-1 justify-end min-w-[130px]">
             <button
               type="button"
               disabled={documents.length === 0 || isSubmitting}
-              onClick={() => handlePlaceOrder('CASH')}
-              className="px-2.5 py-2.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 font-bold rounded-xl text-xs transition-all flex flex-col items-center justify-center leading-tight cursor-pointer"
+              onClick={() => {
+                setTargetPaymentMethod('CASH');
+                setReviewModalOpen(true);
+              }}
+              className="min-h-[44px] px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 disabled:opacity-50 text-slate-800 font-bold rounded-xl text-xs transition-all flex flex-col items-center justify-center leading-tight cursor-pointer border border-slate-200"
               title="Pay cash when picking up at counter"
             >
               <span>💵 Cash</span>
-              <span className="text-[9px] font-normal text-slate-500">at counter</span>
+              <span className="text-[9px] font-medium text-slate-500">at counter</span>
             </button>
 
             <button
               type="button"
               disabled={documents.length === 0 || isSubmitting}
               onClick={() => {
-                setUpiTimer(300);
-                setPaymentModalOpen(true);
+                setTargetPaymentMethod('ONLINE');
+                setReviewModalOpen(true);
               }}
-              className="px-3.5 py-2.5 bg-gradient-to-r from-[#4D64E6] to-[#6366F1] hover:from-[#3F54D1] hover:to-[#4F46E5] disabled:opacity-50 text-white font-bold rounded-xl text-xs shadow-md shadow-indigo-500/20 transition-all flex flex-col items-center justify-center leading-tight cursor-pointer"
+              className="min-h-[44px] px-3 py-1.5 bg-[#4D64E6] hover:bg-[#3B50D4] active:bg-[#2C3FA8] disabled:opacity-50 text-white font-bold rounded-xl text-xs shadow-md shadow-[#4D64E6]/25 transition-all flex flex-col items-center justify-center leading-tight cursor-pointer"
               title="Pay immediately via UPI QR or Google Pay / PhonePe"
             >
               <span>⚡ UPI Pay</span>
-              <span className="text-[9px] font-normal text-indigo-100">Auto release</span>
+              <span className="text-[9px] font-medium text-indigo-100">Auto release</span>
             </button>
           </div>
         </div>
       </div>
 
-      {/* 4. UPI PAYMENT MODAL (Instant QR & App Launch) */}
+      {/* 4. ORDER REVIEW MODAL (WCAG 2.2 SC 3.3.4 Error Prevention) */}
+      {reviewModalOpen && (
+        <div 
+          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Review Your Print Order"
+        >
+          <div className="w-full max-w-sm bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden p-6 space-y-4 text-left">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <InkllyMark size={24} />
+                <h3 className="font-extrabold text-sm text-slate-900">Review Your Order</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReviewModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 text-sm p-1 rounded-lg min-h-[44px] min-w-[44px] flex items-center justify-center"
+                aria-label="Close review"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/80 space-y-2.5 text-xs text-slate-700">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Print Shop:</span>
+                <span className="font-bold text-slate-900">{shop.name}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Documents:</span>
+                <span className="font-bold text-slate-900">{documents.length} file{documents.length > 1 ? 's' : ''} ({totalPagesCount} pages)</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Color Mode:</span>
+                <span className="font-bold text-slate-900">{activeDoc.options.colorMode === 'color' ? 'Full Colour' : 'Black & White'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Sides:</span>
+                <span className="font-bold text-slate-900">{activeDoc.options.duplexMode === 'duplex_auto' ? 'Back-to-Back (Both Sides)' : 'Single Sided'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Copies:</span>
+                <span className="font-bold text-slate-900">{globalCopies} set{globalCopies > 1 ? 's' : ''}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Payment:</span>
+                <span className="font-bold text-indigo-700">{targetPaymentMethod === 'ONLINE' ? 'Instant UPI Payment' : 'Pay Cash at Counter'}</span>
+              </div>
+              <div className="pt-2 border-t border-slate-200 flex justify-between text-sm font-black text-slate-900">
+                <span>Total Amount:</span>
+                <span className="text-[#4D64E6] text-base">₹{grandTotal.toFixed(2)}</span>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2 pt-1">
+              <button
+                type="button"
+                disabled={isSubmitting}
+                onClick={() => {
+                  setReviewModalOpen(false);
+                  if (targetPaymentMethod === 'ONLINE') {
+                    setUpiTimer(300);
+                    setPaymentModalOpen(true);
+                  } else {
+                    handlePlaceOrder('CASH');
+                  }
+                }}
+                className="w-full min-h-[48px] bg-[#4D64E6] hover:bg-[#3B50D4] active:bg-[#2C3FA8] text-white font-bold rounded-xl text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                {targetPaymentMethod === 'ONLINE' ? 'Proceed to UPI Pay →' : 'Confirm Cash Order →'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setReviewModalOpen(false)}
+                className="w-full min-h-[44px] bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs transition-colors"
+              >
+                Change Options
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. UPI PAYMENT MODAL (Instant QR & App Launch) */}
       {paymentModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
           <div className="w-full max-w-sm bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden text-center p-6 space-y-4">

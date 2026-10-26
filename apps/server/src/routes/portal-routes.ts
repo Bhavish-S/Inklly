@@ -13,8 +13,8 @@ export function createPortalRoutes(db: DatabaseService): Router {
   router.get('/shop/:shop_code', controller.getShopByCode);
   router.post('/upload', controller.uploadDocument);
   router.post('/quote', controller.getQuote);
-  router.post('/orders', controller.submitOrder);
-  router.get('/orders/:id', controller.getOrderStatus);
+  router.post(['/orders', '/order'], controller.submitOrder);
+  router.get(['/orders/:id', '/order/:id'], controller.getOrderStatus);
 
   return router;
 }

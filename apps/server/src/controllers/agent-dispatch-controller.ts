@@ -1,4 +1,6 @@
 import { Request, Response } from 'express';
+import * as path from 'node:path';
+import * as fs from 'node:fs';
 import { AgentRepository, ShopRepository, PrinterRepository } from '@inklly/db';
 import { SpoolerResult } from '@inklly/shared';
 
@@ -95,11 +97,47 @@ export class AgentDispatchController {
   public downloadAgent = (req: Request, res: Response) => {
     const platform = (req.query.platform as string) || 'win-x64';
     const shopCode = (req.query.shopCode as string) || 'campus1';
-    const format = (req.query.format as string) || 'script';
+    const format = (req.query.format as string) || 'json';
 
     const shop = this.shopRepo.getShopByCode(shopCode) || this.shopRepo.getShopById(shopCode);
     const shopId = shop ? shop.id : 'shop-campus-1';
     const pairingKey = `ink_live_sec_${Buffer.from(shopId).toString('hex').substring(0, 16)}`;
+    const downloadsDir = path.join(process.cwd(), 'downloads');
+
+    if (format === 'bundle' || format === 'zip' || platform === 'win-x64-bundle') {
+      const zipPath = path.join(downloadsDir, 'Inklly-Agent-win-x64-Setup.zip');
+      if (fs.existsSync(zipPath)) {
+        return res.download(zipPath, `Inklly-Agent-Setup-${shopCode}-win-x64.zip`);
+      }
+    }
+
+    if (format === 'msi' || platform === 'win-x64-msi') {
+      const msiPath = path.join(downloadsDir, 'Inklly-1.6.1-win-x64.msi');
+      if (fs.existsSync(msiPath)) {
+        return res.download(msiPath, 'Inklly-1.6.1-win-x64.msi');
+      }
+    }
+
+    if (format === 'legacy-x64' || platform === 'windows7-x64' || platform === 'win7-x64') {
+      const msiPath = path.join(downloadsDir, 'InkllyLegacyAgent-1.5.51-windows7-x64.msi');
+      if (fs.existsSync(msiPath)) {
+        return res.download(msiPath, 'InkllyLegacyAgent-1.5.51-windows7-x64.msi');
+      }
+    }
+
+    if (format === 'legacy-x86' || platform === 'windows7-x86' || platform === 'win7-x86' || platform === 'x86') {
+      const msiPath = path.join(downloadsDir, 'InkllyLegacyAgent-1.5.51-windows7-x86.msi');
+      if (fs.existsSync(msiPath)) {
+        return res.download(msiPath, 'InkllyLegacyAgent-1.5.51-windows7-x86.msi');
+      }
+    }
+
+    if (format === 'usb' || platform === 'usb' || platform === 'autorun') {
+      const usbPath = path.join(downloadsDir, 'usb-autorun-creator-2-installer.exe');
+      if (fs.existsSync(usbPath)) {
+        return res.download(usbPath, 'usb-autorun-creator-2-installer.exe');
+      }
+    }
 
     if (format === 'script') {
       const batScript = `@echo off

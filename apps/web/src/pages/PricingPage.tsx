@@ -81,11 +81,13 @@ export const PricingPage: React.FC<PricingPageProps> = ({ onNavigate }) => {
           {/* Controls: Billing Cycle & Currency Switchers */}
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 max-w-md mx-auto">
             {/* Cycle Toggle */}
-            <div className="bg-white/10 p-1 rounded-xl flex items-center border border-white/15 w-full sm:w-auto">
+            <div className="bg-white/10 p-1 rounded-xl flex items-center border border-white/15 w-full sm:w-auto" role="tablist" aria-label="Subscription billing cycle">
               <button
                 type="button"
+                role="tab"
+                aria-selected={billingCycle === 'monthly'}
                 onClick={() => setBillingCycle('monthly')}
-                className={`flex-1 sm:flex-initial px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+                className={`flex-1 sm:flex-initial min-h-[44px] px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center cursor-pointer ${
                   billingCycle === 'monthly'
                     ? 'bg-[#4D64E6] text-white shadow-xs'
                     : 'text-gray-300 hover:text-white'
@@ -95,8 +97,10 @@ export const PricingPage: React.FC<PricingPageProps> = ({ onNavigate }) => {
               </button>
               <button
                 type="button"
+                role="tab"
+                aria-selected={billingCycle === 'yearly'}
                 onClick={() => setBillingCycle('yearly')}
-                className={`flex-1 sm:flex-initial px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                className={`flex-1 sm:flex-initial min-h-[44px] px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                   billingCycle === 'yearly'
                     ? 'bg-[#4D64E6] text-white shadow-xs'
                     : 'text-gray-300 hover:text-white'
@@ -109,8 +113,10 @@ export const PricingPage: React.FC<PricingPageProps> = ({ onNavigate }) => {
               </button>
               <button
                 type="button"
+                role="tab"
+                aria-selected={billingCycle === 'lifetime'}
                 onClick={() => setBillingCycle('lifetime')}
-                className={`flex-1 sm:flex-initial px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+                className={`flex-1 sm:flex-initial min-h-[44px] px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center cursor-pointer ${
                   billingCycle === 'lifetime'
                     ? 'bg-[#4D64E6] text-white shadow-xs'
                     : 'text-gray-300 hover:text-white'
@@ -121,21 +127,25 @@ export const PricingPage: React.FC<PricingPageProps> = ({ onNavigate }) => {
             </div>
 
             {/* Currency Selector */}
-            <div className="bg-white/10 p-1 rounded-xl flex items-center border border-white/15">
+            <div className="bg-white/10 p-1 rounded-xl flex items-center border border-white/15" role="tablist" aria-label="Currency selection">
               <button
                 type="button"
+                role="tab"
+                aria-selected={currency === 'INR'}
                 onClick={() => setCurrency('INR')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold ${
-                  currency === 'INR' ? 'bg-white text-[#172031]' : 'text-gray-300'
+                className={`min-h-[44px] px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center justify-center cursor-pointer ${
+                  currency === 'INR' ? 'bg-white text-[#172031]' : 'text-gray-300 hover:text-white'
                 }`}
               >
                 INR (₹)
               </button>
               <button
                 type="button"
+                role="tab"
+                aria-selected={currency === 'USD'}
                 onClick={() => setCurrency('USD')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold ${
-                  currency === 'USD' ? 'bg-white text-[#172031]' : 'text-gray-300'
+                className={`min-h-[44px] px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center justify-center cursor-pointer ${
+                  currency === 'USD' ? 'bg-white text-[#172031]' : 'text-gray-300 hover:text-white'
                 }`}
               >
                 USD ($)

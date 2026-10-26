@@ -45,6 +45,11 @@ ehthumbs.db
 *.swp
 *.swo
 
-# Temporary binaries
+# Temporary binaries & staging
 *.tmp
 apps/agent/bin/SumatraPDF.exe
+apps/agent/pkg_staging/
+apps/server/uploads/
+apps/server/downloads/*.msi
+apps/server/downloads/*.zip
+apps/server/downloads/*.exe

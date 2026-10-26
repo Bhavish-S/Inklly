@@ -50,6 +50,10 @@ export function authenticate(req: Request, res: Response, next: NextFunction): v
   // Simple token decoder for session simulation
   try {
     const payload = JSON.parse(Buffer.from(token, 'base64').toString('utf-8'));
+    if (payload.exp && typeof payload.exp === 'number' && payload.exp < Math.floor(Date.now() / 1000)) {
+      res.status(401).json({ error: 'Token has expired' });
+      return;
+    }
     req.user = payload;
     next();
   } catch {
@@ -99,7 +103,11 @@ export function enforceTenantIsolation(req: Request, res: Response, next: NextFu
     return next();
   }
 
-  const requestedShopId = req.params.shopId || req.body?.shopId || (req.query.shopId as string);
+  const requestedShopId =
+    req.params.shopId ||
+    req.body?.shopId ||
+    (req.query.shopId as string) ||
+    (req.headers['x-shop-id'] as string);
   if (requestedShopId && req.user.shopId && requestedShopId !== req.user.shopId) {
     return res.status(403).json({
       error: 'Tenant isolation violation: Cross-tenant access denied',

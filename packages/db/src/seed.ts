@@ -234,7 +234,24 @@ export function seedDatabase(db: DatabaseService): void {
         createdAt: now,
         updatedAt: now,
       },
-      'hash_admin_123'
+      '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9' // sha256 of admin123
+    );
+  }
+
+  // Developer User
+  if (!userRepo.getUserByEmail('dev@inklly.com')) {
+    userRepo.createUser(
+      {
+        id: 'user-dev-1',
+        email: 'dev@inklly.com',
+        phone: '+91 99999 11111',
+        fullName: 'Inklly Developer API',
+        role: 'DEVELOPER',
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      },
+      '87274af01876341455b32d805946f272871bb42effa6604dccf28bb027afa82b' // sha256 of dev123
     );
   }
 

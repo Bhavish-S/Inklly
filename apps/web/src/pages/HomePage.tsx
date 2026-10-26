@@ -86,18 +86,18 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
               {/* Eyebrow Chip */}
               <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/10 border border-white/15 text-[#A9B6FF] text-xs font-semibold uppercase tracking-wider mb-6">
                 <span className="w-2 h-2 rounded-full bg-[#4D64E6] animate-pulse" />
-                Modern Print Shop Automation & Self-Service Document OS
+                Print Shop & Xerox Counter Automation
               </div>
 
               {/* Main Headline */}
               <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-[54px] font-extrabold tracking-tight leading-[1.12] mb-6">
-                Print automation, WhatsApp ordering & countertop QR for{' '}
-                <span className="text-[#A9B6FF]">modern print shops.</span>
+                Turn your print counter into an{' '}
+                <span className="text-[#A9B6FF]">express self-service station.</span>
               </h1>
 
               {/* Subhead */}
-              <p className="text-base sm:text-lg text-gray-300 max-w-2xl mx-auto lg:mx-0 mb-8 leading-relaxed font-normal">
-                Stop managing USB drives, WhatsApp chaos and manual print calculations. Let customers upload via QR or WhatsApp, pay instantly via UPI or cash, and auto-route jobs directly to your counter printers.
+              <p className="text-base sm:text-lg text-gray-200 max-w-2xl mx-auto lg:mx-0 mb-8 leading-relaxed font-normal">
+                Stop managing infected pen drives, messy WhatsApp chats, and manual page calculations. Customers scan your counter QR code or WhatsApp bot, upload documents, and pay via UPI. Orders print directly on your existing USB & LAN printers.
               </p>
 
               {/* Action Buttons */}
@@ -105,29 +105,29 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
                 <button
                   type="button"
                   onClick={() => onNavigate('/register')}
-                  className="w-full sm:w-auto px-7 py-3.5 rounded-xl bg-[#4D64E6] hover:bg-[#3F54D1] text-white font-bold text-sm sm:text-base shadow-lg shadow-[#4D64E6]/30 transition-all cursor-pointer flex items-center justify-center gap-2"
+                  className="w-full sm:w-auto min-h-[48px] px-8 py-3.5 rounded-xl bg-[#4D64E6] hover:bg-[#3B50D4] text-white font-bold text-sm sm:text-base shadow-lg shadow-[#4D64E6]/30 transition-all cursor-pointer flex items-center justify-center gap-2"
                 >
-                  Get started free →
+                  Start Free Shop Trial (No Card Needed) →
                 </button>
                 <button
                   type="button"
                   onClick={() => onNavigate('/p/campus1')}
-                  className="w-full sm:w-auto px-7 py-3.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/20 text-white font-semibold text-sm sm:text-base transition-all cursor-pointer"
+                  className="w-full sm:w-auto min-h-[48px] px-7 py-3.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/20 text-white font-semibold text-sm sm:text-base transition-all cursor-pointer flex items-center justify-center"
                 >
-                  Try Customer QR Demo
+                  See Customer QR Demo
                 </button>
               </div>
 
               {/* Proof / Value Chips */}
-              <div className="flex flex-wrap items-center justify-center lg:justify-start gap-4 sm:gap-6 text-xs text-gray-300">
+              <div className="flex flex-wrap items-center justify-center lg:justify-start gap-4 sm:gap-6 text-xs text-gray-200">
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[#1F8A4C] font-bold">✓</span> Zero app download required
+                  <span className="text-emerald-400 font-bold">✓</span> Zero customer app download needed
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[#1F8A4C] font-bold">✓</span> Works with existing printers
+                  <span className="text-emerald-400 font-bold">✓</span> Works with your existing Canon/HP/Epson printers
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[#1F8A4C] font-bold">✓</span> Instant UPI & Cash collection
+                  <span className="text-emerald-400 font-bold">✓</span> Direct UPI settlement with 0% commission
                 </div>
               </div>
             </div>

@@ -129,6 +129,20 @@ export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onB
 
   return (
     <div style={{ maxWidth: '800px', margin: '2rem auto', padding: '0 1rem' }}>
+      {/* Screen Reader Live Region for Order Transitions (WCAG 2.2 SC 4.1.3) */}
+      <div 
+        role="status" 
+        aria-live="polite" 
+        className="sr-only"
+        style={{ position: 'absolute', width: '1px', height: '1px', margin: '-1px', padding: 0, overflow: 'hidden', clip: 'rect(0, 0, 0, 0)', border: 0 }}
+      >
+        {order.status === 'READY_FOR_COLLECTION' 
+          ? 'Your order is ready for pickup at the counter' 
+          : order.status === 'IN_PROGRESS' 
+          ? 'Your documents are currently printing on the spooler' 
+          : `Order status: ${ORDER_STEPS[currentStep]?.label || order.status}`}
+      </div>
+
       {/* Order Status Header */}
       <div className="card" style={{ marginBottom: '1.5rem', textAlign: 'center', padding: '2.5rem 1.5rem' }}>
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', backgroundColor: '#EEF2FF', padding: '0.375rem 0.875rem', borderRadius: '9999px', color: '#4A69ED', fontWeight: 600, fontSize: '0.875rem', marginBottom: '1rem' }}>

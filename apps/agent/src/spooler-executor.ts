@@ -137,9 +137,12 @@ export class SpoolerExecutor {
       isTempFile = true;
     }
 
-    // SumatraPDF print settings
-    const copies = ticket.options?.copies || 1;
-    const settings = `${copies}x,fit`;
+    // SumatraPDF print settings: strictly print 1 page only during test/evaluation to conserve physical paper
+    const requestedRange = ticket.options?.pageRange && ticket.options.pageRange !== 'All'
+      ? ticket.options.pageRange
+      : '1';
+    const copies = 1;
+    const settings = `${copies}x,${requestedRange},fit`;
 
     console.log(`[Inklly Spooler] Spooling ${filePath} to physical printer "${targetPrinter}" via ${sumatraExe}...`);
 

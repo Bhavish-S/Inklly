@@ -16,12 +16,18 @@ export function createApp(db?: DatabaseService): express.Express {
   app.use(cors());
   app.use(express.json({ limit: '50mb' }));
 
-  // Ensure uploads directory exists and is statically served
+  // Ensure uploads and downloads directories exist and are statically served
   const uploadsDir = path.join(process.cwd(), 'uploads');
   if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
   app.use('/uploads', express.static(uploadsDir));
+
+  const downloadsDir = path.join(process.cwd(), 'downloads');
+  if (!fs.existsSync(downloadsDir)) {
+    fs.mkdirSync(downloadsDir, { recursive: true });
+  }
+  app.use('/downloads', express.static(downloadsDir));
 
   const database = db || DatabaseService.getInstance(process.env.DB_PATH || path.join(process.cwd(), 'data', 'inklly.db'));
   seedDatabase(database);

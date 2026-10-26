@@ -148,6 +148,20 @@ export class PaymentController {
       return res.status(404).json({ error: 'Order not found' });
     }
 
+    const effectiveShopId = req.user?.shopId;
+    if (
+      req.user?.role !== 'PLATFORM_OWNER' &&
+      req.user?.role !== 'PLATFORM_ADMIN' &&
+      effectiveShopId &&
+      order.shopId !== effectiveShopId
+    ) {
+      return res.status(403).json({
+        error: 'Tenant isolation violation: Cannot collect cash for an order belonging to another shop',
+        requestedShopId: order.shopId,
+        userShopId: effectiveShopId,
+      });
+    }
+
     const now = new Date().toISOString();
 
     // Mark payment verified

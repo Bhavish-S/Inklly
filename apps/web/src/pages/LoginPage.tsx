@@ -56,20 +56,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, onLoginSuccess
     }
   };
 
-  const fillDemoCredentials = (role: 'merchant' | 'owner' | 'developer') => {
-    setSelectedRole(role);
-    setError(null);
-    if (role === 'merchant') {
-      setIdentifier('owner@campusprint.in');
-      setPassword('owner123');
-    } else if (role === 'owner') {
-      setIdentifier('admin@inklly.com');
-      setPassword('admin123');
-    } else {
-      setIdentifier('dev@inklly.com');
-      setPassword('demo123');
-    }
-  };
 
   return (
     <div className="min-h-screen bg-[#FBFCFE] flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
@@ -120,12 +106,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, onLoginSuccess
         {/* Right Panel: Sign In Form */}
         <div className="md:col-span-7 p-8 md:p-12 flex flex-col justify-center">
           {/* Role Switcher Tabs */}
-          <div className="flex bg-slate-100 p-1 rounded-2xl mb-6">
+          <div className="flex bg-slate-100 p-1 rounded-2xl mb-6" role="tablist" aria-label="Select login role">
             <button
               type="button"
+              role="tab"
+              aria-selected={selectedRole === 'merchant'}
               onClick={() => setSelectedRole('merchant')}
-              className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                selectedRole === 'merchant' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-900'
+              className={`flex-1 min-h-[44px] py-2 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                selectedRole === 'merchant' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               <PrinterIcon size={14} />
@@ -133,9 +121,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, onLoginSuccess
             </button>
             <button
               type="button"
+              role="tab"
+              aria-selected={selectedRole === 'owner'}
               onClick={() => setSelectedRole('owner')}
-              className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                selectedRole === 'owner' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-900'
+              className={`flex-1 min-h-[44px] py-2 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                selectedRole === 'owner' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               <ShieldIcon size={14} />
@@ -143,9 +133,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, onLoginSuccess
             </button>
             <button
               type="button"
+              role="tab"
+              aria-selected={selectedRole === 'developer'}
               onClick={() => setSelectedRole('developer')}
-              className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                selectedRole === 'developer' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-900'
+              className={`flex-1 min-h-[44px] py-2 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                selectedRole === 'developer' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               <CodeIcon size={14} />
@@ -157,13 +149,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, onLoginSuccess
             <h2 className="text-2xl font-extrabold text-[#172031] tracking-tight mb-1">
               {selectedRole === 'owner' ? 'Sign in as Platform Admin' : selectedRole === 'developer' ? 'Sign in to Developer Hub' : 'Sign in to your shop'}
             </h2>
-            <p className="text-xs text-[#5B6475]">
+            <p className="text-xs text-[#475467]">
               Enter your registered email address or mobile number to authenticate.
             </p>
           </div>
 
           {error && (
-            <div className="p-3 mb-4 rounded-xl bg-red-50 text-red-700 text-xs font-semibold border border-red-200 flex items-center gap-2">
+            <div role="alert" aria-live="polite" className="p-3 mb-4 rounded-xl bg-red-50 text-red-700 text-xs font-semibold border border-red-200 flex items-center gap-2">
               <span>⚠️</span> {error}
             </div>
           )}
@@ -183,7 +175,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, onLoginSuccess
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
                   placeholder={selectedRole === 'owner' ? 'admin@inklly.com' : selectedRole === 'developer' ? 'dev@inklly.com' : 'owner@campusprint.in or 9876543210'}
-                  className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-[#E6E9F2] focus:border-[#4D64E6] focus:ring-2 focus:ring-[#4D64E6]/20 text-sm outline-hidden transition-all bg-white"
+                  className="w-full min-h-[44px] pl-10 pr-3.5 py-2.5 rounded-xl border border-[#E6E9F2] focus:border-[#4D64E6] focus:ring-2 focus:ring-[#4D64E6]/20 text-sm outline-hidden transition-all bg-white"
                 />
               </div>
             </div>
@@ -202,12 +194,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, onLoginSuccess
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter account password"
-                  className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-[#E6E9F2] focus:border-[#4D64E6] focus:ring-2 focus:ring-[#4D64E6]/20 text-sm outline-hidden transition-all bg-white"
+                  className="w-full min-h-[44px] pl-10 pr-12 py-2.5 rounded-xl border border-[#E6E9F2] focus:border-[#4D64E6] focus:ring-2 focus:ring-[#4D64E6]/20 text-sm outline-hidden transition-all bg-white"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 focus:outline-hidden"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 focus:outline-hidden min-h-[40px] min-w-[40px] flex items-center justify-center rounded-lg"
                 >
                   {showPassword ? <EyeOffIcon size={16} /> : <EyeIcon size={16} />}
                 </button>
@@ -217,32 +210,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, onLoginSuccess
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 bg-[#4D64E6] hover:bg-[#3F54D1] text-white rounded-xl font-bold text-sm shadow-md transition-all cursor-pointer flex items-center justify-center gap-2"
+              className="w-full min-h-[48px] py-3 bg-[#4D64E6] hover:bg-[#3B50D4] text-white rounded-xl font-bold text-sm shadow-md transition-all cursor-pointer flex items-center justify-center gap-2"
             >
               {loading ? 'Authenticating...' : `Sign in to ${selectedRole === 'owner' ? 'Platform Console' : selectedRole === 'developer' ? 'Developer Hub' : 'Merchant Dashboard'} →`}
             </button>
           </form>
 
-          {/* Quick Demo Shortcuts */}
-          <div className="mt-4 pt-3 border-t border-slate-100">
-            <span className="text-[11px] font-bold text-slate-400 block mb-2">QUICK TEST CREDENTIALS:</span>
-            <div className="flex flex-wrap gap-2 text-xs">
-              <button
-                type="button"
-                onClick={() => fillDemoCredentials('merchant')}
-                className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium text-[11px] transition-all cursor-pointer"
-              >
-                🏪 Demo Merchant (Campus Print)
-              </button>
-              <button
-                type="button"
-                onClick={() => fillDemoCredentials('owner')}
-                className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium text-[11px] transition-all cursor-pointer"
-              >
-                👑 Platform Owner (Admin)
-              </button>
-            </div>
-          </div>
 
           <div className="mt-6 pt-4 border-t border-[#E6E9F2] text-center text-xs text-[#5B6475]">
             Want to register a new print shop?{' '}

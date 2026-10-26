@@ -340,4 +340,267 @@ describe('Inklly Backend API Integration Test Suite', () => {
     const keyData = await keyRes.json();
     assert.ok(keyData.apiKeySecret.startsWith('ink_test_'));
   });
+
+  // ─── MILESTONE 1: ONBOARDING, AUTHENTICATION & TENANT ISOLATION ───
+
+  it('Registers new merchant, generates token, provisions org, shop, and baseline rates', async () => {
+    const regPayload = {
+      orgName: 'Om Sai Digital Xerox',
+      shopName: 'Om Sai Xerox Hub',
+      shopCode: 'om-sai-hub',
+      ownerName: 'Vikas Patil',
+      email: 'vikas@omsaixerox.in',
+      password: 'password123',
+      phone: '+91 98222 33445',
+      address: 'Shop 4, University Road',
+      city: 'Pune',
+      state: 'Maharashtra',
+      pinCode: '411007',
+    };
+
+    const res = await fetch(`${baseUrl}/api/v1/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(regPayload),
+    });
+
+    assert.equal(res.status, 201);
+    const body = await res.json();
+    assert.equal(body.success, true);
+    assert.ok(body.token);
+    assert.equal(body.user.email, 'vikas@omsaixerox.in');
+    assert.equal(body.shop.shopCode, 'om-sai-hub');
+    assert.equal(body.organization.planTier, 'STARTER');
+    assert.ok(body.shopId);
+    assert.ok(body.organizationId);
+
+    // Verify baseline rates created in portal
+    const shopRes = await fetch(`${baseUrl}/api/v1/portal/shop/om-sai-hub`);
+    assert.equal(shopRes.status, 200);
+    const shopData = await shopRes.json();
+    assert.equal(shopData.rates.bw_simplex, 2);
+    assert.equal(shopData.rates.bw_duplex, 1.5);
+    assert.equal(shopData.rates.color_simplex, 10);
+  });
+
+  it('Rejects duplicate email registration with HTTP 409 Conflict (case-insensitive)', async () => {
+    const duplicatePayload = {
+      shopName: 'Duplicate Xerox',
+      ownerName: 'Vikas P',
+      email: '  VIKAS@omsaixerox.in  ',
+      password: 'password123',
+    };
+
+    const res = await fetch(`${baseUrl}/api/v1/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(duplicatePayload),
+    });
+
+    assert.equal(res.status, 409);
+    const body = await res.json();
+    assert.ok(body.error.includes('already exists'));
+  });
+
+  it('Resolves slug collisions by auto-incrementing hyphenated suffix', async () => {
+    // 1st collision with seeded 'campus1'
+    const res1 = await fetch(`${baseUrl}/api/v1/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopName: 'Campus Print 1',
+        shopCode: 'campus1',
+        ownerName: 'Owner 2',
+        email: 'collision1@test.in',
+        password: 'password123',
+      }),
+    });
+    assert.equal(res1.status, 201);
+    const body1 = await res1.json();
+    assert.equal(body1.shop.shopCode, 'campus1-1');
+
+    // 2nd collision
+    const res2 = await fetch(`${baseUrl}/api/v1/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopName: 'Campus Print 1',
+        shopCode: 'campus1',
+        ownerName: 'Owner 3',
+        email: 'collision2@test.in',
+        password: 'password123',
+      }),
+    });
+    assert.equal(res2.status, 201);
+    const body2 = await res2.json();
+    assert.equal(body2.shop.shopCode, 'campus1-2');
+  });
+
+  it('Normalizes special characters and spaces in shop slug', async () => {
+    const res = await fetch(`${baseUrl}/api/v1/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopName: 'Shree Balaji & Sons Xerox @ Karve Nagar!!',
+        ownerName: 'Sunil Joshi',
+        email: 'sunil@balajixerox.in',
+        password: 'password123',
+      }),
+    });
+    assert.equal(res.status, 201);
+    const body = await res.json();
+    assert.equal(body.shop.shopCode, 'shree-balaji-sons-xerox-karve-nagar');
+  });
+
+  it('Rejects registration with missing required fields with HTTP 400', async () => {
+    const res = await fetch(`${baseUrl}/api/v1/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'incomplete@test.in', password: '123' }),
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.ok(body.error.includes('Missing required'));
+  });
+
+  it('Rejects login with invalid credentials or unknown email with HTTP 401/400', async () => {
+    // Unknown email
+    const unknownRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'ghost@nonexistent.in', password: 'password123' }),
+    });
+    assert.equal(unknownRes.status, 401);
+
+    // Wrong password
+    const wrongPassRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'owner@campusprint.in', password: 'TotallyWrongPassword!' }),
+    });
+    assert.equal(wrongPassRes.status, 401);
+
+    // Missing fields
+    const missingRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'owner@campusprint.in' }),
+    });
+    assert.equal(missingRes.status, 400);
+  });
+
+  it('Hydrates authenticated session via GET /api/v1/auth/me', async () => {
+    const res = await fetch(`${baseUrl}/api/v1/auth/me`, {
+      headers: { Authorization: `Bearer ${merchantToken}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.user.email, 'owner@campusprint.in');
+    assert.equal(body.shop.id, 'shop-campus-1');
+    assert.equal(body.organization.id, 'org-campus-network');
+  });
+
+  it('Rejects protected endpoints when token is missing, malformed, or expired with HTTP 401', async () => {
+    // Missing token
+    const noTokenRes = await fetch(`${baseUrl}/api/v1/merchant/dashboard`);
+    assert.equal(noTokenRes.status, 401);
+
+    // Malformed token
+    const malformedRes = await fetch(`${baseUrl}/api/v1/merchant/dashboard`, {
+      headers: { Authorization: 'Bearer this-is-not-valid-base64-json' },
+    });
+    assert.equal(malformedRes.status, 401);
+
+    // Expired token
+    const expiredPayload = {
+      userId: 'user-expired',
+      email: 'expired@test.in',
+      role: 'MERCHANT_OWNER',
+      shopId: 'shop-campus-1',
+      exp: Math.floor(Date.now() / 1000) - 3600, // 1 hour in the past
+    };
+    const expiredToken = Buffer.from(JSON.stringify(expiredPayload)).toString('base64');
+    const expiredRes = await fetch(`${baseUrl}/api/v1/merchant/dashboard`, {
+      headers: { Authorization: `Bearer ${expiredToken}` },
+    });
+    assert.equal(expiredRes.status, 401);
+    const expiredBody = await expiredRes.json();
+    assert.ok(expiredBody.error.includes('expired') || expiredBody.error.includes('Invalid'));
+  });
+
+  it('Enforces cross-tenant isolation: blocks foreign shop query, header spoofing, and order tampering with HTTP 403', async () => {
+    // 1. Cross-tenant query param tampering
+    const foreignQueryRes = await fetch(`${baseUrl}/api/v1/merchant/dashboard?shopId=shop-other-tenant`, {
+      headers: { Authorization: `Bearer ${merchantToken}` },
+    });
+    assert.equal(foreignQueryRes.status, 403);
+    const foreignQueryBody = await foreignQueryRes.json();
+    assert.ok(foreignQueryBody.error.includes('Tenant isolation violation'));
+
+    // 2. Cross-tenant header spoofing
+    const headerSpoofRes = await fetch(`${baseUrl}/api/v1/merchant/dashboard`, {
+      headers: {
+        Authorization: `Bearer ${merchantToken}`,
+        'x-shop-id': 'shop-other-tenant',
+      },
+    });
+    assert.equal(headerSpoofRes.status, 403);
+
+    // 3. Register a second merchant to obtain a different tenant token
+    const reg2 = await fetch(`${baseUrl}/api/v1/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopName: 'Tenant 2 Xerox',
+        ownerName: 'Tenant Two',
+        email: 'tenant2@test.in',
+        password: 'password123',
+      }),
+    });
+    const { token: tenant2Token } = await reg2.json();
+
+    // 4. Fetch Tenant 1's order to get its real ID
+    const ordersRes = await fetch(`${baseUrl}/api/v1/merchant/orders`, {
+      headers: { Authorization: `Bearer ${merchantToken}` },
+    });
+    const orders = await ordersRes.json();
+    const tenant1OrderId = orders[0]?.id;
+    assert.ok(tenant1OrderId);
+
+    // 5. Tenant 2 attempts to inspect Tenant 1's order
+    const getOrderRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${tenant1OrderId}`, {
+      headers: { Authorization: `Bearer ${tenant2Token}` },
+    });
+    assert.equal(getOrderRes.status, 403);
+
+    // 6. Tenant 2 attempts to tamper with Tenant 1's order status
+    const tamperRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${tenant1OrderId}/status`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${tenant2Token}`,
+      },
+      body: JSON.stringify({ status: 'COLLECTED' }),
+    });
+    assert.equal(tamperRes.status, 403);
+
+    // 7. Tenant 2 attempts to collect cash for Tenant 1's order
+    const cashRes = await fetch(`${baseUrl}/api/v1/payments/orders/${tenant1OrderId}/collect-cash`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${tenant2Token}` },
+    });
+    assert.equal(cashRes.status, 403);
+  });
+
+  it('Allows Platform Owner to access tenant data without isolation error', async () => {
+    const adminRes = await fetch(`${baseUrl}/api/v1/merchant/dashboard?shopId=shop-campus-1`, {
+      headers: {
+        'x-user-role': 'PLATFORM_OWNER',
+        'x-user-id': 'user-admin-1',
+      },
+    });
+    assert.equal(adminRes.status, 200);
+    const body = await adminRes.json();
+    assert.equal(body.shopId, 'shop-campus-1');
+  });
 });

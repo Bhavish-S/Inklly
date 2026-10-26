@@ -16,8 +16,18 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate }) => {
     const handleScroll = () => {
       setIsScrolled(window.scrollY > 10);
     };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setDropdownOpen(false);
+        setMobileMenuOpen(false);
+      }
+    };
     window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
   }, []);
 
   const handleNav = (path: string) => {
@@ -236,24 +246,37 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate }) => {
             display: 'none',
             background: 'none',
             border: 'none',
-            padding: '0.5rem',
+            padding: '0.625rem',
+            minHeight: '44px',
+            minWidth: '44px',
+            alignItems: 'center',
+            justifyContent: 'center',
             cursor: 'pointer',
+            borderRadius: '8px',
           }}
           className="mobile-toggle"
-          aria-label="Toggle navigation menu"
+          aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
+          aria-expanded={mobileMenuOpen}
+          aria-controls="mobile-nav-drawer"
         >
-          <div style={{ width: '22px', height: '2px', backgroundColor: 'var(--text)', marginBottom: '5px' }} />
-          <div style={{ width: '22px', height: '2px', backgroundColor: 'var(--text)', marginBottom: '5px' }} />
-          <div style={{ width: '22px', height: '2px', backgroundColor: 'var(--text)' }} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+            <div style={{ width: '22px', height: '2px', backgroundColor: 'var(--text)', transition: 'all 0.2s ease', transform: mobileMenuOpen ? 'rotate(45deg) translate(5px, 5px)' : 'none' }} />
+            <div style={{ width: '22px', height: '2px', backgroundColor: 'var(--text)', opacity: mobileMenuOpen ? 0 : 1, transition: 'all 0.2s ease' }} />
+            <div style={{ width: '22px', height: '2px', backgroundColor: 'var(--text)', transition: 'all 0.2s ease', transform: mobileMenuOpen ? 'rotate(-45deg) translate(5px, -5px)' : 'none' }} />
+          </div>
         </button>
       </div>
 
       {/* Mobile Drawer */}
       {mobileMenuOpen && (
         <div
+          id="mobile-nav-drawer"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Mobile Navigation Menu"
           style={{
             position: 'fixed',
-            top: '64px',
+            top: '66px',
             left: 0,
             right: 0,
             bottom: 0,
@@ -261,57 +284,59 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate }) => {
             zIndex: 100,
             display: 'flex',
             flexDirection: 'column',
-            padding: '1.5rem',
+            padding: '1.25rem',
             overflowY: 'auto',
           }}
         >
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', flex: 1 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', flex: 1 }}>
             {/* Mobile Product Accordion */}
             <div>
               <button
                 onClick={() => setMobileProductOpen(!mobileProductOpen)}
+                aria-expanded={mobileProductOpen}
                 style={{
                   width: '100%',
+                  minHeight: '44px',
                   display: 'flex',
                   justifyContent: 'space-between',
                   alignItems: 'center',
                   background: 'none',
                   border: 'none',
-                  fontSize: '1.125rem',
+                  fontSize: '1.0625rem',
                   fontWeight: 700,
-                  padding: '0.5rem 0',
+                  padding: '0.625rem 0.5rem',
+                  borderRadius: '8px',
+                  color: 'var(--text)',
                 }}
               >
-                Product
-                <span style={{ transform: mobileProductOpen ? 'rotate(180deg)' : 'none' }}>
+                <span>Product</span>
+                <span style={{ transform: mobileProductOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }}>
                   <ChevronDownIcon size={18} />
                 </span>
               </button>
               {mobileProductOpen && (
-                <div style={{ paddingLeft: '1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '0.5rem' }}>
-                  <button onClick={() => handleNav('/print-shop-automation-software')} style={{ textAlign: 'left', background: 'none', border: 'none', fontSize: '1rem' }}>Print automation</button>
-                  <button onClick={() => handleNav('/whatsapp-printing-software')} style={{ textAlign: 'left', background: 'none', border: 'none', fontSize: '1rem' }}>WhatsApp printing</button>
-                  <button onClick={() => handleNav('/qr-code-printing-system')} style={{ textAlign: 'left', background: 'none', border: 'none', fontSize: '1rem' }}>QR ordering</button>
-                  <button onClick={() => handleNav('/p/campus1')} style={{ textAlign: 'left', background: 'none', border: 'none', fontSize: '1rem' }}>Customer demo portal</button>
+                <div style={{ paddingLeft: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.35rem', marginTop: '0.25rem' }}>
+                  <button onClick={() => handleNav('/print-shop-automation-software')} style={{ minHeight: '44px', textAlign: 'left', background: 'var(--tint-2)', border: 'none', fontSize: '0.9375rem', fontWeight: 600, padding: '0.5rem 0.75rem', borderRadius: '8px' }}>Direct PC print automation</button>
+                  <button onClick={() => handleNav('/whatsapp-printing-software')} style={{ minHeight: '44px', textAlign: 'left', background: 'var(--tint-2)', border: 'none', fontSize: '0.9375rem', fontWeight: 600, padding: '0.5rem 0.75rem', borderRadius: '8px' }}>WhatsApp print intake</button>
+                  <button onClick={() => handleNav('/qr-code-printing-system')} style={{ minHeight: '44px', textAlign: 'left', background: 'var(--tint-2)', border: 'none', fontSize: '0.9375rem', fontWeight: 600, padding: '0.5rem 0.75rem', borderRadius: '8px' }}>Countertop QR standees</button>
+                  <button onClick={() => handleNav('/p/campus1')} style={{ minHeight: '44px', textAlign: 'left', background: 'var(--tint-2)', border: 'none', fontSize: '0.9375rem', fontWeight: 600, padding: '0.5rem 0.75rem', borderRadius: '8px', color: 'var(--brand)' }}>Customer live demo (/p/campus1)</button>
                 </div>
               )}
             </div>
 
-            <button onClick={() => handleNav('/how-it-works')} style={{ textAlign: 'left', background: 'none', border: 'none', fontSize: '1.125rem', fontWeight: 700, padding: '0.5rem 0' }}>How it works</button>
-            <button onClick={() => handleNav('/pricing')} style={{ textAlign: 'left', background: 'none', border: 'none', fontSize: '1.125rem', fontWeight: 700, padding: '0.5rem 0' }}>Pricing</button>
-            <button onClick={() => handleNav('/contact')} style={{ textAlign: 'left', background: 'none', border: 'none', fontSize: '1.125rem', fontWeight: 700, padding: '0.5rem 0' }}>Contact</button>
-            <button onClick={() => handleNav('/platform')} style={{ textAlign: 'left', background: 'none', border: 'none', fontSize: '1.125rem', fontWeight: 700, padding: '0.5rem 0' }}>Platform admin</button>
-            <button onClick={() => handleNav('/developer')} style={{ textAlign: 'left', background: 'none', border: 'none', fontSize: '1.125rem', fontWeight: 700, padding: '0.5rem 0' }}>Developer portal</button>
-            <button onClick={() => handleNav('/login')} style={{ textAlign: 'left', background: 'none', border: 'none', fontSize: '1.125rem', fontWeight: 700, padding: '0.5rem 0' }}>Sign in</button>
+            <button onClick={() => handleNav('/how-it-works')} style={{ minHeight: '44px', textAlign: 'left', background: currentPath === '/how-it-works' ? 'var(--tint)' : 'none', border: 'none', fontSize: '1.0625rem', fontWeight: 700, padding: '0.625rem 0.5rem', borderRadius: '8px', color: currentPath === '/how-it-works' ? 'var(--brand)' : 'var(--text)' }}>How it works</button>
+            <button onClick={() => handleNav('/pricing')} style={{ minHeight: '44px', textAlign: 'left', background: currentPath === '/pricing' ? 'var(--tint)' : 'none', border: 'none', fontSize: '1.0625rem', fontWeight: 700, padding: '0.625rem 0.5rem', borderRadius: '8px', color: currentPath === '/pricing' ? 'var(--brand)' : 'var(--text)' }}>Pricing</button>
+            <button onClick={() => handleNav('/contact')} style={{ minHeight: '44px', textAlign: 'left', background: currentPath === '/contact' ? 'var(--tint)' : 'none', border: 'none', fontSize: '1.0625rem', fontWeight: 700, padding: '0.625rem 0.5rem', borderRadius: '8px', color: currentPath === '/contact' ? 'var(--brand)' : 'var(--text)' }}>Contact</button>
+            <button onClick={() => handleNav('/login')} style={{ minHeight: '44px', textAlign: 'left', background: currentPath === '/login' ? 'var(--tint)' : 'none', border: 'none', fontSize: '1.0625rem', fontWeight: 700, padding: '0.625rem 0.5rem', borderRadius: '8px', color: currentPath === '/login' ? 'var(--brand)' : 'var(--text)' }}>Sign in to counter</button>
           </div>
 
           <div style={{ paddingTop: '1rem', borderTop: '1px solid var(--border)' }}>
             <button
               onClick={() => handleNav('/register')}
               className="btn btn-primary"
-              style={{ width: '100%', padding: '0.875rem' }}
+              style={{ width: '100%', minHeight: '48px', padding: '0.875rem' }}
             >
-              Get started
+              Start Free Shop Trial
               <ArrowRightIcon size={16} />
             </button>
           </div>

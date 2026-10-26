@@ -20,7 +20,7 @@ export class MerchantController {
   ) {}
 
   private getShopId(req: Request): string {
-    return req.user?.shopId || (req.query.shopId as string) || (req.headers['x-shop-id'] as string) || 'shop-campus-1';
+    return req.user?.shopId || (req.query.shopId as string) || (req.headers['x-shop-id'] as string) || '';
   }
 
   public getDashboard = (req: Request, res: Response) => {
@@ -70,6 +70,21 @@ export class MerchantController {
     if (!order) {
       return res.status(404).json({ error: 'Order not found' });
     }
+
+    const effectiveShopId = this.getShopId(req);
+    if (
+      req.user?.role !== 'PLATFORM_OWNER' &&
+      req.user?.role !== 'PLATFORM_ADMIN' &&
+      effectiveShopId &&
+      order.shopId !== effectiveShopId
+    ) {
+      return res.status(403).json({
+        error: 'Tenant isolation violation: Cross-tenant access denied',
+        requestedShopId: order.shopId,
+        userShopId: effectiveShopId,
+      });
+    }
+
     res.json(order);
   };
 
@@ -79,6 +94,25 @@ export class MerchantController {
 
     if (!status) {
       return res.status(400).json({ error: 'Status is required' });
+    }
+
+    const order = this.orderRepo.getOrderById(id);
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    const effectiveShopId = this.getShopId(req);
+    if (
+      req.user?.role !== 'PLATFORM_OWNER' &&
+      req.user?.role !== 'PLATFORM_ADMIN' &&
+      effectiveShopId &&
+      order.shopId !== effectiveShopId
+    ) {
+      return res.status(403).json({
+        error: 'Tenant isolation violation: Cannot modify order belonging to another shop',
+        requestedShopId: order.shopId,
+        userShopId: effectiveShopId,
+      });
     }
 
     try {
@@ -95,6 +129,20 @@ export class MerchantController {
     const order = this.orderRepo.getOrderById(id);
     if (!order) {
       return res.status(404).json({ error: 'Order not found' });
+    }
+
+    const effectiveShopId = this.getShopId(req);
+    if (
+      req.user?.role !== 'PLATFORM_OWNER' &&
+      req.user?.role !== 'PLATFORM_ADMIN' &&
+      effectiveShopId &&
+      order.shopId !== effectiveShopId
+    ) {
+      return res.status(403).json({
+        error: 'Tenant isolation violation: Cannot print order belonging to another shop',
+        requestedShopId: order.shopId,
+        userShopId: effectiveShopId,
+      });
     }
 
     try {

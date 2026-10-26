@@ -302,6 +302,66 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     setGlobalToast('Shop QR URL copied to clipboard!');
   };
 
+  // Real Edge Print Agent Health & Detection State (Port 8765)
+  const [agentOnline, setAgentOnline] = useState<boolean>(false);
+  const [agentInfo, setAgentInfo] = useState<{ version?: string; hostname?: string } | null>(null);
+
+  const checkAgentHealth = async (showToast: boolean = false) => {
+    try {
+      const res = await fetch('http://127.0.0.1:8765/health', { method: 'GET', signal: AbortSignal.timeout(2000) });
+      if (res.ok) {
+        const data = await res.json();
+        setAgentOnline(true);
+        setAgentInfo(data);
+        if (showToast) {
+          setGlobalToast('✓ Inklly Agent is ONLINE and communicating on port 8765');
+        }
+        try {
+          const prnRes = await fetch('http://127.0.0.1:8765/printers', { signal: AbortSignal.timeout(2000) });
+          if (prnRes.ok) {
+            const prnData = await prnRes.json();
+            if (prnData.printers && prnData.printers.length > 0) {
+              setDetectedPrinters(prnData.printers.map((p: any) => ({
+                name: p.name,
+                driver: p.driverName || 'Windows Print Driver',
+                port: p.portName || 'USB001',
+                status: p.status || 'Ready',
+                isDefault: p.isDefault || false,
+                isPhysical: true,
+                supportsColor: true,
+                supportsDuplex: true,
+                tray: 'Auto-Select (Tray 1)',
+              })));
+            }
+          }
+        } catch {
+          // ignore error
+        }
+        return true;
+      }
+    } catch {
+      setAgentOnline(false);
+      if (showToast) {
+        setGlobalToast('⚠️ Inklly Agent is OFFLINE. Run Inklly-Agent-Setup.bat or InkllyAgent.exe on this PC.');
+      }
+    }
+    return false;
+  };
+
+  useEffect(() => {
+    checkAgentHealth(false);
+    const interval = setInterval(() => checkAgentHealth(false), 12000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleDownloadAgent = (platform: string, format: string = 'bundle') => {
+    const isProd = typeof window !== 'undefined' && !['localhost', '127.0.0.1'].includes(window.location.hostname);
+    const apiBase = (import.meta.env.VITE_API_BASE as string) || (isProd ? 'https://inklly.onrender.com/api/v1' : 'http://localhost:4000/api/v1');
+    const downloadUrl = `${apiBase}/agent/download?platform=${platform}&shopCode=${currentMerchant.shopCode || 'campus1'}&format=${format}`;
+    window.location.href = downloadUrl;
+    setGlobalToast(`Downloading Inklly Agent for ${platform}...`);
+  };
+
   const handleSwitchMerchant = (merchantId: string) => {
     const target = DEMO_MERCHANTS.find((m) => m.id === merchantId);
     if (!target) return;
@@ -528,16 +588,30 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   };
 
   // Business Setup: Profile
-  const [shopName, setShopName] = useState<string>('Printing Shopz');
-  const [shopTagline, setShopTagline] = useState<string>('High Speed Xerox, Document Printing & Lamination');
-  const [shopPhone, setShopPhone] = useState<string>('+91 98765 43210');
-  const [shopEmail, setShopEmail] = useState<string>('support@printingshopz.in');
-  const [shopAddress, setShopAddress] = useState<string>('Shop 4, Ground Floor, Academic Complex');
+  const [shopName, setShopName] = useState<string>(() => liveShop?.name || 'Printing Shopz');
+  const [shopTagline, setShopTagline] = useState<string>(() => liveShop?.tagline || 'High Speed Xerox, Document Printing & Lamination');
+  const [shopPhone, setShopPhone] = useState<string>(() => liveShop?.phone || '+91 98765 43210');
+  const [shopEmail, setShopEmail] = useState<string>(() => liveShop?.email || liveUser?.email || 'support@printingshopz.in');
+  const [shopAddress, setShopAddress] = useState<string>(() => liveShop?.address || 'Shop 4, Ground Floor, Academic Complex');
   const [shopLocality, setShopLocality] = useState<string>('Near Central Library, University Campus');
-  const [shopCity, setShopCity] = useState<string>('Pune');
-  const [shopState, setShopState] = useState<string>('Maharashtra');
-  const [shopPincode, setShopPincode] = useState<string>('411007');
+  const [shopCity, setShopCity] = useState<string>(() => liveShop?.city || 'Pune');
+  const [shopState, setShopState] = useState<string>(() => liveShop?.state || 'Maharashtra');
+  const [shopPincode, setShopPincode] = useState<string>(() => liveShop?.pinCode || '411007');
   const [shopGstin, setShopGstin] = useState<string>('27AABCU9603R1ZM');
+
+  useEffect(() => {
+    if (liveShop) {
+      if (liveShop.name) setShopName(liveShop.name);
+      if (liveShop.tagline) setShopTagline(liveShop.tagline);
+      if (liveShop.phone) setShopPhone(liveShop.phone);
+      if (liveShop.email || liveUser?.email) setShopEmail(liveShop.email || liveUser?.email);
+      if (liveShop.address) setShopAddress(liveShop.address);
+      if (liveShop.city) setShopCity(liveShop.city);
+      if (liveShop.state) setShopState(liveShop.state);
+      if (liveShop.pinCode) setShopPincode(liveShop.pinCode);
+      if (liveShop.name) setReceiptBusinessName(liveShop.name);
+    }
+  }, [liveShop, liveUser]);
   const [advancedServicesEnabled, setAdvancedServicesEnabled] = useState<boolean>(true);
   const [physicalServicesEnabled, setPhysicalServicesEnabled] = useState<boolean>(true);
   const [portalServices, setPortalServices] = useState<Record<string, boolean>>({
@@ -649,6 +723,29 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [rateHardBinding, setRateHardBinding] = useState<string>('150.00');
   const [rateLaminationA4, setRateLaminationA4] = useState<string>('25.00');
 
+  // Hydrate Live Rate Rules from API
+  useEffect(() => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('inklly_token') : null;
+    if (token) {
+      api.getRates()
+        .then((ratesData) => {
+          if (ratesData?.rateRules && Array.isArray(ratesData.rateRules)) {
+            const rules = ratesData.rateRules;
+            const a4BwSimp = rules.find((r: any) => r.paperSize === 'A4' && r.colorMode === 'bw' && r.duplexMode === 'simplex');
+            const a4BwDupl = rules.find((r: any) => r.paperSize === 'A4' && r.colorMode === 'bw' && (r.duplexMode === 'duplex_auto' || r.duplexMode === 'duplex_manual'));
+            const a4ColSimp = rules.find((r: any) => r.paperSize === 'A4' && r.colorMode === 'color' && r.duplexMode === 'simplex');
+            const a4ColDupl = rules.find((r: any) => r.paperSize === 'A4' && r.colorMode === 'color' && (r.duplexMode === 'duplex_auto' || r.duplexMode === 'duplex_manual'));
+
+            if (a4BwSimp) setRateBwSingle((a4BwSimp.pricePerPrintedSidePaise / 100).toFixed(2));
+            if (a4BwDupl) setRateBwDuplex((a4BwDupl.pricePerPrintedSidePaise / 100).toFixed(2));
+            if (a4ColSimp) setRateColorSingle((a4ColSimp.pricePerPrintedSidePaise / 100).toFixed(2));
+            if (a4ColDupl) setRateColorDuplex((a4ColDupl.pricePerPrintedSidePaise / 100).toFixed(2));
+          }
+        })
+        .catch(() => {});
+    }
+  }, [liveShop?.id]);
+
   // Business Setup: Discounts
   const [bulkDiscountEnabled, setBulkDiscountEnabled] = useState<boolean>(true);
   const [bulkMinThreshold, setBulkMinThreshold] = useState<number>(100);
@@ -693,6 +790,80 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const triggerSaveNotification = (sectionName: string) => {
     setSaveSuccessToast(`${sectionName} saved successfully to Inklly Cloud.`);
     setTimeout(() => setSaveSuccessToast(null), 3500);
+  };
+
+  const handleSaveBusinessSetup = async () => {
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('inklly_token') : null;
+      if (token) {
+        // 1. Save Shop Details
+        try {
+          await api.updateShopSettings({
+            name: shopName,
+            phone: shopPhone,
+            address: shopAddress,
+            city: shopCity,
+            state: shopState,
+            pinCode: shopPincode,
+            tagline: shopTagline,
+          });
+        } catch {
+          // Direct fallback to PUT in case client PATCH is used
+          const isProduction = typeof window !== 'undefined' && !['localhost', '127.0.0.1'].includes(window.location.hostname);
+          const apiBase = (import.meta.env.VITE_API_BASE as string) || (isProduction ? 'https://inklly.onrender.com/api/v1' : 'http://localhost:4000/api/v1');
+          await fetch(`${apiBase}/merchant/settings`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              name: shopName,
+              phone: shopPhone,
+              address: shopAddress,
+              city: shopCity,
+              state: shopState,
+              pinCode: shopPincode,
+              tagline: shopTagline,
+            }),
+          });
+        }
+
+        // 2. Save Rate Rules (Integer Paise conversion)
+        const bwSimpPaise = Math.round(parseFloat(rateBwSingle || '2') * 100);
+        const bwDuplPaise = Math.round(parseFloat(rateBwDuplex || '1.5') * 100);
+        const colSimpPaise = Math.round(parseFloat(rateColorSingle || '10') * 100);
+        const colDuplPaise = Math.round(parseFloat(rateColorDuplex || '8') * 100);
+
+        await Promise.all([
+          api.updateRate({ paperSize: 'A4', colorMode: 'bw', duplexMode: 'simplex', pricePerPrintedSidePaise: bwSimpPaise }),
+          api.updateRate({ paperSize: 'A4', colorMode: 'bw', duplexMode: 'duplex_auto', pricePerPrintedSidePaise: bwDuplPaise }),
+          api.updateRate({ paperSize: 'A4', colorMode: 'color', duplexMode: 'simplex', pricePerPrintedSidePaise: colSimpPaise }),
+          api.updateRate({ paperSize: 'A4', colorMode: 'color', duplexMode: 'duplex_auto', pricePerPrintedSidePaise: colDuplPaise }),
+        ]);
+
+        // 3. Update localStorage shop cache
+        const stored = localStorage.getItem('inklly_shop');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          const updated = {
+            ...parsed,
+            name: shopName,
+            phone: shopPhone,
+            address: shopAddress,
+            city: shopCity,
+            state: shopState,
+            pinCode: shopPincode,
+            tagline: shopTagline,
+          };
+          localStorage.setItem('inklly_shop', JSON.stringify(updated));
+          setLiveShop(updated);
+        }
+      }
+      triggerSaveNotification('Business Setup and Rates');
+    } catch (err: any) {
+      triggerSaveNotification('Failed to save settings: ' + (err.message || 'Unknown error'));
+    }
   };
 
   // Plan Upgrade Calculation Helpers
@@ -808,119 +979,28 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [newEmpPhone, setNewEmpPhone] = useState<string>('');
   const [newEmpRole, setNewEmpRole] = useState<'Operator' | 'Manager' | 'Cashier'>('Operator');
   const [newEmpShift, setNewEmpShift] = useState<'Morning (8 AM - 2 PM)' | 'Evening (2 PM - 9 PM)' | 'Full Day'>('Morning (8 AM - 2 PM)');
-  const [employeeList, setEmployeeList] = useState<Array<{ id: string; name: string; phone: string; role: string; shift: string; status: string }>>([
-    { id: 'emp-1', name: 'Anil Kumar', phone: '+91 98111 22334', role: 'Counter Operator', shift: 'Morning (8 AM - 2 PM)', status: 'Active' },
-    { id: 'emp-2', name: 'Sunita Mishra', phone: '+91 98222 33445', role: 'Store Manager', shift: 'Evening (2 PM - 9 PM)', status: 'Active' },
-  ]);
+  const [employeeList, setEmployeeList] = useState<Array<{ id: string; name: string; phone: string; role: string; shift: string; status: string }>>([]);
 
-  // Orders Fixture Data (Fully interactive across all 7 statuses)
-  const [ordersList, setOrdersList] = useState([
-    {
-      id: '0002',
-      customer: 'Ramesh Patel',
-      phone: '+91 98765 43210',
-      time: '11:26 am',
-      document: 'Bulls, Bears and Other Beasts PDF.pdf',
-      pages: 455,
-      copies: 1,
-      status: 'Awaiting Merchant Action',
-      amount: '₹546.00',
-      tab: 'pending',
-      colorMode: 'B&W',
-      duplex: 'Back-to-Back (Duplex)',
-      paymentMode: 'Cash on Collection',
-    },
-    {
-      id: '0001',
-      customer: 'Priya Sharma',
-      phone: '+91 91234 56789',
-      time: '08:14 pm',
-      document: 'Module2_Notes_Final-1-50.pdf',
-      pages: 50,
-      copies: 1,
-      status: 'Awaiting Merchant Action',
-      amount: '₹60.00',
-      tab: 'pending',
-      colorMode: 'B&W',
-      duplex: 'Back-to-Back (Duplex)',
-      paymentMode: 'Cash on Collection',
-    },
-    {
-      id: '0003',
-      customer: 'Amit Kumar',
-      phone: '+91 99887 76655',
-      time: '10:45 am',
-      document: 'Project_Report_Final_Draft_v2.pdf',
-      pages: 24,
-      copies: 2,
-      status: 'Document Rasterized · Ready for Spooler',
-      amount: '₹28.80',
-      tab: 'processing',
-      colorMode: 'B&W',
-      duplex: 'Single-sided',
-      paymentMode: 'Paid Online (Razorpay)',
-    },
-    {
-      id: '0004',
-      customer: 'Sneha Verma',
-      phone: '+91 97654 32109',
-      time: '09:30 am',
-      document: 'Assignment_Cover_Color.pdf',
-      pages: 4,
-      copies: 1,
-      status: 'Printing on Canon imageRUNNER C3530i',
-      amount: '₹32.00',
-      tab: 'printing',
-      colorMode: 'Colour',
-      duplex: 'Single-sided',
-      paymentMode: 'Paid Online (UPI)',
-    },
-    {
-      id: '0005',
-      customer: 'Karan Singh',
-      phone: '+91 94321 09876',
-      time: '09:12 am',
-      document: 'Govt_ID_Proof_Scan.pdf',
-      pages: 2,
-      copies: 1,
-      status: 'Hardware Alert: Paper Jam (OUTPUT_UNCERTAIN)',
-      amount: '₹3.00',
-      tab: 'print_failed',
-      colorMode: 'B&W',
-      duplex: 'Single-sided',
-      paymentMode: 'Cash on Collection',
-    },
-    {
-      id: '0006',
-      customer: 'Arjun Das',
-      phone: '+91 95551 23456',
-      time: '08:50 am',
-      document: 'Duplicate_Draft_Unverified.pdf',
-      pages: 10,
-      copies: 1,
-      status: 'Rejected by Merchant (Corrupted font)',
-      amount: '₹12.00',
-      tab: 'rejected',
-      colorMode: 'B&W',
-      duplex: 'Single-sided',
-      paymentMode: 'Cash on Collection',
-    },
-    {
-      id: '0007',
-      customer: 'Meera Nair',
-      phone: '+91 96662 34567',
-      time: 'Yesterday',
-      document: 'Thesis_Final_Hardbound.pdf',
-      pages: 120,
-      copies: 1,
-      status: 'Print Completed & Collected',
-      amount: '₹294.00',
-      tab: 'done',
-      colorMode: 'B&W',
-      duplex: 'Back-to-Back (Duplex)',
-      paymentMode: 'Paid Online (Razorpay)',
-    },
-  ]);
+  // Live Orders Data (Starts 100% fresh - populated in real-time from customer intake)
+  const [ordersList, setOrdersList] = useState<any[]>(() => {
+    try {
+      const stored = localStorage.getItem('inklly_live_orders');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        const cleaned = parsed.filter((o: any) =>
+          !['0001', '0002', '0003', '0004', '0005', '0006', '0007', 'order-demo-001'].includes(o.id) &&
+          !['Ramesh Patel', 'Priya Sharma', 'Amit Kumar', 'Sneha Verma', 'Karan Singh', 'Arjun Das', 'Meera Nair'].includes(o.customer)
+        );
+        if (cleaned.length !== parsed.length) {
+          localStorage.setItem('inklly_live_orders', JSON.stringify(cleaned));
+        }
+        return cleaned;
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  });
 
   // Synchronize orders with Customer Portal via LocalStorage
   const updateOrderInStorage = (orderId: string, updates: any) => {
@@ -943,10 +1023,14 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
         const stored = localStorage.getItem('inklly_live_orders');
         if (stored) {
           const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) {
+          const cleaned = parsed.filter((o: any) =>
+            !['0001', '0002', '0003', '0004', '0005', '0006', '0007', 'order-demo-001'].includes(o.id) &&
+            !['Ramesh Patel', 'Priya Sharma', 'Amit Kumar', 'Sneha Verma', 'Karan Singh', 'Arjun Das', 'Meera Nair'].includes(o.customer)
+          );
+          if (Array.isArray(cleaned)) {
             setOrdersList((prev) => {
               const existingIds = new Set(prev.map((o) => o.id));
-              const fresh = parsed.filter((o: any) => !existingIds.has(o.id));
+              const fresh = cleaned.filter((o: any) => !existingIds.has(o.id));
               if (fresh.length > 0) {
                 // Automated printing workflow
                 if (autoPrintMode !== 'off') {
@@ -1639,88 +1723,41 @@ pause
               </div>
             )}
 
-            {/* Interactive Demo Merchant & Paid Plan Switcher */}
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setMerchantMenuOpen(!merchantMenuOpen)}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-linear-to-r from-indigo-50 to-purple-50 dark:from-indigo-950/60 dark:to-purple-950/60 hover:from-indigo-100 hover:to-purple-100 transition-all cursor-pointer shadow-xs text-xs"
-                title="Switch active demo merchant & plan tier"
-              >
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-                <div className="text-left">
-                  <div className="font-extrabold text-indigo-950 dark:text-indigo-200 flex items-center gap-1.5 leading-tight">
-                    <span>Plan:</span>
-                    <span className="px-1.5 py-0.5 rounded-md text-[10px] font-black bg-indigo-600 text-white">
-                      {currentMerchant.planBadge}
-                    </span>
-                  </div>
-                </div>
-                <ChevronDownIcon size={13} className="text-indigo-500" />
-              </button>
-
-              {/* Dropdown Menu listing all 5 demo merchants */}
-              {merchantMenuOpen && (
-                <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-3 z-50 space-y-2 text-xs">
-                  <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
-                    <div>
-                      <div className="font-black text-slate-900 dark:text-white uppercase tracking-wider text-[10px]">
-                        Demo Merchants by Paid Plan
-                      </div>
-                      <div className="text-[10px] text-slate-400">Switch to test extra unlocked capabilities</div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setMerchantMenuOpen(false)}
-                      className="text-slate-400 hover:text-slate-600 font-bold"
-                    >
-                      ✕
-                    </button>
-                  </div>
-
-                  <div className="space-y-1.5 max-h-96 overflow-y-auto pr-1">
-                    {DEMO_MERCHANTS.map((m) => {
-                      const isSelected = m.id === selectedMerchantId;
-                      return (
-                        <div
-                          key={m.id}
-                          onClick={() => handleSwitchMerchant(m.id)}
-                          className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
-                            isSelected
-                              ? 'border-indigo-500 bg-indigo-50/70 dark:bg-indigo-950/40 shadow-xs ring-1 ring-indigo-400'
-                              : 'border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/60'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between gap-1.5 mb-1">
-                            <span className="font-bold text-slate-900 dark:text-white truncate">
-                              {m.name}
-                            </span>
-                            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full shrink-0 ${
-                              m.planTier === 'starter'
-                                ? 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200'
-                                : m.planTier === 'growth'
-                                ? 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300'
-                                : m.planTier === 'pro'
-                                ? 'bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300'
-                                : 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300'
-                            }`}>
-                              {m.planBadge}
-                            </span>
-                          </div>
-                          <div className="text-[10px] text-slate-500 dark:text-slate-400 line-clamp-1 mb-1">
-                            {m.tagline}
-                          </div>
-                          <div className="text-[9px] text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1">
-                            <span>✓</span>
-                            <span className="truncate">{m.features[0]}</span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
+            {/* Real Merchant Shop Identity & Plan Badge */}
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-linear-to-r from-indigo-50 to-purple-50 dark:from-indigo-950/60 dark:to-purple-950/60 shadow-xs text-xs">
+              <span className="font-extrabold text-indigo-950 dark:text-indigo-200 truncate max-w-[150px]">
+                {currentMerchant.name}
+              </span>
+              <span className="px-1.5 py-0.5 rounded-md text-[10px] font-black bg-indigo-600 text-white uppercase shrink-0">
+                {currentMerchant.planBadge || 'STARTER · ₹99/mo'}
+              </span>
             </div>
+
+            {/* Live Edge Agent Status Pill */}
+            <button
+              type="button"
+              onClick={() => checkAgentHealth(true)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer shadow-xs ${
+                agentOnline
+                  ? 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300'
+                  : 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-300'
+              }`}
+              title={agentOnline ? 'Edge Print Agent Online on http://127.0.0.1:8765 (Click to re-check)' : 'Edge Agent Offline (Click to test local connection)'}
+            >
+              <span className={`w-2 h-2 rounded-full shrink-0 ${agentOnline ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+              <span>{agentOnline ? 'Agent Online' : 'Agent Offline'}</span>
+            </button>
+
+            {/* Fast Counter Standee QR Pill */}
+            <button
+              type="button"
+              onClick={() => setActiveView('shop_qr')}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-white dark:bg-slate-900 text-indigo-700 dark:text-indigo-300 font-bold text-xs hover:bg-indigo-50 transition-colors shadow-xs cursor-pointer"
+              title="Open Counter QR Standee view"
+            >
+              <span>📱</span>
+              <span>Shop QR</span>
+            </button>
 
             {/* Product Tour Button */}
             <button
@@ -1806,6 +1843,9 @@ pause
                     type="button"
                     onClick={() => {
                       setProfileDropdownOpen(false);
+                      localStorage.removeItem('inklly_token');
+                      localStorage.removeItem('inklly_user');
+                      localStorage.removeItem('inklly_shop');
                       if (onNavigate) {
                         onNavigate('/login');
                       } else {
@@ -4609,7 +4649,7 @@ pause
             {/* Top Workspace Header */}
             <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 pb-3 border-b border-gray-200 dark:border-gray-800">
               <div>
-                <h1 className="text-xl font-black text-[#172031] dark:text-white">Printing Shopz</h1>
+                <h1 className="text-xl font-black text-[#172031] dark:text-white">{currentMerchant.name || 'Printing Shopz'}</h1>
                 <p className="text-xs text-gray-400">Merchant workspace</p>
               </div>
               <div className="flex items-center gap-3">
@@ -4620,7 +4660,7 @@ pause
                 )}
                 <button
                   type="button"
-                  onClick={() => triggerSaveNotification('Business Setup settings')}
+                  onClick={handleSaveBusinessSetup}
                   className="px-5 py-2 bg-[#4F46E5] hover:bg-[#4338CA] text-white rounded-xl text-xs font-bold shadow-xs transition-all"
                 >
                   Save changes
@@ -4693,7 +4733,8 @@ pause
                           <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">Contact Number</label>
                           <input
                             type="text"
-                            defaultValue="+917349095267"
+                            value={shopPhone}
+                            onChange={(e) => setShopPhone(e.target.value)}
                             className="w-full px-3 py-2 border rounded-xl bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-700 font-medium"
                           />
                         </div>
@@ -5166,15 +5207,15 @@ pause
                       <div>
                         <div className="flex items-center gap-2">
                           <h3 className="font-extrabold text-sm text-[#172031] dark:text-white">Inklly Agent</h3>
-                          <span className="text-[10px] bg-blue-50 text-blue-600 dark:bg-blue-950 px-2 py-0.5 rounded-full font-bold">
-                            Ready to download
+                          <span className={`text-[10px] ${agentOnline ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950' : 'bg-blue-50 text-blue-600 dark:bg-blue-950'} px-2 py-0.5 rounded-full font-bold`}>
+                            {agentOnline ? 'Connected' : 'Ready to download'}
                           </span>
                         </div>
                         <p className="text-[11px] text-gray-400">Install Inklly on the computer connected to your printers.</p>
                       </div>
                     </div>
-                    <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-gray-100 text-gray-500 dark:bg-gray-700">
-                      ● Not connected
+                    <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full ${agentOnline ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300' : 'bg-gray-100 text-gray-500 dark:bg-gray-700'}`}>
+                      ● {agentOnline ? 'ONLINE (Port 8765)' : 'Not connected'}
                     </span>
                   </div>
 
@@ -5182,19 +5223,19 @@ pause
                     {/* Left Column: Download button & platform options */}
                     <div className="md:col-span-7 space-y-3">
                       <span className="text-[10px] uppercase font-bold tracking-wider text-gray-400 block">
-                        DOWNLOAD · DETECTED WINDOWS 10.0 · X64
+                        DOWNLOAD · DETECTED WINDOWS 10/11 · X64
                       </span>
 
                       <button
                         type="button"
-                        onClick={() => triggerSaveNotification('Downloading Inklly-1.6.1-win-x64.msi')}
-                        className="w-full p-4 bg-[#3B82F6] hover:bg-[#2563EB] text-white rounded-2xl flex items-center justify-between shadow-md transition-all text-left"
+                        onClick={() => handleDownloadAgent('win-x64-bundle', 'bundle')}
+                        className="w-full p-4 bg-[#3B82F6] hover:bg-[#2563EB] text-white rounded-2xl flex items-center justify-between shadow-md transition-all text-left cursor-pointer"
                       >
                         <div className="flex items-center gap-3">
                           <span className="text-2xl">💻</span>
                           <div>
-                            <div className="font-extrabold text-sm">Download Inklly Agent</div>
-                            <div className="text-[11px] text-blue-100">v1.6.1 · Windows 10.0 - x64</div>
+                            <div className="font-extrabold text-sm">Download Inklly Print Agent Bundle</div>
+                            <div className="text-[11px] text-blue-100">Standalone Executable &amp; Setup (No Node.js needed) · x64 ZIP</div>
                           </div>
                         </div>
                         <span className="text-xl">⬇</span>
@@ -5202,37 +5243,58 @@ pause
 
                       {/* Download for another platform */}
                       <div className="border border-gray-200 dark:border-gray-700 rounded-2xl p-4 space-y-3">
-                        <div className="flex justify-between items-center text-xs font-bold text-gray-700 dark:text-gray-300 cursor-pointer">
-                          <span>Download for another platform</span>
-                          <span>˄</span>
+                        <div className="flex justify-between items-center text-xs font-bold text-gray-700 dark:text-gray-300">
+                          <span>Installer &amp; Driver Packages</span>
                         </div>
-                        <div className="grid grid-cols-2 gap-3 text-xs">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                           <button
                             type="button"
-                            onClick={() => triggerSaveNotification('Downloading InkllyLegacyAgent-1.5.51-windows7-x64.msi')}
-                            className="p-3 border rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center justify-between text-left"
+                            onClick={() => handleDownloadAgent('win-x64-msi', 'msi')}
+                            className="p-3 border rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center justify-between text-left cursor-pointer"
                           >
                             <div>
-                              <div className="font-bold">Windows</div>
-                              <div className="text-[10px] text-gray-400">v1.5.51 · x64 · 8.9 MB</div>
+                              <div className="font-bold">Windows x64 MSI</div>
+                              <div className="text-[10px] text-gray-400">Inklly-1.6.1-win-x64.msi</div>
                             </div>
                             <span>⬇</span>
                           </button>
                           <button
                             type="button"
-                            onClick={() => triggerSaveNotification('Downloading InkllyLegacyAgent-1.5.51-windows7-x86.msi')}
-                            className="p-3 border rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center justify-between text-left"
+                            onClick={() => handleDownloadAgent('windows7-x64', 'msi')}
+                            className="p-3 border rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center justify-between text-left cursor-pointer"
                           >
                             <div>
-                              <div className="font-bold">Windows</div>
-                              <div className="text-[10px] text-gray-400">v1.5.51 · x86 · 8.8 MB</div>
+                              <div className="font-bold">Windows 7/8/10 x64</div>
+                              <div className="text-[10px] text-gray-400">LegacyAgent-1.5.51-x64.msi</div>
+                            </div>
+                            <span>⬇</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadAgent('windows7-x86', 'msi')}
+                            className="p-3 border rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center justify-between text-left cursor-pointer"
+                          >
+                            <div>
+                              <div className="font-bold">Windows 32-bit (x86)</div>
+                              <div className="text-[10px] text-gray-400">LegacyAgent-1.5.51-x86.msi</div>
+                            </div>
+                            <span>⬇</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadAgent('usb', 'exe')}
+                            className="p-3 border rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center justify-between text-left cursor-pointer"
+                          >
+                            <div>
+                              <div className="font-bold">USB Counter Autorun</div>
+                              <div className="text-[10px] text-gray-400">usb-autorun-creator-2.exe</div>
                             </div>
                             <span>⬇</span>
                           </button>
                         </div>
                         <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-xl text-[10px] text-gray-400 leading-relaxed">
                           <strong className="text-gray-700 dark:text-gray-300 block mb-0.5">Supported production systems</strong>
-                          The recommended download matches the browser-reported OS and CPU architecture. If the browser hides architecture, select x86 (32-bit), x64 (64-bit Intel/AMD), or arm64 manually.
+                          The recommended download matches your Windows PC architecture. Works seamlessly with Canon LBP2900, HP LaserJet, Epson EcoTank, and all Windows spooler printers.
                         </div>
                       </div>
                     </div>
@@ -5246,7 +5308,7 @@ pause
                         <div className="flex items-start gap-2.5">
                           <span className="text-emerald-500 font-bold mt-0.5">✓</span>
                           <div>
-                            <div className="font-bold">1. Download & install the Inklly Agent</div>
+                            <div className="font-bold">1. Download &amp; install the Inklly Agent</div>
                             <div className="text-[11px] text-gray-400">Windows x64 · automatically matched</div>
                           </div>
                         </div>
@@ -5254,37 +5316,36 @@ pause
                         <div className="flex items-start gap-2.5">
                           <span className="text-emerald-500 font-bold mt-0.5">✓</span>
                           <div className="w-full">
-                            <div className="font-bold">2. Complete setup in the desktop app</div>
-                            <div className="text-[11px] text-gray-400 mb-2">Use your Shop ID and Secret key in the agent</div>
+                            <div className="font-bold">2. Run Inklly-Agent-Setup.bat</div>
+                            <div className="text-[11px] text-gray-400 mb-2">Auto-configures autostart &amp; detects Canon/HP printers</div>
                             <div className="p-3 bg-white dark:bg-gray-800 border rounded-xl space-y-2">
-                              <div className="font-bold text-[11px]">Connect your print computer</div>
+                              <div className="font-bold text-[11px]">Shop Pairing Code</div>
                               <p className="text-[10px] text-gray-400 leading-tight">
-                                These credentials belong to the owner's computer. Employees must sign in to their own accounts to prepare independent agent credentials. Keep these details private.
+                                Shop: <strong className="text-indigo-600">{currentMerchant.shopCode}</strong> · ID: {currentMerchant.id}
                               </p>
-                              <button
-                                type="button"
-                                onClick={() => triggerSaveNotification('Credentials regenerated')}
-                                className="px-3 py-1 bg-[#4F46E5] text-white rounded-lg text-[10px] font-bold"
-                              >
-                                Regenerate credentials
-                              </button>
                             </div>
                           </div>
                         </div>
 
                         <div className="flex items-start gap-2.5">
-                          <span className="text-gray-400 font-bold mt-0.5">⊙</span>
+                          <span className={`font-bold mt-0.5 ${agentOnline ? 'text-emerald-500' : 'text-amber-500'}`}>
+                            {agentOnline ? '✓' : '⊙'}
+                          </span>
                           <div>
-                            <div className="font-bold text-gray-500">3. Connect your print computer</div>
-                            <div className="text-[11px] text-gray-400">Waiting for your computer</div>
+                            <div className={`font-bold ${agentOnline ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-500'}`}>
+                              {agentOnline ? '3. Connected to print computer!' : '3. Waiting for agent on port 8765'}
+                            </div>
+                            <div className="text-[11px] text-gray-400">
+                              {agentOnline ? 'Live bidirectional spooling active' : 'Launch InkllyAgent.exe on this PC'}
+                            </div>
                           </div>
                         </div>
                       </div>
 
                       <button
                         type="button"
-                        onClick={() => triggerSaveNotification('Re-checking desktop agent connection on port 8765...')}
-                        className="w-full py-2.5 bg-[#4F46E5] text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 mt-2"
+                        onClick={() => checkAgentHealth(true)}
+                        className="w-full py-2.5 bg-[#4F46E5] text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 mt-2 cursor-pointer hover:bg-[#4338CA] transition-colors"
                       >
                         <span>🔄</span> Re-check agent connection
                       </button>
@@ -5326,22 +5387,24 @@ pause
                     <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
                       <div>
                         <div className="flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full bg-red-500" />
+                          <span className={`w-2.5 h-2.5 rounded-full ${agentOnline ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
                           <span className="font-bold text-xs">Inklly Agent</span>
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-200 text-gray-600">OFFLINE</span>
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${agentOnline ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300' : 'bg-gray-200 text-gray-600'}`}>
+                            {agentOnline ? 'ONLINE' : 'OFFLINE'}
+                          </span>
                         </div>
                         <div className="text-[11px] text-gray-500 mt-0.5">
-                          Inklly Agent OFFLINE — Caching to Local SQLite Queue Enabled
+                          {agentOnline ? 'Connected to local print spooler daemon · Live commands active' : 'Inklly Agent OFFLINE — Run Inklly-Agent-Setup.bat on this PC'}
                         </div>
                         <div className="text-[10px] text-gray-400 font-mono mt-0.5">
-                          Port 8765 · Computer unavailable · Agent version unavailable
+                          {agentOnline ? `Port 8765 · Host: ${agentInfo?.hostname || '127.0.0.1'} · v1.0.0` : 'Port 8765 · Computer unavailable · Agent version unavailable'}
                         </div>
                       </div>
                       <div className="flex gap-2">
-                        <button type="button" onClick={() => triggerSaveNotification('SQLite cache inspected: 0 queued items')} className="px-3 py-1.5 border rounded-xl text-xs font-bold bg-white dark:bg-gray-800 flex items-center gap-1">
+                        <button type="button" onClick={() => triggerSaveNotification('SQLite cache inspected: 0 queued items')} className="px-3 py-1.5 border rounded-xl text-xs font-bold bg-white dark:bg-gray-800 flex items-center gap-1 cursor-pointer">
                           <span>🖶</span> SQLite cache
                         </button>
-                        <button type="button" onClick={() => triggerSaveNotification('Reconnecting to port 8765...')} className="px-3 py-1.5 border rounded-xl text-xs font-bold bg-white dark:bg-gray-800 flex items-center gap-1">
+                        <button type="button" onClick={() => checkAgentHealth(true)} className="px-3 py-1.5 border rounded-xl text-xs font-bold bg-white dark:bg-gray-800 flex items-center gap-1 cursor-pointer hover:bg-gray-50">
                           <span>🔄</span> Reconnect
                         </button>
                       </div>
@@ -5561,7 +5624,12 @@ pause
                         <div className="text-[10px] text-gray-400 mb-1">Single-sided</div>
                         <div className="flex items-center gap-2 border rounded-xl px-3 py-1.5 bg-gray-50 dark:bg-gray-900">
                           <span className="text-gray-400 font-bold">₹</span>
-                          <input type="text" defaultValue="1.5" className="w-full font-bold outline-hidden bg-transparent" />
+                          <input
+                            type="text"
+                            value={rateBwSingle}
+                            onChange={(e) => setRateBwSingle(e.target.value)}
+                            className="w-full font-bold outline-hidden bg-transparent"
+                          />
                         </div>
                       </div>
 
@@ -5570,7 +5638,12 @@ pause
                         <div className="text-[10px] text-gray-400 mb-1">Back-to-back</div>
                         <div className="flex items-center gap-2 border rounded-xl px-3 py-1.5 bg-gray-50 dark:bg-gray-900">
                           <span className="text-gray-400 font-bold">₹</span>
-                          <input type="text" defaultValue="1.2" className="w-full font-bold outline-hidden bg-transparent" />
+                          <input
+                            type="text"
+                            value={rateBwDuplex}
+                            onChange={(e) => setRateBwDuplex(e.target.value)}
+                            className="w-full font-bold outline-hidden bg-transparent"
+                          />
                         </div>
                       </div>
 
@@ -5579,7 +5652,12 @@ pause
                         <div className="text-[10px] text-gray-400 mb-1">Single-sided</div>
                         <div className="flex items-center gap-2 border rounded-xl px-3 py-1.5 bg-gray-50 dark:bg-gray-900">
                           <span className="text-gray-400 font-bold">₹</span>
-                          <input type="text" defaultValue="8" className="w-full font-bold outline-hidden bg-transparent" />
+                          <input
+                            type="text"
+                            value={rateColorSingle}
+                            onChange={(e) => setRateColorSingle(e.target.value)}
+                            className="w-full font-bold outline-hidden bg-transparent"
+                          />
                         </div>
                       </div>
 
@@ -5588,7 +5666,12 @@ pause
                         <div className="text-[10px] text-gray-400 mb-1">Back-to-back</div>
                         <div className="flex items-center gap-2 border rounded-xl px-3 py-1.5 bg-gray-50 dark:bg-gray-900">
                           <span className="text-gray-400 font-bold">₹</span>
-                          <input type="text" defaultValue="6.5" className="w-full font-bold outline-hidden bg-transparent" />
+                          <input
+                            type="text"
+                            value={rateColorDuplex}
+                            onChange={(e) => setRateColorDuplex(e.target.value)}
+                            className="w-full font-bold outline-hidden bg-transparent"
+                          />
                         </div>
                       </div>
                     </div>

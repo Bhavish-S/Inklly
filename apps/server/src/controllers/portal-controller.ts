@@ -77,7 +77,8 @@ export class PortalController {
 
   public submitOrder = (req: Request, res: Response) => {
     const {
-      shopId,
+      shopId: rawShopId,
+      shopCode,
       customerName,
       customerPhone,
       customerEmail,
@@ -86,14 +87,14 @@ export class PortalController {
       files,
     } = req.body;
 
-    if (!shopId || !files || files.length === 0 || !quote) {
+    const shop =
+      (rawShopId ? this.shopRepo.getShopById(rawShopId) || this.shopRepo.getShopByCode(rawShopId) : null) ||
+      (shopCode ? this.shopRepo.getShopByCode(shopCode) : null);
+
+    if (!shop || !files || files.length === 0 || !quote) {
       return res.status(400).json({ error: 'Incomplete order submission payload' });
     }
-
-    const shop = this.shopRepo.getShopById(shopId);
-    if (!shop) {
-      return res.status(404).json({ error: 'Shop not found' });
-    }
+    const shopId = shop.id;
 
     const orderId = `ord-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
     const orderNumber = `INK-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(
@@ -127,9 +128,9 @@ export class PortalController {
       status: initialStatus,
       paymentStatus: initialPaymentStatus,
       paymentMethod: paymentMethod || 'CASH_ON_COLLECTION',
-      totalAmountPaise: quote.totalPaise,
-      currency: shop.currency,
-      quoteVersion: quote.quoteVersion,
+      totalAmountPaise: quote.totalPaise || 200,
+      currency: shop.currency || 'INR',
+      quoteVersion: quote.quoteVersion || quote.version || 'v1.0',
       files: orderFiles,
       createdAt: now,
       updatedAt: now,

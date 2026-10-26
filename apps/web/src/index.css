@@ -5,7 +5,7 @@
 
 :root {
   --brand: #4D64E6;
-  --brand-hover: #3F54D1;
+  --brand-hover: #3B50D4;
   --brand-accent-deep: #2F5BE0;
   --navy: #172031;
   --navy-2: #1E2A44;
@@ -14,8 +14,9 @@
   --tint-2: #F6F7FB;
   --card: #FFFFFF;
   --border: #E6E9F2;
-  --text: #172031;
-  --text-muted: #5B6475;
+  --text: #111827;
+  --text-muted: #475467;
+  --text-tertiary: #64748B;
   --success-bg: #EAFBF0;
   --success: #1F8A4C;
   --whatsapp: #25D366;
@@ -387,16 +388,29 @@ button:active:not(:disabled) {
   animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
-/* Accessible Motion */
+/* Accessible Motion (WCAG 2.2 SC 2.3.3) */
 @media (prefers-reduced-motion: reduce) {
-  .animate-shimmer,
-  .pulse-indicator,
-  .whatsapp-float:hover,
-  .btn-primary:hover {
-    animation: none !important;
-    transform: none !important;
-    transition: none !important;
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
+}
+
+/* Accessible Focus Indicators (WCAG 2.2 SC 2.4.7 / 2.4.13) */
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+/* Minimum Accessible Touch Target (WCAG 2.2 SC 2.5.8 / 2.5.5) */
+.min-touch {
+  min-height: 44px;
+  min-width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* Mobile & Multi-Device Responsive Safe Areas */
@@ -405,7 +419,7 @@ button:active:not(:disabled) {
     padding-top: max(env(safe-area-inset-top), 12px);
   }
   .pb-safe {
-    padding-bottom: max(env(safe-area-inset-bottom), 12px);
+    padding-bottom: max(env(safe-area-inset-bottom), 16px);
   }
   .pl-safe {
     padding-left: max(env(safe-area-inset-left), 12px);
