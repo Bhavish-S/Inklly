@@ -1184,7 +1184,8 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   };
 
   const handleDownloadAgentScript = () => {
-    const serverUrl = (import.meta.env.VITE_API_BASE as string)?.replace(/\/api\/v1\/?$/, '') || 'http://localhost:4000';
+    const isProd = typeof window !== 'undefined' && !['localhost', '127.0.0.1'].includes(window.location.hostname);
+    const serverUrl = (import.meta.env.VITE_API_BASE as string)?.replace(/\/api\/v1\/?$/, '') || (isProd ? 'https://inklly.onrender.com' : 'http://localhost:4000');
     const batContent = `@echo off
 chcp 65001 >nul
 title Inklly Edge Print Agent v1.6.1 - Windows Counter Terminal

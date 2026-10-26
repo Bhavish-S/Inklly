@@ -1,4 +1,5 @@
-const API_BASE = (import.meta.env.VITE_API_BASE as string) || 'http://localhost:4000/api/v1';
+const isProduction = typeof window !== 'undefined' && !['localhost', '127.0.0.1'].includes(window.location.hostname);
+const API_BASE = (import.meta.env.VITE_API_BASE as string) || (isProduction ? 'https://inklly.onrender.com/api/v1' : 'http://localhost:4000/api/v1');
 
 function getHeaders(customHeaders: Record<string, string> = {}): Record<string, string> {
   const token = localStorage.getItem('inklly_token');
