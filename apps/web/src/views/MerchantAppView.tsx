@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import QRCode from 'qrcode';
 import {
   Logo,
   InkllyMark,
@@ -206,6 +207,41 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [activeBranch, setActiveBranch] = useState<string>('Central Library Branch');
 
   const currentMerchant = DEMO_MERCHANTS.find((m) => m.id === selectedMerchantId) || DEMO_MERCHANTS[1];
+
+  // Dynamic Real Scannable QR State
+  const [qrDataUrl, setQrDataUrl] = useState<string>('');
+  const liveShopUrl = typeof window !== 'undefined'
+    ? `${window.location.origin}/p/${currentMerchant.shopCode || 'campus1'}`
+    : `https://inklly.vercel.app/p/${currentMerchant.shopCode || 'campus1'}`;
+
+  useEffect(() => {
+    QRCode.toDataURL(liveShopUrl, {
+      width: 360,
+      margin: 1,
+      color: {
+        dark: '#172031',
+        light: '#FFFFFF',
+      },
+    })
+      .then(setQrDataUrl)
+      .catch(console.error);
+  }, [currentMerchant.shopCode, liveShopUrl]);
+
+  const handleDownloadQrPng = () => {
+    if (!qrDataUrl) return;
+    const link = document.createElement('a');
+    link.href = qrDataUrl;
+    link.download = `Inklly-${currentMerchant.shopCode}-Counter-QR.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setGlobalToast(`Downloaded ${currentMerchant.name} Counter QR (PNG)`);
+  };
+
+  const handleCopyShopUrl = () => {
+    navigator.clipboard?.writeText(liveShopUrl);
+    setGlobalToast('Shop QR URL copied to clipboard!');
+  };
 
   const handleSwitchMerchant = (merchantId: string) => {
     const target = DEMO_MERCHANTS.find((m) => m.id === merchantId);
@@ -896,7 +932,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         jobId: `job-${orderId}`,
-        shopId: currentShopId,
+        shopId: currentMerchant.id,
         printerId: 'Canon LBP2900',
         fileName: order?.document || 'Print_Document.pdf',
         options: {
@@ -6551,39 +6587,23 @@ pause
                       </div>
 
                       {/* Crisp Inklly QR SVG */}
-                      <div className="w-36 h-36 bg-white mx-auto rounded-xl flex items-center justify-center p-1.5 border border-gray-100">
-                        <svg className="w-full h-full" viewBox="0 0 100 100">
-                          <rect width="100" height="100" fill="#FFFFFF" rx="4" />
-                          <rect x="6" y="6" width="30" height="30" fill="#172031" rx="4" />
-                          <rect x="10" y="10" width="22" height="22" fill="#FFFFFF" rx="2" />
-                          <rect x="14" y="14" width="14" height="14" fill="#2563EB" rx="2" />
-                          <rect x="64" y="6" width="30" height="30" fill="#172031" rx="4" />
-                          <rect x="68" y="10" width="22" height="22" fill="#FFFFFF" rx="2" />
-                          <rect x="72" y="14" width="14" height="14" fill="#2563EB" rx="2" />
-                          <rect x="6" y="64" width="30" height="30" fill="#172031" rx="4" />
-                          <rect x="10" y="68" width="22" height="22" fill="#FFFFFF" rx="2" />
-                          <rect x="14" y="72" width="14" height="14" fill="#2563EB" rx="2" />
-                          <rect x="42" y="10" width="8" height="8" fill="#172031" />
-                          <rect x="42" y="22" width="8" height="8" fill="#172031" />
-                          <rect x="10" y="42" width="8" height="8" fill="#172031" />
-                          <rect x="22" y="42" width="8" height="8" fill="#172031" />
-                          <rect x="40" y="40" width="20" height="20" fill="#2563EB" rx="4" />
-                          <circle cx="50" cy="50" r="5" fill="#FFFFFF" />
-                          <rect x="66" y="42" width="8" height="8" fill="#172031" />
-                          <rect x="82" y="42" width="8" height="8" fill="#172031" />
-                          <rect x="42" y="66" width="8" height="8" fill="#172031" />
-                          <rect x="66" y="66" width="8" height="8" fill="#172031" />
-                          <rect x="78" y="66" width="12" height="8" fill="#172031" />
-                          <rect x="42" y="80" width="12" height="8" fill="#172031" />
-                          <rect x="70" y="80" width="8" height="8" fill="#172031" />
-                          <rect x="82" y="80" width="8" height="8" fill="#172031" />
-                        </svg>
+                      {/* Real Dynamic Scannable Inklly QR */}
+                      <div className="w-36 h-36 bg-white mx-auto rounded-xl flex items-center justify-center p-1.5 border border-gray-100 overflow-hidden shadow-xs">
+                        {qrDataUrl ? (
+                          <img
+                            src={qrDataUrl}
+                            alt={`${currentMerchant.name} Counter QR Code`}
+                            className="w-full h-full object-contain"
+                          />
+                        ) : (
+                          <div className="text-[10px] text-gray-400 font-bold">Generating QR...</div>
+                        )}
                       </div>
                     </div>
 
                     {/* Bottom Shop Name on Blue Standee */}
-                    <div className="text-xs font-black tracking-wide text-white">
-                      Printing Shopz
+                    <div className="text-xs font-black tracking-wide text-white truncate px-2">
+                      {currentMerchant.name}
                     </div>
                   </div>
                 </div>
@@ -6591,7 +6611,7 @@ pause
                 {/* Right: Info & Actions */}
                 <div className="md:col-span-7 space-y-4">
                   <div>
-                    <h3 className="font-black text-lg text-[#172031] dark:text-white">Printing Shopz</h3>
+                    <h3 className="font-black text-lg text-[#172031] dark:text-white">{currentMerchant.name}</h3>
                     <p className="text-xs text-gray-500 leading-relaxed mt-1">
                       Customers scan this permanent QR and continue through your customised customer-details and secure document-upload flow.
                     </p>
@@ -6601,7 +6621,7 @@ pause
                     <input
                       type="text"
                       readOnly
-                      value="https://inklly.in/shop/dfe48bcb-d28d-4a80-ab2f-c7848ddc7988"
+                      value={liveShopUrl}
                       className="w-full px-3.5 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 text-xs bg-gray-50 dark:bg-gray-900 font-mono text-gray-700 dark:text-gray-300"
                     />
                   </div>
@@ -6609,27 +6629,24 @@ pause
                   <div className="flex flex-wrap items-center gap-2.5 pt-1">
                     <button
                       type="button"
-                      onClick={() => triggerSaveNotification('Downloading Counter Standee PDF...')}
-                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-1.5 transition-all"
+                      onClick={handleDownloadQrPng}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-1.5 transition-all cursor-pointer"
                     >
-                      <span>⬇</span> Download QR
+                      <span>📥</span> Download QR (PNG)
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
-                        navigator.clipboard?.writeText('https://inklly.in/shop/dfe48bcb-d28d-4a80-ab2f-c7848ddc7988');
-                        triggerSaveNotification('Permanent counter QR link copied to clipboard!');
-                      }}
-                      className="px-4 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 rounded-xl text-xs font-bold text-gray-700 dark:text-gray-300 flex items-center gap-1.5 transition-all shadow-xs"
+                      onClick={handleCopyShopUrl}
+                      className="px-4 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 rounded-xl text-xs font-bold text-gray-700 dark:text-gray-300 flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
                     >
                       <span>📋</span> Copy link
                     </button>
                     <button
                       type="button"
-                      onClick={() => onNavigate?.('/p/campus1')}
-                      className="px-4 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 rounded-xl text-xs font-bold text-gray-700 dark:text-gray-300 flex items-center gap-1.5 transition-all shadow-xs"
+                      onClick={() => onNavigate?.(`/p/${currentMerchant.shopCode || 'campus1'}`)}
+                      className="px-4 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 rounded-xl text-xs font-bold text-gray-700 dark:text-gray-300 flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
                     >
-                      <span>↗</span> Test page
+                      <span>🚀</span> Open Customer Portal
                     </button>
                   </div>
                 </div>

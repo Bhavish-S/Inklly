@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { SCHEMA_SQL } from './schema';
 
 export class DatabaseService {
   private db: DatabaseSync;
@@ -29,16 +30,7 @@ export class DatabaseService {
   }
 
   private initSchema(): void {
-    const schemaPath = path.join(__dirname, 'schema.sql');
-    let sql: string;
-    if (fs.existsSync(schemaPath)) {
-      sql = fs.readFileSync(schemaPath, 'utf-8');
-    } else {
-      // In bundled or src dev mode:
-      const fallbackPath = path.join(__dirname, '..', 'src', 'schema.sql');
-      sql = fs.readFileSync(fallbackPath, 'utf-8');
-    }
-    this.db.exec(sql);
+    this.db.exec(SCHEMA_SQL);
   }
 
   public execute(sql: string, params: (string | number | null)[] = []): void {
@@ -52,18 +44,19 @@ export class DatabaseService {
   }
 
   public queryOne<T = unknown>(sql: string, params: (string | number | null)[] = []): T | null {
-    const rows = this.query<T>(sql, params);
-    return rows.length > 0 ? rows[0] : null;
+    const stmt = this.db.prepare(sql);
+    const result = stmt.get(...params);
+    return (result as T) || null;
   }
 
   public transaction<T>(callback: () => T): T {
-    this.db.exec('BEGIN TRANSACTION');
+    this.db.exec('BEGIN TRANSACTION;');
     try {
       const result = callback();
-      this.db.exec('COMMIT');
+      this.db.exec('COMMIT;');
       return result;
     } catch (err) {
-      this.db.exec('ROLLBACK');
+      this.db.exec('ROLLBACK;');
       throw err;
     }
   }
