@@ -158,7 +158,7 @@ export const DeveloperPortalView: React.FC<DeveloperPortalProps> = ({ onNavigate
 
   // Integrations Matrix State
   const [integrations, setIntegrations] = useState([
-    { name: 'Core REST API Gateway', target: 'http://localhost:4000/api/v1', status: 'ONLINE', latency: '4ms' },
+    { name: 'Core REST API Gateway', target: (import.meta.env.VITE_API_BASE as string) || 'http://localhost:4000/api/v1', status: 'ONLINE', latency: '4ms' },
     { name: 'Windows Spooler Daemon', target: 'http://127.0.0.1:8765/health', status: 'ONLINE', latency: '12ms' },
     { name: 'ACID Database (node:sqlite)', target: 'agent_queue.db (WAL Mode)', status: 'HEALTHY', latency: '0.8ms' },
     { name: 'Razorpay UPI Webhook Gateway', target: 'whsec_rzp_live_9921', status: 'VERIFIED', latency: '28ms' },

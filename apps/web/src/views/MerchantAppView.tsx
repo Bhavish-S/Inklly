@@ -1184,6 +1184,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   };
 
   const handleDownloadAgentScript = () => {
+    const serverUrl = (import.meta.env.VITE_API_BASE as string)?.replace(/\/api\/v1\/?$/, '') || 'http://localhost:4000';
     const batContent = `@echo off
 chcp 65001 >nul
 title Inklly Edge Print Agent v1.6.1 - Windows Counter Terminal
@@ -1206,7 +1207,7 @@ powershell -NoProfile -Command "Get-Printer | Select-Object Name, DriverName, Po
 
 echo.
 echo [3/4] Pairing with Inklly Shop: Printing Shopz (campus1)...
-set INKLLY_SERVER=http://localhost:4000
+set INKLLY_SERVER=${serverUrl}
 set INKLLY_SHOP_CODE=campus1
 set INKLLY_PAIRING_KEY=${agentPairingKey}
 set INKLLY_PORT=8765
