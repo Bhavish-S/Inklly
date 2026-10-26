@@ -21,6 +21,19 @@ export const api = {
     return res.json();
   },
 
+  async uploadDocument(uploadPayload: { fileName: string; fileData: string; mimeType?: string; shopId?: string; pageCount?: number }) {
+    const res = await fetch(`${API_BASE}/portal/upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(uploadPayload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Upload failed' }));
+      throw new Error(err.error || 'Upload failed');
+    }
+    return res.json();
+  },
+
   async getQuote(quoteRequest: any) {
     const res = await fetch(`${API_BASE}/portal/quote`, {
       method: 'POST',
@@ -54,6 +67,19 @@ export const api = {
   },
 
   // Auth
+  async register(registrationData: any) {
+    const res = await fetch(`${API_BASE}/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(registrationData),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Registration failed' }));
+      throw new Error(err.error || 'Registration failed');
+    }
+    return res.json();
+  },
+
   async login(email: string, password: string) {
     const res = await fetch(`${API_BASE}/auth/login`, {
       method: 'POST',
@@ -152,6 +178,22 @@ export const api = {
       headers: getHeaders(),
       body: JSON.stringify(printerData),
     });
+    return res.json();
+  },
+
+  async getShopSettings() {
+    const res = await fetch(`${API_BASE}/merchant/settings`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Failed to load shop settings');
+    return res.json();
+  },
+
+  async updateShopSettings(updates: any) {
+    const res = await fetch(`${API_BASE}/merchant/settings`, {
+      method: 'PATCH',
+      headers: getHeaders(),
+      body: JSON.stringify(updates),
+    });
+    if (!res.ok) throw new Error('Failed to update shop settings');
     return res.json();
   },
 

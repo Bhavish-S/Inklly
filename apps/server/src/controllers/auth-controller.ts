@@ -42,6 +42,8 @@ export class AuthController {
     // Get primary membership
     const memberships = this.userRepo.getMembershipsByUser(userWithHash.id);
     const primary = memberships[0];
+    const shop = primary?.shopId ? this.shopRepo.getShopById(primary.shopId) : null;
+    const organization = primary?.organizationId ? this.shopRepo.getOrganizationById(primary.organizationId) : null;
 
     const tokenPayload = {
       userId: userWithHash.id,
@@ -66,6 +68,26 @@ export class AuthController {
       },
       shopId: primary?.shopId,
       organizationId: primary?.organizationId,
+      shop: shop
+        ? {
+            id: shop.id,
+            shopCode: shop.shopCode,
+            name: shop.name,
+            tagline: shop.tagline,
+            phone: shop.phone,
+            address: shop.address,
+            city: shop.city,
+            state: shop.state,
+            currency: shop.currency,
+          }
+        : null,
+      organization: organization
+        ? {
+            id: organization.id,
+            name: organization.name,
+            planTier: organization.planTier,
+          }
+        : null,
     });
   };
 
@@ -73,8 +95,10 @@ export class AuthController {
     const {
       orgName,
       shopName,
+      businessName,
       shopCode,
       ownerName,
+      fullName,
       email,
       password,
       phone,
@@ -84,14 +108,30 @@ export class AuthController {
       pinCode,
     } = req.body;
 
-    if (!shopCode || !shopName || !email || !password || !ownerName) {
-      return res.status(400).json({ error: 'Missing required onboarding registration fields' });
+    const effectiveShopName = shopName || businessName;
+    const effectiveOwnerName = ownerName || fullName;
+
+    if (!effectiveShopName || !email || !password || !effectiveOwnerName) {
+      return res.status(400).json({ error: 'Missing required onboarding registration fields (Shop name, owner name, email, password)' });
     }
 
-    const cleanCode = shopCode.toLowerCase().trim();
-    if (this.shopRepo.getShopByCode(cleanCode)) {
-      return res.status(409).json({ error: 'Shop code is already taken. Please choose another.' });
+    let cleanCode = (shopCode || effectiveShopName)
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+
+    if (!cleanCode) {
+      cleanCode = `shop-${Date.now().toString(36)}`;
     }
+
+    // Collision resolution
+    let candidateCode = cleanCode;
+    let counter = 1;
+    while (this.shopRepo.getShopByCode(candidateCode)) {
+      candidateCode = `${cleanCode}-${counter++}`;
+    }
+    cleanCode = candidateCode;
 
     const existingUser = this.userRepo.getUserByEmail(email.toLowerCase().trim());
     if (existingUser) {
@@ -109,7 +149,7 @@ export class AuthController {
         id: userId,
         email: email.toLowerCase().trim(),
         phone,
-        fullName: ownerName,
+        fullName: effectiveOwnerName,
         role: 'MERCHANT_OWNER',
         isActive: true,
         createdAt: now,
@@ -121,7 +161,7 @@ export class AuthController {
     // 2. Create Organization
     this.shopRepo.createOrganization({
       id: orgId,
-      name: orgName || `${ownerName}'s Printing Services`,
+      name: orgName || `${effectiveOwnerName}'s Printing Services`,
       ownerUserId: userId,
       planTier: 'STARTER',
       planStatus: 'ACTIVE',
@@ -135,7 +175,7 @@ export class AuthController {
       id: shopId,
       organizationId: orgId,
       shopCode: cleanCode,
-      name: shopName,
+      name: effectiveShopName,
       tagline: 'Quality Document Printing & Copying',
       phone: phone || '+91 99999 99999',
       email: email.toLowerCase().trim(),
@@ -209,14 +249,24 @@ export class AuthController {
       token,
       user: {
         id: userId,
-        email,
-        fullName: ownerName,
+        email: email.toLowerCase().trim(),
+        fullName: effectiveOwnerName,
         role: 'MERCHANT_OWNER',
       },
       shop: {
         id: shopId,
         shopCode: cleanCode,
-        name: shopName,
+        name: effectiveShopName,
+        phone: phone || '+91 99999 99999',
+        address: address || 'Main Market Road',
+        city: city || 'Pune',
+        state: state || 'Maharashtra',
+        currency: 'INR',
+      },
+      organization: {
+        id: orgId,
+        name: orgName || `${effectiveOwnerName}'s Printing Services`,
+        planTier: 'STARTER',
       },
     });
   };

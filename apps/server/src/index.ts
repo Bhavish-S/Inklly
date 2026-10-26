@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import * as path from 'node:path';
+import * as fs from 'node:fs';
 import { DatabaseService, seedDatabase } from '@inklly/db';
 import { createPortalRoutes } from './routes/portal-routes';
 import { createAuthRoutes } from './routes/auth-routes';
@@ -13,7 +14,14 @@ import { createDeveloperRoutes } from './routes/developer-routes';
 export function createApp(db?: DatabaseService): express.Express {
   const app = express();
   app.use(cors());
-  app.use(express.json({ limit: '10mb' }));
+  app.use(express.json({ limit: '50mb' }));
+
+  // Ensure uploads directory exists and is statically served
+  const uploadsDir = path.join(process.cwd(), 'uploads');
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  }
+  app.use('/uploads', express.static(uploadsDir));
 
   const database = db || DatabaseService.getInstance(process.env.DB_PATH || path.join(process.cwd(), 'data', 'inklly.db'));
   seedDatabase(database);

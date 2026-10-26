@@ -210,12 +210,29 @@ export const App: React.FC = () => {
 
                 <button
                   type="button"
-                  onClick={() => navigate('/p/campus1')}
+                  onClick={() => {
+                    const storedShop = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('inklly_shop') || 'null') : null;
+                    navigate(`/p/${storedShop?.shopCode || 'campus1'}`);
+                  }}
                   className="flex items-center gap-1 px-2.5 py-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-all cursor-pointer"
                   title="Open Customer Counter QR Portal"
                 >
                   <QrCodeIcon size={13} />
                   <span>Shop QR</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    localStorage.removeItem('inklly_token');
+                    localStorage.removeItem('inklly_user');
+                    localStorage.removeItem('inklly_shop');
+                    navigate('/login');
+                  }}
+                  className="flex items-center gap-1 px-2.5 py-1.5 text-rose-300 hover:text-white hover:bg-rose-950/60 rounded-lg transition-all cursor-pointer border border-rose-800/40"
+                  title="Sign Out of Session"
+                >
+                  <span>Sign Out</span>
                 </button>
 
                 <button

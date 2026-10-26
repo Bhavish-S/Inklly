@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { api } from '../api/client';
 import {
   InkllyMark,
   Logo,
@@ -26,6 +27,8 @@ interface DocumentItem {
   fileSizeText: string;
   pageCount: number;
   previewUrl: string;
+  storageKey?: string;
+  fileUrl?: string;
   rotation: number;
   filter: 'natural' | 'bw_doc' | 'enhanced' | 'grayscale';
   brightness: number;
@@ -56,33 +59,44 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
   onOrderSubmitted,
 }) => {
   // Live Shop Metadata
-  const [shop, setShop] = useState({
+  const [shop, setShop] = useState<any>({
+    id: 'shop-campus-1',
+    shopCode: 'campus1',
     name: 'Campus Print Express',
     tagline: 'High Speed Quality Printing & Photocopying',
     counter: 'Counter #1 · Main University Plaza',
     rates: {
-      bw_simplex: 1.5,
-      bw_duplex: 1.2,
-      color_simplex: 8.0,
-      color_duplex: 6.5,
+      bw_simplex: 2.0,
+      bw_duplex: 1.5,
+      color_simplex: 10.0,
+      color_duplex: 9.0,
     },
     onlinePaymentEnabled: true,
   });
 
   useEffect(() => {
-    fetch(`/api/v1/portal/shop/${shopCode}`)
-      .then((res) => (res.ok ? res.json() : null))
+    api.getShop(shopCode)
       .then((data) => {
         if (data && data.name) {
-          setShop((prev) => ({
-            ...prev,
+          setShop({
+            id: data.id || 'shop-campus-1',
+            shopCode: data.shopCode || shopCode,
             name: data.name,
-            tagline: data.tagline || prev.tagline,
-            counter: data.address || prev.counter,
-          }));
+            tagline: data.tagline || 'High Speed Quality Printing & Photocopying',
+            counter: data.address || 'Main Counter',
+            rates: data.rates || {
+              bw_simplex: 2.0,
+              bw_duplex: 1.5,
+              color_simplex: 10.0,
+              color_duplex: 9.0,
+            },
+            onlinePaymentEnabled: true,
+          });
         }
       })
-      .catch(() => {});
+      .catch((err) => {
+        console.warn('Failed to fetch live shop:', err);
+      });
   }, [shopCode]);
 
   // State
@@ -185,52 +199,76 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
 
   const activeDoc = documents[activeDocIndex] || documents[0];
 
-  // Upload handler simulation with realistic progress bar
+  // Upload handler with real server intake and progress
   const handleFileSelect = (files: FileList | null) => {
     if (!files || files.length === 0) return;
 
-    setUploadProgress(15);
-    const interval = setInterval(() => {
-      setUploadProgress((prev) => {
-        if (prev === null) return 15;
-        if (prev >= 95) {
-          clearInterval(interval);
-          setTimeout(() => {
-            // Process files
-            const newDocs: DocumentItem[] = Array.from(files).map((f, i) => {
-              const url = URL.createObjectURL(f);
-              const estPages = Math.max(1, Math.round(f.size / (150 * 1024)));
-              return {
-                id: `doc-${Date.now()}-${i}`,
-                file: f,
+    setUploadProgress(25);
+    const fileList = Array.from(files);
+
+    Promise.all(
+      fileList.map((f, i) => {
+        return new Promise<DocumentItem>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = async () => {
+            const base64 = (reader.result as string) || '';
+            const estPages = Math.max(1, Math.round(f.size / (150 * 1024)));
+            let storageKey = '';
+            let fileUrl = URL.createObjectURL(f);
+
+            try {
+              const uploadRes = await api.uploadDocument({
                 fileName: f.name,
-                fileSizeText: `${(f.size / (1024 * 1024)).toFixed(1)} MB`,
+                fileData: base64,
+                mimeType: f.type || 'application/pdf',
+                shopId: shop.id || 'shop-campus-1',
                 pageCount: estPages,
-                previewUrl: url,
-                rotation: 0,
-                filter: 'natural',
-                brightness: 100,
-                contrast: 100,
-                cropBox: { x: 5, y: 5, width: 90, height: 90 },
-                options: {
-                  colorMode: 'bw',
-                  duplexMode: 'simplex',
-                  paperSize: 'A4',
-                  orientation: 'portrait',
-                  copies: 1,
-                  pageRange: 'All',
-                },
-              };
+              });
+              if (uploadRes?.storageKey) {
+                storageKey = uploadRes.storageKey;
+              }
+              if (uploadRes?.fileUrl) {
+                fileUrl = uploadRes.fileUrl;
+              }
+            } catch (err) {
+              console.warn('Document upload warning, fallback to local buffer:', err);
+            }
+
+            resolve({
+              id: `doc-${Date.now()}-${i}`,
+              file: f,
+              fileName: f.name,
+              fileSizeText: `${(f.size / (1024 * 1024)).toFixed(1)} MB`,
+              pageCount: estPages,
+              previewUrl: fileUrl,
+              storageKey,
+              fileUrl,
+              rotation: 0,
+              filter: 'natural',
+              brightness: 100,
+              contrast: 100,
+              cropBox: { x: 5, y: 5, width: 90, height: 90 },
+              options: {
+                colorMode: 'bw',
+                duplexMode: 'simplex',
+                paperSize: 'A4',
+                orientation: 'portrait',
+                copies: 1,
+                pageRange: 'All',
+              },
             });
-            setDocuments((current) => [...current, ...newDocs]);
-            setActiveDocIndex(documents.length);
-            setUploadProgress(null);
-          }, 400);
-          return 100;
-        }
-        return prev + 25;
-      });
-    }, 150);
+          };
+          reader.readAsDataURL(f);
+        });
+      })
+    ).then((newDocs) => {
+      setUploadProgress(100);
+      setTimeout(() => {
+        setDocuments((current) => [...current, ...newDocs]);
+        setActiveDocIndex(documents.length);
+        setUploadProgress(null);
+      }, 300);
+    });
   };
 
   const removeDocument = (index: number, e: React.MouseEvent) => {
@@ -547,39 +585,36 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
     const fallbackOrderId = `ord-${Date.now().toString().slice(-6)}`;
 
     try {
-      const resp = await fetch('/api/v1/portal/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          shopId: 'shop-campus-01',
-          customerName: 'Counter Customer',
-          customerPhone: '9876543210',
-          paymentMethod: paymentType === 'ONLINE' ? 'RAZORPAY_UPI' : 'CASH_ON_COLLECTION',
-          quote: {
-            quoteId: `quote-${Date.now()}`,
-            version: 'v2.4',
-            currency: 'INR',
-            totalPaise: Math.round(grandTotal * 100),
-            items: documents.map((d) => ({
-              fileName: d.fileName,
-              pageCount: d.pageCount,
-              lineSubtotalPaise: Math.round(d.pageCount * 150),
-            })),
-          },
-          files: documents.map((d) => ({
+      const data = await api.submitOrder({
+        shopId: shop.id || 'shop-campus-1',
+        customerName: 'Counter Customer',
+        customerPhone: '9876543210',
+        paymentMethod: paymentType === 'ONLINE' ? 'RAZORPAY_UPI' : 'CASH_ON_COLLECTION',
+        quote: {
+          quoteId: `quote-${Date.now()}`,
+          version: 'v2.4',
+          currency: 'INR',
+          totalPaise: Math.round(grandTotal * 100),
+          items: documents.map((d) => ({
             fileName: d.fileName,
-            fileSizeBytes: 1024 * 1024,
             pageCount: d.pageCount,
-            options: d.options,
-            subtotalPaise: Math.round(d.pageCount * 150),
+            lineSubtotalPaise: Math.round(d.pageCount * 150),
           })),
-        }),
+        },
+        files: documents.map((d) => ({
+          fileName: d.fileName,
+          fileSizeBytes: d.file ? d.file.size : 1024 * 1024,
+          storageKey: d.storageKey || `uploads/${shop.id || 'shop-campus-1'}/${Date.now()}-${d.fileName}`,
+          fileUrl: d.fileUrl || '',
+          pageCount: d.pageCount,
+          options: d.options,
+          subtotalPaise: Math.round(d.pageCount * 150),
+        })),
       });
 
-      if (resp.ok) {
-        const data = await resp.json();
-        const finalToken = data?.orderNumber || fallbackToken;
-        const finalOrderId = data?.orderId || fallbackOrderId;
+      if (data && (data.orderId || data.orderNumber)) {
+        const finalToken = data.orderNumber || fallbackToken;
+        const finalOrderId = data.orderId || fallbackOrderId;
 
         const orderRecord = {
           id: finalToken.replace('INK-', ''),
@@ -619,8 +654,8 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
         setIsSubmitting(false);
         return;
       }
-    } catch {
-      // Offline fallback
+    } catch (err) {
+      console.warn('Live submit error, falling back:', err);
     }
 
     setTimeout(() => {

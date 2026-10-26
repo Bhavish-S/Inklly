@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Logo, EyeIcon, EyeOffIcon, CheckIcon, PrinterIcon } from '../components/icons';
+import { api } from '../api/client';
 
 interface RegisterPageProps {
   onNavigate: (path: string) => void;
@@ -9,26 +10,74 @@ interface RegisterPageProps {
 export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegisterSuccess }) => {
   const [ownerName, setOwnerName] = useState('');
   const [businessName, setBusinessName] = useState('');
+  const [shopCode, setShopCode] = useState('');
+  const [isCustomSlug, setIsCustomSlug] = useState(false);
   const [mobile, setMobile] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [address, setAddress] = useState('');
+  const [city, setCity] = useState('Pune');
+  const [state, setState] = useState('Maharashtra');
+  const [pinCode, setPinCode] = useState('');
   const [referralCode, setReferralCode] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [whatsappOptIn, setWhatsappOptIn] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleBusinessNameChange = (name: string) => {
+    setBusinessName(name);
+    if (!isCustomSlug) {
+      const slug = name
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+      setShopCode(slug);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setError(null);
 
-    setTimeout(() => {
-      setLoading(false);
+    try {
+      const cleanSlug = shopCode.toLowerCase().trim() || businessName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      const res = await api.register({
+        ownerName,
+        businessName,
+        shopName: businessName,
+        shopCode: cleanSlug,
+        email,
+        password,
+        phone: mobile,
+        address: address || 'Main Market Road',
+        city: city || 'Pune',
+        state: state || 'Maharashtra',
+        pinCode: pinCode || '411001',
+      });
+
+      if (res.token) {
+        localStorage.setItem('inklly_token', res.token);
+      }
+      if (res.user) {
+        localStorage.setItem('inklly_user', JSON.stringify(res.user));
+      }
+      if (res.shop) {
+        localStorage.setItem('inklly_shop', JSON.stringify(res.shop));
+      }
+
       if (onRegisterSuccess) {
         onRegisterSuccess();
       } else {
         onNavigate('/merchant');
       }
-    }, 700);
+    } catch (err: any) {
+      setError(err.message || 'Registration failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -98,6 +147,12 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
             </p>
           </div>
 
+          {error && (
+            <div className="mb-4 p-3.5 bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-xl flex items-center gap-2">
+              <span className="font-bold">⚠️</span> {error}
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
@@ -122,10 +177,70 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
                   type="text"
                   required
                   value={businessName}
-                  onChange={(e) => setBusinessName(e.target.value)}
-                  placeholder="e.g. Campus Print Hub"
+                  onChange={(e) => handleBusinessNameChange(e.target.value)}
+                  placeholder="e.g. Metro Xerox & Digital Prints"
                   className="w-full px-3.5 py-2.5 rounded-xl border border-[#E6E9F2] focus:border-[#4D64E6] focus:ring-2 focus:ring-[#4D64E6]/20 text-sm outline-hidden transition-all bg-white"
                 />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-[#172031] mb-1.5">
+                Counter QR Portal URL Slug <span className="text-red-500">*</span>
+              </label>
+              <div className="flex rounded-xl shadow-xs overflow-hidden border border-[#E6E9F2] focus-within:border-[#4D64E6] focus-within:ring-2 focus-within:ring-[#4D64E6]/20">
+                <span className="inline-flex items-center px-3 bg-slate-100 text-slate-500 text-xs font-medium border-r border-[#E6E9F2]">
+                  inklly.vercel.app/p/
+                </span>
+                <input
+                  type="text"
+                  required
+                  value={shopCode}
+                  onChange={(e) => {
+                    setIsCustomSlug(true);
+                    setShopCode(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''));
+                  }}
+                  placeholder="metro-prints"
+                  className="flex-1 px-3 py-2 text-xs font-mono font-semibold text-slate-800 outline-hidden bg-white"
+                />
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1">This will be printed on your counter standee QR code for customers to scan.</p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-[#172031] mb-1.5">
+                  Shop Address / Landmark
+                </label>
+                <input
+                  type="text"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                  placeholder="e.g. Shop 4, FC Road Complex"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#E6E9F2] focus:border-[#4D64E6] focus:ring-2 focus:ring-[#4D64E6]/20 text-sm outline-hidden transition-all bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-[#172031] mb-1.5">
+                  City & State
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="text"
+                    value={city}
+                    onChange={(e) => setCity(e.target.value)}
+                    placeholder="City"
+                    className="w-full px-3 py-2.5 rounded-xl border border-[#E6E9F2] focus:border-[#4D64E6] text-xs outline-hidden bg-white"
+                  />
+                  <input
+                    type="text"
+                    value={state}
+                    onChange={(e) => setState(e.target.value)}
+                    placeholder="State"
+                    className="w-full px-3 py-2.5 rounded-xl border border-[#E6E9F2] focus:border-[#4D64E6] text-xs outline-hidden bg-white"
+                  />
+                </div>
               </div>
             </div>
 

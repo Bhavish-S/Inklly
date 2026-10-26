@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import QRCode from 'qrcode';
+import { api } from '../api/client';
 import {
   Logo,
   InkllyMark,
@@ -206,7 +207,65 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [merchantMenuOpen, setMerchantMenuOpen] = useState<boolean>(false);
   const [activeBranch, setActiveBranch] = useState<string>('Central Library Branch');
 
-  const currentMerchant = DEMO_MERCHANTS.find((m) => m.id === selectedMerchantId) || DEMO_MERCHANTS[1];
+  // Real Authenticated Merchant State
+  const [liveShop, setLiveShop] = useState<any>(() => {
+    try {
+      const stored = typeof window !== 'undefined' ? localStorage.getItem('inklly_shop') : null;
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [liveUser, setLiveUser] = useState<any>(() => {
+    try {
+      const stored = typeof window !== 'undefined' ? localStorage.getItem('inklly_user') : null;
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  useEffect(() => {
+    api.getMe()
+      .then((data) => {
+        if (data.shop) {
+          setLiveShop(data.shop);
+          localStorage.setItem('inklly_shop', JSON.stringify(data.shop));
+        }
+        if (data.user) {
+          setLiveUser(data.user);
+          localStorage.setItem('inklly_user', JSON.stringify(data.user));
+        }
+      })
+      .catch(() => {
+        // Fallback to offline/cached state
+      });
+  }, []);
+
+  const currentMerchant = liveShop ? {
+    id: liveShop.id,
+    shopCode: liveShop.shopCode,
+    name: liveShop.name,
+    tagline: liveShop.tagline || 'High Speed Quality Printing & Photocopying',
+    ownerName: liveUser?.fullName || 'Shop Owner',
+    phone: liveShop.phone || '+91 98765 43210',
+    email: liveShop.email || liveUser?.email || 'shop@inklly.com',
+    planTier: 'growth',
+    planBadge: 'PRO SHOP · ACTIVE',
+    planPriceText: '₹199 / month',
+    billingCycle: 'monthly',
+    maxPrinters: 3,
+    monthlyOrderLimit: 3000,
+    whatsappBotEnabled: true,
+    tokenDisplayEnabled: true,
+    customBrandingEnabled: false,
+    shiftReconciliationEnabled: false,
+    multiBranchEnabled: false,
+    branches: ['Main Counter', 'Xerox Desk'],
+    apiAccessEnabled: true,
+    accentColor: '#4D64E6',
+    features: ['1 Connected Printer (Canon LBP2900)', 'Self-service QR Portal', 'Standard Cash on Counter'],
+  } : (DEMO_MERCHANTS.find((m) => m.id === selectedMerchantId) || DEMO_MERCHANTS[1]);
 
   // Dynamic Real Scannable QR State
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
@@ -1207,12 +1266,13 @@ echo [2/4] Detecting connected printers...
 powershell -NoProfile -Command "Get-Printer | Select-Object Name, DriverName, PortName, PrinterStatus | Format-Table -AutoSize"
 
 echo.
-echo [3/4] Pairing with Inklly Shop: Printing Shopz (campus1)...
+echo [3/4] Pairing with Inklly Shop: ${currentMerchant.name} (${currentMerchant.shopCode})...
 set INKLLY_SERVER=${serverUrl}
-set INKLLY_SHOP_CODE=campus1
+set INKLLY_SHOP_CODE=${currentMerchant.shopCode}
+set INKLLY_SHOP_ID=${currentMerchant.id}
 set INKLLY_PAIRING_KEY=${agentPairingKey}
 set INKLLY_PORT=8765
-echo Pairing confirmed for Canon LBP2900 and Microsoft Print to PDF.
+echo Pairing confirmed for ${selectedDefaultPrinter} and connected Windows spoolers.
 echo.
 echo [4/4] Inklly Local Spooler Active on http://127.0.0.1:8765
 echo Platform Resiliency Mode: Active
@@ -1572,7 +1632,7 @@ pause
                   }}
                   className="bg-transparent font-bold text-sky-900 dark:text-sky-100 outline-none text-xs cursor-pointer"
                 >
-                  {currentMerchant.branches.map((b) => (
+                  {(currentMerchant as any).branches?.map((b: string) => (
                     <option key={b} value={b}>{b}</option>
                   ))}
                 </select>

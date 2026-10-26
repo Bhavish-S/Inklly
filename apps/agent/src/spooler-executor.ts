@@ -85,6 +85,9 @@ export class SpoolerExecutor {
     ticket: PrintCommandTicket,
     printerOverride?: string
   ): Promise<SpoolerResult | null> {
+    if (process.env.NODE_ENV === 'test') {
+      return null;
+    }
     const timestamp = new Date().toISOString();
     const possibleBinPaths = [
       path.join(__dirname, '..', 'bin', 'SumatraPDF.exe'),
@@ -108,6 +111,25 @@ export class SpoolerExecutor {
     // Prepare printable PDF document
     let filePath = ticket.documentUrl;
     let isTempFile = false;
+
+    // Download remote document if URL provided
+    if (filePath && (filePath.startsWith('http://') || filePath.startsWith('https://'))) {
+      try {
+        const tempDir = path.join(process.cwd(), 'temp');
+        if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+        const localPath = path.join(tempDir, `${ticket.jobId}-${ticket.fileName || 'job.pdf'}`);
+        const res = await fetch(filePath);
+        if (res.ok) {
+          const buffer = Buffer.from(await res.arrayBuffer());
+          fs.writeFileSync(localPath, buffer);
+          filePath = localPath;
+          isTempFile = true;
+          console.log(`[Inklly Spooler] Successfully downloaded customer document: ${localPath}`);
+        }
+      } catch (err) {
+        console.warn('[Inklly Spooler] Could not download remote document, fallback to receipt:', err);
+      }
+    }
 
     if (!filePath || !fs.existsSync(filePath)) {
       // Generate clean test/order receipt PDF

@@ -1,4 +1,6 @@
 import { Request, Response } from 'express';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { DatabaseService, OrderRepository, PricingRepository, ShopRepository } from '@inklly/db';
 import { calculateQuote, PriceQuoteRequest, OrderStatus, PaymentStatus } from '@inklly/shared';
 
@@ -17,7 +19,13 @@ export class PortalController {
       return res.status(404).json({ error: 'Shop not found or currently offline' });
     }
 
+    const rates = this.pricingRepo.getRateRules(shop.id);
+    const bwSimplex = rates.find((r) => r.paperSize === 'A4' && r.colorMode === 'bw' && r.duplexMode === 'simplex')?.pricePerPrintedSidePaise || 200;
+    const bwDuplex = rates.find((r) => r.paperSize === 'A4' && r.colorMode === 'bw' && r.duplexMode === 'duplex_auto')?.pricePerPrintedSidePaise || 150;
+    const colorSimplex = rates.find((r) => r.paperSize === 'A4' && r.colorMode === 'color' && r.duplexMode === 'simplex')?.pricePerPrintedSidePaise || 1000;
+
     res.json({
+      id: shop.id,
       shopCode: shop.shopCode,
       name: shop.name,
       tagline: shop.tagline,
@@ -29,6 +37,12 @@ export class PortalController {
       enabledPaperFormats: ['A4', 'A3', 'PHOTO_4X6', 'PHOTO_5X7'],
       enabledColorModes: ['bw', 'color'],
       enabledSides: ['simplex', 'duplex_auto'],
+      rates: {
+        bw_simplex: bwSimplex / 100,
+        bw_duplex: bwDuplex / 100,
+        color_simplex: colorSimplex / 100,
+        ratesList: rates,
+      },
     });
   };
 
@@ -93,7 +107,7 @@ export class PortalController {
       fileName: f.fileName,
       fileSizeBytes: f.fileSizeBytes || 1024 * 1024,
       mimeType: f.mimeType || 'application/pdf',
-      storageKey: `uploads/${shopId}/${orderId}/${f.fileName}`,
+      storageKey: f.storageKey || f.fileUrl || `uploads/${shopId}/${orderId}/${f.fileName}`,
       pageCount: f.pageCount,
       printOptions: f.options,
       lineSubtotalPaise: f.subtotalPaise || 200,
@@ -132,6 +146,48 @@ export class PortalController {
       totalAmountPaise: order.totalAmountPaise,
       currency: order.currency,
     });
+  };
+
+  public uploadDocument = (req: Request, res: Response) => {
+    try {
+      const { fileName, fileData, mimeType, shopId, pageCount } = req.body;
+      if (!fileName || !fileData) {
+        return res.status(400).json({ error: 'fileName and fileData (Base64) are required' });
+      }
+
+      const safeShopId = (shopId || 'common').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const sanitizedName = fileName.replace(/[^a-zA-Z0-9_.-]/g, '_');
+      const uploadDir = path.join(process.cwd(), 'uploads', safeShopId);
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+
+      const uniquePrefix = `${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+      const savedFileName = `${uniquePrefix}-${sanitizedName}`;
+      const filePath = path.join(uploadDir, savedFileName);
+
+      // Strip Base64 header if present (e.g. "data:application/pdf;base64,")
+      const base64Content = fileData.includes('base64,') ? fileData.split('base64,')[1] : fileData;
+      const buffer = Buffer.from(base64Content, 'base64');
+      fs.writeFileSync(filePath, buffer);
+
+      const fileUrl = `/uploads/${safeShopId}/${savedFileName}`;
+      const detectedPages = pageCount || 1;
+
+      res.status(201).json({
+        success: true,
+        fileName,
+        savedFileName,
+        fileUrl,
+        storageKey: `uploads/${safeShopId}/${savedFileName}`,
+        fileSizeBytes: buffer.length,
+        mimeType: mimeType || 'application/pdf',
+        pageCount: detectedPages,
+      });
+    } catch (err: any) {
+      console.error('[Upload Error]', err);
+      res.status(500).json({ error: 'Failed to process document upload', message: err.message });
+    }
   };
 
   public getOrderStatus = (req: Request, res: Response) => {
