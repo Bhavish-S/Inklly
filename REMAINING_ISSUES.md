@@ -6,10 +6,11 @@
 ## Current verification
 
 - `packages/db`, `packages/shared`, `apps/server`, and `apps/web` production builds pass.
-- Full workspace test run after current portal changes: 148 passed, 0 failed (database 3, shared 12, agent 7, server 126). Supabase Storage behavior is tested with a mocked HTTP transport; it has not yet been verified against the connected project.
+- Full workspace test run after current portal and upload-guard changes: 150 passed, 0 failed (database 3, shared 12, agent 7, server 128). `npm run lint` has no configured workspace lint scripts. Supabase Storage behavior is tested with a mocked HTTP transport; it has not yet been verified against the connected project.
 - Web build emits a bundle-size warning (main JavaScript bundle is about 1.22 MB before gzip).
-- GitHub `main` contains commit `d0a19f0`, including private storage, server-derived document metadata, gated developer integrations, and a Render revision stamp.
+- GitHub `main` contains private storage, server-derived document metadata, gated developer integrations, and a Render revision stamp. Current local work adds pre-parse upload concurrency limiting and is not yet pushed.
 - After that push, live Render returned HTTP 200 for `/health` but did not include the new `revision` field; unauthenticated `/api/v1/developer/keys` still returned HTTP 200 with `[]`. Render is not confirmed to be running current source. The pasted Render build log checked out older commit `33cd615` and failed startup for missing `JWT_SECRET`.
+- Public upload now has a per-process concurrency cap before JSON parsing. Per-IP/distributed rate limiting and production-like load validation remain open.
 - A live Render probe during the latest turn timed out at `https://inklly.onrender.com/health`; current runtime health could not be confirmed.
 
 ## Release blockers and follow-up

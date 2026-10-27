@@ -13,6 +13,7 @@ import { createDeveloperRoutes } from './routes/developer-routes';
 import { assertSessionSecretConfigured } from './middleware/session-token';
 import { purgeExpiredPrintFiles } from './services/print-file-retention';
 import { PrivateFileStorage } from './services/private-file-storage';
+import { createPublicUploadConcurrencyGuard } from './middleware/public-upload-guard';
 
 export function createApp(db?: DatabaseService): express.Express {
   assertSessionSecretConfigured();
@@ -24,6 +25,10 @@ export function createApp(db?: DatabaseService): express.Express {
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key'],
   }));
+  const maxConcurrentUploads = Number(process.env.MAX_CONCURRENT_PUBLIC_UPLOADS) || 2;
+  // This must run before express.json so capacity-rejected uploads do not
+  // allocate/decode large base64 request bodies first.
+  app.use('/api/v1/portal/upload', createPublicUploadConcurrencyGuard(maxConcurrentUploads));
   app.use(express.json({
     limit: `${Math.max(1, Math.min(35, Number(process.env.MAX_FILE_SIZE_MB) || 25)) * 2}mb`,
     verify: (req, _res, buffer) => {

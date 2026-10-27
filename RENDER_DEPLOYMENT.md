@@ -21,6 +21,7 @@ Set these values in Render's Environment settings. Never commit their values to 
 | `SUPABASE_URL` | HTTPS URL of the Supabase project that owns the private Storage bucket. |
 | `SUPABASE_SERVICE_ROLE_KEY` | Server-only Supabase service role key. Never expose it to the browser or commit it. |
 | `SUPABASE_STORAGE_BUCKET` | Existing bucket name, default `customer-print-files`. The bucket must be private; startup checks that `public` is false. |
+| `MAX_CONCURRENT_PUBLIC_UPLOADS` | Optional per-process upload concurrency limit; defaults to `2` and is clamped to `1`–`8`. Requests over capacity receive HTTP 429 before JSON body parsing. This limit is per Render instance. |
 | `ENABLE_EXTERNAL_API_ACCESS` | Leave unset or `false` until API product governance/security approval. Setting `true` enables developer key and webhook management on the server; set the matching public Vercel build variable `VITE_ENABLE_EXTERNAL_API_ACCESS=true` only after that approval. |
 
 Render supplies `PORT`. If the database has no active platform owner, set `PLATFORM_OWNER_EMAIL` and a unique `PLATFORM_OWNER_PASSWORD` for bootstrap, then remove the password after provisioning. Payment provider credentials are entered per shop; do not set a shared platform Razorpay secret for customer checkout.
