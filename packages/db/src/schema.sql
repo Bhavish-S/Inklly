@@ -163,6 +163,7 @@ CREATE TABLE IF NOT EXISTS orders (
     id TEXT PRIMARY KEY,
     shop_id TEXT NOT NULL,
     order_number TEXT NOT NULL UNIQUE,
+    token_number TEXT NOT NULL DEFAULT '',
     customer_name TEXT,
     customer_phone TEXT,
     customer_email TEXT,
@@ -179,6 +180,8 @@ CREATE TABLE IF NOT EXISTS orders (
     collected_at TEXT,
     FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE
 );
+
+CREATE INDEX IF NOT EXISTS idx_orders_token ON orders(token_number);
 
 CREATE INDEX IF NOT EXISTS idx_orders_shop_status ON orders(shop_id, status);
 CREATE INDEX IF NOT EXISTS idx_orders_order_number ON orders(order_number);
@@ -461,3 +464,32 @@ CREATE TABLE IF NOT EXISTS payout_requests (
 
 CREATE INDEX IF NOT EXISTS idx_payout_requests_shop ON payout_requests(shop_id);
 CREATE INDEX IF NOT EXISTS idx_payout_requests_status ON payout_requests(status);
+
+CREATE TABLE IF NOT EXISTS user_preferences (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL UNIQUE,
+    theme TEXT NOT NULL DEFAULT 'light',
+    language TEXT NOT NULL DEFAULT 'en-IN',
+    email_notifications INTEGER NOT NULL DEFAULT 1,
+    sms_notifications INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_preferences_user ON user_preferences(user_id);
+
+CREATE TABLE IF NOT EXISTS user_sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    token_hash TEXT NOT NULL,
+    device_info TEXT,
+    ip_address TEXT,
+    created_at TEXT NOT NULL,
+    last_used_at TEXT,
+    expires_at TEXT NOT NULL,
+    revoked_at TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id);

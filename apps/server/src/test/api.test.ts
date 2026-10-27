@@ -483,7 +483,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
 
   // ─── MILESTONE 1: ONBOARDING, AUTHENTICATION & TENANT ISOLATION ───
 
-  it('Registers new merchant, generates token, provisions org, shop, and baseline rates', async () => {
+  it('Registers new merchant, provisions org, shop, and baseline rates (pending subscription payment)', async () => {
     const regPayload = {
       orgName: 'Om Sai Digital Xerox',
       shopName: 'Om Sai Xerox Hub',
@@ -507,12 +507,40 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(res.status, 201);
     const body = await res.json();
     assert.equal(body.success, true);
-    assert.ok(body.token);
+    assert.equal(body.registrationComplete, false);
+    assert.equal(body.organization.planStatus, 'PENDING_PAYMENT');
     assert.equal(body.user.email, 'vikas@omsaixerox.in');
     assert.equal(body.shop.shopCode, 'om-sai-hub');
     assert.equal(body.organization.planTier, 'STARTER');
     assert.ok(body.shopId);
     assert.ok(body.organizationId);
+
+    // Activate subscription via platform admin (simulate payment completion)
+    const activateRes = await fetch(`${baseUrl}/api/v1/platform/merchants/${body.organizationId}/status`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({
+        planTier: 'STARTER',
+        planStatus: 'ACTIVE',
+      }),
+    });
+    assert.equal(activateRes.status, 200);
+
+    // Log in to get credentials
+    const loginRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'vikas@omsaixerox.in',
+        password: 'NewMerchantPassword123!',
+      }),
+    });
+    assert.equal(loginRes.status, 200);
+    const loginData = await loginRes.json();
+    assert.ok(loginData.token);
 
     // Verify baseline rates created in portal
     const shopRes = await fetch(`${baseUrl}/api/v1/portal/shop/om-sai-hub`);
@@ -697,7 +725,35 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
         password: 'NewMerchantPassword123!',
       }),
     });
-    const { token: tenant2Token } = await reg2.json();
+    assert.equal(reg2.status, 201);
+    const reg2Body = await reg2.json();
+    assert.equal(reg2Body.registrationComplete, false);
+
+    // Activate tenant 2 subscription via platform admin
+    const activateRes = await fetch(`${baseUrl}/api/v1/platform/merchants/${reg2Body.organizationId}/status`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({
+        planTier: 'STARTER',
+        planStatus: 'ACTIVE',
+      }),
+    });
+    assert.equal(activateRes.status, 200);
+
+    // Log in as tenant 2 to get token
+    const login2Res = await fetch(`${baseUrl}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'tenant2@test.in',
+        password: 'NewMerchantPassword123!',
+      }),
+    });
+    assert.equal(login2Res.status, 200);
+    const tenant2Token = (await login2Res.json()).token;
 
     // 4. Fetch Tenant 1's order to get its real ID
     const ordersRes = await fetch(`${baseUrl}/api/v1/merchant/orders`, {

@@ -6,16 +6,18 @@ export class OrderRepository {
 
   public createOrder(order: Order): void {
     this.db.transaction(() => {
+      const tokenNumber = order.tokenNumber || `T-${Math.floor(1000 + Math.random() * 9000)}`;
       this.db.execute(
         `INSERT INTO orders (
-          id, shop_id, order_number, customer_name, customer_phone, customer_email,
+          id, shop_id, order_number, token_number, customer_name, customer_phone, customer_email,
           channel, status, payment_status, payment_method, total_amount_paise,
           currency, quote_version, notes, created_at, updated_at, collected_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           order.id,
           order.shopId,
           order.orderNumber,
+          tokenNumber,
           order.customerName || null,
           order.customerPhone || null,
           order.customerEmail || null,
@@ -142,6 +144,7 @@ export class OrderRepository {
       id: row.id,
       shopId: row.shop_id,
       orderNumber: row.order_number,
+      tokenNumber: row.token_number || '',
       customerName: row.customer_name,
       customerPhone: row.customer_phone,
       customerEmail: row.customer_email,

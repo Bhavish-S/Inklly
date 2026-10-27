@@ -75,8 +75,8 @@ export const api = {
   },
 
   async getOrderStatus(orderId: string) {
-    const res = await fetch(`${API_BASE}/portal/orders/${orderId}`);
-    if (!res.ok) throw new Error('Order not found');
+    const res = await fetch(`${API_BASE}/portal/orders/${encodeURIComponent(orderId)}`);
+    if (!res.ok) throw new Error(res.status === 404 ? 'Order not found' : 'Could not load order status');
     return res.json();
   },
 
@@ -112,6 +112,46 @@ export const api = {
       headers: getHeaders(),
     });
     if (!res.ok) throw new Error('Unauthenticated');
+    return res.json();
+  },
+
+  // Appearance & Account settings
+  async getPreferences() {
+    const res = await fetch(`${API_BASE}/auth/preferences`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Failed to load preferences');
+    return res.json();
+  },
+
+  async updatePreferences(preferences: { theme?: string; language?: string; emailNotifications?: boolean; smsNotifications?: boolean }) {
+    const res = await fetch(`${API_BASE}/auth/preferences`, {
+      method: 'PUT', headers: getHeaders(), body: JSON.stringify(preferences),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || 'Failed to update preferences');
+    }
+    return res.json();
+  },
+
+  async requestPasswordReset(email: string) {
+    const res = await fetch(`${API_BASE}/auth/password-reset/request`, {
+      method: 'POST', headers: getHeaders(), body: JSON.stringify({ email }),
+    });
+    if (!res.ok) throw new Error('Password reset request failed');
+    return res.json();
+  },
+
+  async getSessions() {
+    const res = await fetch(`${API_BASE}/auth/sessions`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Failed to load sessions');
+    return res.json();
+  },
+
+  async revokeSession(sessionId: string) {
+    const res = await fetch(`${API_BASE}/auth/sessions/${encodeURIComponent(sessionId)}`, {
+      method: 'DELETE', headers: getHeaders(),
+    });
+    if (!res.ok) throw new Error('Failed to revoke session');
     return res.json();
   },
 
@@ -263,11 +303,66 @@ export const api = {
     return { ...body, webhookUrl: body.shopId ? `${API_BASE}/payments/webhook/razorpay/${encodeURIComponent(body.shopId)}` : '' };
   },
 
+  async testRazorpayCredentials() {
+    const res = await fetch(`${API_BASE}/merchant/settings/razorpay/test`, {
+      method: 'POST', headers: getHeaders(),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not verify Razorpay credentials');
+    return body;
+  },
+
   async removeRazorpayCredentials() {
     const res = await fetch(`${API_BASE}/merchant/settings/razorpay`, { method: 'DELETE', headers: getHeaders() });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || 'Could not remove Razorpay settings');
     return body;
+  },
+
+  // WhatsApp Setup
+  async getWhatsAppSetup() {
+    const res = await fetch(`${API_BASE}/merchant/whatsapp/setup`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Could not load WhatsApp setup');
+    return res.json();
+  },
+
+  async saveWhatsAppSetup(data: { connectionType: string; businessPhoneNumber?: string; displayName?: string; metaAppId?: string; metaAppSecret?: string }) {
+    const res = await fetch(`${API_BASE}/merchant/whatsapp/setup`, {
+      method: 'POST', headers: getHeaders(), body: JSON.stringify(data),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not save WhatsApp setup');
+    return body;
+  },
+
+  async generateWhatsAppQrPairing() {
+    const res = await fetch(`${API_BASE}/merchant/whatsapp/qr-pairing`, { method: 'POST', headers: getHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not start QR pairing');
+    return body;
+  },
+
+  async refreshWhatsAppQrPairing() {
+    const res = await fetch(`${API_BASE}/merchant/whatsapp/qr-pairing/refresh`, { method: 'POST', headers: getHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not refresh QR pairing');
+    return body;
+  },
+
+  async removeWhatsAppAccount(accountId: string) {
+    const res = await fetch(`${API_BASE}/merchant/whatsapp/account/${encodeURIComponent(accountId)}`, { method: 'DELETE', headers: getHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not remove WhatsApp account');
+    return body;
+  },
+
+  async getWhatsAppEvents(limit?: number, offset?: number) {
+    const params = new URLSearchParams();
+    if (limit) params.set('limit', String(limit));
+    if (offset) params.set('offset', String(offset));
+    const res = await fetch(`${API_BASE}/merchant/whatsapp/events?${params.toString()}`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Could not load WhatsApp events');
+    return res.json();
   },
 
   async createPaymentIntent(orderId: string) {

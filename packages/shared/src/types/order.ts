@@ -9,6 +9,10 @@ export type OrderStatus =
   | 'IN_PROGRESS'
   | 'READY_FOR_COLLECTION'
   | 'COLLECTED'
+  | 'PRINT_FAILED'
+  | 'PRINT_UNCONFIRMED'
+  | 'PENDING_RELEASE'
+  | 'PENDING_AGENT_SPOOL'
   | 'CANCEL_REQUESTED'
   | 'CANCELLED'
   | 'ON_HOLD'
@@ -69,6 +73,7 @@ export interface Order {
   id: string;
   shopId: string;
   orderNumber: string; // e.g. "INK-20261025-001"
+  tokenNumber: string; // e.g. "T-8472" for collection
   customerName?: string;
   customerPhone?: string;
   customerEmail?: string;

@@ -10,7 +10,7 @@ import {
   LedgerRepository,
   AgentRepository,
 } from '@inklly/db';
-import { authenticate, requireRole, requirePermission, enforceTenantIsolation } from '../middleware/auth';
+import { authenticate, requireRole, requirePermission, enforceTenantIsolation, requireActiveSubscription } from '../middleware/auth';
 import { ShopPaymentCredentialsService } from '../services/shop-payment-credentials';
 import { PrivateFileStorage } from '../services/private-file-storage';
 
@@ -40,6 +40,7 @@ export function createMerchantRoutes(db: DatabaseService, fileStorage: PrivateFi
   // Apply authentication and tenant isolation
   router.use(authenticate);
   router.use(enforceTenantIsolation);
+  router.use(requireActiveSubscription(db));
 
   router.get('/dashboard', requirePermission('orders:view'), controller.getDashboard);
   router.get('/orders', requirePermission('orders:view'), controller.getOrders);
@@ -62,6 +63,7 @@ export function createMerchantRoutes(db: DatabaseService, fileStorage: PrivateFi
   router.put('/settings', requireRole('MERCHANT_OWNER', 'SHOP_MANAGER'), controller.updateSettings);
   router.get('/settings/razorpay', requireRole('MERCHANT_OWNER'), controller.getRazorpayCredentials);
   router.put('/settings/razorpay', requireRole('MERCHANT_OWNER'), controller.saveRazorpayCredentials);
+  router.post('/settings/razorpay/test', requireRole('MERCHANT_OWNER'), controller.testRazorpayCredentials);
   router.delete('/settings/razorpay', requireRole('MERCHANT_OWNER'), controller.removeRazorpayCredentials);
 
   router.get('/staff', requireRole('MERCHANT_OWNER', 'SHOP_MANAGER'), controller.getStaff);
@@ -77,6 +79,22 @@ export function createMerchantRoutes(db: DatabaseService, fileStorage: PrivateFi
   // Payouts / Withdrawals
   router.get('/payouts', requirePermission('finance:view'), controller.getPayouts);
   router.post('/payouts', requirePermission('finance:manage'), controller.requestPayout);
+
+  // Storage / Document tools
+  router.get('/storage/categories', requirePermission('storage:view'), controller.getStorageCategories);
+  router.post('/storage/categories', requirePermission('storage:manage'), controller.createStorageCategory);
+  router.delete('/storage/categories/:id', requirePermission('storage:manage'), controller.deleteStorageCategory);
+  router.get('/storage/documents', requirePermission('storage:view'), controller.getStorageDocuments);
+  router.get('/storage/documents/:id/download', requirePermission('storage:view'), controller.downloadStorageDocument);
+  router.delete('/storage/documents/:id', requirePermission('storage:manage'), controller.deleteStorageDocument);
+
+  // WhatsApp Setup
+  router.get('/whatsapp/setup', requireRole('MERCHANT_OWNER', 'SHOP_MANAGER'), controller.getWhatsAppSetup);
+  router.post('/whatsapp/setup', requireRole('MERCHANT_OWNER', 'SHOP_MANAGER'), controller.saveWhatsAppSetup);
+  router.post('/whatsapp/qr-pairing', requireRole('MERCHANT_OWNER', 'SHOP_MANAGER'), controller.generateWhatsAppQrPairing);
+  router.post('/whatsapp/qr-pairing/refresh', requireRole('MERCHANT_OWNER', 'SHOP_MANAGER'), controller.refreshWhatsAppQrPairing);
+  router.delete('/whatsapp/account/:id', requireRole('MERCHANT_OWNER'), controller.removeWhatsAppAccount);
+  router.get('/whatsapp/events', requireRole('MERCHANT_OWNER', 'SHOP_MANAGER'), controller.getWhatsAppEvents);
 
   return router;
 }

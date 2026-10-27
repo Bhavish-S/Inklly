@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { UserRole } from '@inklly/shared';
+import { DatabaseService } from '@inklly/db';
 import { verifySessionToken } from './session-token';
 
 export interface AuthenticatedUser {
@@ -64,6 +65,37 @@ export function requirePermission(permission: string) {
     if (user.role === 'PLATFORM_OWNER' || user.role === 'PLATFORM_ADMIN' || user.role === 'MERCHANT_OWNER') return next();
     if (user.permissions.includes('*') || user.permissions.includes(permission)) return next();
     return res.status(403).json({ error: `Permission required: ${permission}` });
+  };
+}
+
+/** Keep trial access in sync with its persisted expiry before merchant API work. */
+export function requireActiveSubscription(db: DatabaseService) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const user = req.user;
+    if (!user) return res.status(401).json({ error: 'Authentication required' });
+    if (user.role === 'PLATFORM_OWNER' || user.role === 'PLATFORM_ADMIN') return next();
+    if (!user.organizationId) return res.status(403).json({ error: 'An organization membership is required.' });
+
+    const organization = db.queryOne<{ plan_status: string }>(
+      `SELECT plan_status FROM organizations WHERE id = ?`,
+      [user.organizationId]
+    );
+    if (!organization) return res.status(403).json({ error: 'Organization not found.' });
+    if (organization.plan_status === 'ACTIVE') return next();
+
+    if (organization.plan_status === 'TRIAL') {
+      const trial = db.queryOne<{ status: string; current_period_end: string }>(
+        `SELECT status, current_period_end FROM subscriptions WHERE organization_id = ? ORDER BY created_at DESC LIMIT 1`,
+        [user.organizationId]
+      );
+      if (trial?.status === 'TRIALING' && Date.parse(trial.current_period_end) > Date.now()) return next();
+      db.execute(`UPDATE organizations SET plan_status = 'PAST_DUE', updated_at = ? WHERE id = ? AND plan_status = 'TRIAL'`, [new Date().toISOString(), user.organizationId]);
+    }
+
+    return res.status(402).json({
+      error: 'Your Inklly trial has ended. Contact us to activate pilot pricing.',
+      subscriptionRequired: true,
+    });
   };
 }
 

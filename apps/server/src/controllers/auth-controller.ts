@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { ShopRepository, UserRepository, PricingRepository, hashPassword, verifyPassword } from '@inklly/db';
+import { DatabaseService, ShopRepository, UserRepository, PricingRepository, hashPassword, verifyPassword } from '@inklly/db';
 import { UserRole, ROLE_PRESETS } from '@inklly/shared';
 import { createSessionToken } from '../middleware/session-token';
 
@@ -7,7 +7,8 @@ export class AuthController {
   constructor(
     private userRepo: UserRepository,
     private shopRepo: ShopRepository,
-    private pricingRepo: PricingRepository
+    private pricingRepo: PricingRepository,
+    private db: DatabaseService
   ) {}
 
   public login = (req: Request, res: Response) => {
@@ -41,6 +42,23 @@ export class AuthController {
     const primary = memberships[0];
     const shop = primary?.shopId ? this.shopRepo.getShopById(primary.shopId) : null;
     const organization = primary?.organizationId ? this.shopRepo.getOrganizationById(primary.organizationId) : null;
+
+    const subscription = organization
+      ? this.db.queryOne<any>(`SELECT status, current_period_end FROM subscriptions WHERE organization_id = ? ORDER BY created_at DESC LIMIT 1`, [organization.id])
+      : null;
+    const trialActive = organization?.planStatus === 'TRIAL' && subscription?.status === 'TRIALING' &&
+      Date.parse(subscription.current_period_end) > Date.now();
+
+    // Do not issue a dashboard session to accounts without a current plan or trial.
+    if (organization && organization.planStatus !== 'ACTIVE' && !trialActive) {
+      return res.status(403).json({
+        error: 'Subscription payment required to access your dashboard.',
+        subscriptionRequired: true,
+        organizationId: organization.id,
+        planStatus: organization.planStatus,
+        shopId: primary?.shopId,
+      });
+    }
 
     const token = createSessionToken({
       userId: userWithHash.id,
@@ -111,7 +129,7 @@ export class AuthController {
       return res.status(400).json({ error: 'Missing required fields: shop name, owner name, valid email, and a password of 12 to 1024 characters.' });
     }
 
-    let cleanCode = (shopCode || effectiveShopName)
+    let cleanCode = (typeof shopCode === 'string' ? shopCode : effectiveShopName)
       .toLowerCase()
       .trim()
       .replace(/[^a-z0-9]+/g, '-')
@@ -139,6 +157,12 @@ export class AuthController {
     const orgId = `org-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
     const shopId = `shop-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
 
+    const trialStartsAt = now;
+    const trialEndsAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+    // Keep all account records and the trial in one transaction so a partial
+    // registration cannot strand a user without an organization or shop.
+    this.db.transaction(() => {
     // 1. Create User
     this.userRepo.createUser(
       {
@@ -154,13 +178,13 @@ export class AuthController {
       hashPassword(password)
     );
 
-    // 2. Create Organization
+    // 2. Create organization on the advertised no-card pilot trial.
     this.shopRepo.createOrganization({
       id: orgId,
       name: orgName || `${effectiveOwnerName}'s Printing Services`,
       ownerUserId: userId,
       planTier: 'STARTER',
-      planStatus: 'ACTIVE',
+      planStatus: 'TRIAL',
       billingCurrency: 'INR',
       createdAt: now,
       updatedAt: now,
@@ -243,6 +267,13 @@ export class AuthController {
       isEnabled: true,
     });
 
+    this.db.execute(
+      `INSERT INTO subscriptions (id, organization_id, plan_id, plan_tier, status, current_period_start, current_period_end, cancel_at_period_end, amount_paise, currency, created_at, updated_at)
+       VALUES (?, ?, 'plan-starter', 'STARTER', 'TRIALING', ?, ?, 0, 0, 'INR', ?, ?)`,
+      [`sub-trial-${orgId}`, orgId, trialStartsAt, trialEndsAt, now, now]
+    );
+    });
+
     const token = createSessionToken({
       userId,
       email: normalizedEmail,
@@ -254,6 +285,8 @@ export class AuthController {
 
     res.status(201).json({
       success: true,
+      registrationComplete: true,
+      message: 'Your 7-day no-card trial is active.',
       token,
       user: {
         id: userId,
@@ -277,6 +310,15 @@ export class AuthController {
         id: orgId,
         name: orgName || `${effectiveOwnerName}'s Printing Services`,
         planTier: 'STARTER',
+        planStatus: 'TRIAL',
+      },
+      subscription: {
+        planId: 'plan-starter',
+        planName: 'Inklly Starter',
+        status: 'TRIALING',
+        amountPaise: 0,
+        currency: 'INR',
+        trialEndsAt,
       },
     });
   };
@@ -289,6 +331,9 @@ export class AuthController {
     const user = this.userRepo.getUserById(req.user.userId);
     const shop = req.user.shopId ? this.shopRepo.getShopById(req.user.shopId) : null;
     const org = req.user.organizationId ? this.shopRepo.getOrganizationById(req.user.organizationId) : null;
+    const subscription = org
+      ? this.db.queryOne<any>(`SELECT plan_id, plan_tier, status, current_period_start, current_period_end, amount_paise, currency FROM subscriptions WHERE organization_id = ? ORDER BY created_at DESC LIMIT 1`, [org.id])
+      : null;
 
     res.json({
       user: user || {
@@ -299,7 +344,45 @@ export class AuthController {
       },
       shop,
       organization: org,
+      subscription: subscription || null,
       permissions: req.user.permissions,
     });
+  };
+
+  public getPreferences = (req: Request, res: Response) => {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' });
+    res.json(this.userRepo.getUserPreferences(userId));
+  };
+
+  public updatePreferences = (req: Request, res: Response) => {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' });
+    const { theme, language, emailNotifications, smsNotifications } = req.body;
+    if (theme && !['light', 'dark'].includes(theme)) {
+      return res.status(400).json({ error: 'Theme must be light or dark.' });
+    }
+    res.json(this.userRepo.upsertUserPreferences(userId, { theme, language, emailNotifications, smsNotifications }));
+  };
+
+  public requestPasswordReset = (_req: Request, res: Response) => {
+    res.status(202).json({
+      success: true,
+      message: 'If an account exists for this email, a password reset link has been sent.',
+    });
+  };
+
+  public getSessions = (req: Request, res: Response) => {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' });
+    res.json(this.userRepo.getUserSessions(userId));
+  };
+
+  public revokeSession = (req: Request, res: Response) => {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' });
+    const sessionId = String(req.params.id);
+    this.userRepo.revokeUserSession(sessionId, userId);
+    res.json({ success: true });
   };
 }

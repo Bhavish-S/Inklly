@@ -8,7 +8,6 @@ export function createPaymentRoutes(db: DatabaseService): Router {
   const router = Router();
   const orderRepo = new OrderRepository(db);
   const ledgerRepo = new LedgerRepository(db);
-
   const controller = new PaymentController(orderRepo, ledgerRepo, db, new ShopPaymentCredentialsService(db));
 
   router.post('/create-intent', controller.createPaymentIntent);

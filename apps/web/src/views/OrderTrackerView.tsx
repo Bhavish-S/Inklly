@@ -19,82 +19,40 @@ const ORDER_STEPS = [
 export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onBackToPortal }) => {
   const [order, setOrder] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-
-  const fetchStatus = async () => {
-    try {
-      const data = await api.getOrderStatus(orderId);
-      setOrder(data);
-    } catch {
-      // Check localStorage for synchronized order state
-      let synced: any = null;
-      try {
-        const stored = localStorage.getItem(`inklly_order_${orderId}`);
-        if (stored) {
-          synced = JSON.parse(stored);
-        } else {
-          const allOrders = JSON.parse(localStorage.getItem('inklly_live_orders') || '[]');
-          synced = allOrders.find((o: any) => o.orderNumber === orderId || o.id === orderId || o.orderId === orderId);
-        }
-      } catch (e) {
-        console.warn('LocalStorage error in tracker', e);
-      }
-
-      if (synced) {
-        let mappedStatus = 'READY_FOR_PRINT';
-        if (synced.tab === 'done' || synced.status?.includes('Done') || synced.status?.includes('Completed')) {
-          mappedStatus = 'READY_FOR_COLLECTION';
-        } else if (synced.tab === 'printing' || synced.status?.includes('Printing')) {
-          mappedStatus = 'IN_PROGRESS';
-        } else if (synced.tab === 'processing') {
-          mappedStatus = 'READY_FOR_PRINT';
-        } else if (synced.tab === 'pending') {
-          mappedStatus = 'AWAITING_REVIEW';
-        }
-
-        setOrder({
-          orderId: synced.orderId || orderId,
-          orderNumber: synced.orderNumber || (orderId.startsWith('INK-') ? orderId : `INK-${orderId.toUpperCase()}`),
-          customerName: synced.customer || 'Counter Customer',
-          status: mappedStatus,
-          placedAt: synced.time || 'Just now',
-          lineItems: [
-            {
-              fileName: synced.document || 'Document_Print_Job.pdf',
-              pageCount: synced.pages || 4,
-              options: {
-                colorMode: synced.colorMode === 'Colour' ? 'color' : 'bw',
-                duplexMode: synced.duplex?.includes('Back-to-Back') ? 'duplex' : 'simplex',
-                copies: synced.copies || 1,
-              },
-            },
-          ],
-          quote: { totalPaise: Math.round(parseFloat((synced.amount || '0').replace('₹', '')) * 100) || 600 },
-        });
-        return;
-      }
-
-      // Graceful fallback for offline demo or simulated order tokens
-      setOrder({
-        orderId: orderId,
-        orderNumber: orderId.startsWith('INK-') ? orderId : (orderId.startsWith('ord-') ? `INK-${orderId.slice(-4).toUpperCase()}` : orderId),
-        customerName: 'Counter Customer',
-        status: 'READY_FOR_PRINT',
-        placedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        lineItems: [
-          { fileName: 'Document_Print_Job.pdf', pageCount: 4, options: { colorMode: 'bw', duplexMode: 'simplex', copies: 1 } },
-        ],
-        quote: { totalPaise: 600 },
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [error, setError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
-    fetchStatus();
-    const interval = setInterval(fetchStatus, 4000);
+    let active = true;
+    let inFlight = false;
+    setLoading(true);
+    setError(null);
+    if (!orderId) {
+      setOrder(null);
+      setError('This tracking link is missing its order reference. Open the link from your order confirmation.');
+      setLoading(false);
+      return;
+    }
+    const fetchStatus = async () => {
+      if (inFlight || document.visibilityState === 'hidden') return;
+      inFlight = true;
+      try {
+        const data = await api.getOrderStatus(orderId);
+        if (active) {
+          setOrder(data);
+          setError(null);
+        }
+      } catch {
+        if (active) setError('We could not refresh this order right now. Check your connection and try again.');
+      } finally {
+        inFlight = false;
+        if (active) setLoading(false);
+      }
+    };
+    void fetchStatus();
+    const interval = setInterval(() => void fetchStatus(), 10000);
     return () => clearInterval(interval);
-  }, [orderId]);
+  }, [orderId, retryCount]);
 
   if (loading && !order) {
     return (
@@ -107,7 +65,11 @@ export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onB
   if (!order) {
     return (
       <div style={{ padding: '4rem', textAlign: 'center', color: '#B42318' }}>
-        <h3>Order not found</h3>
+        <h3>{error ? 'Order details unavailable' : 'Order not found'}</h3>
+        <p style={{ marginTop: '0.5rem' }}>{error || 'Check the order link and try again.'}</p>
+        <button onClick={() => { setLoading(true); setRetryCount((count) => count + 1); }} className="btn btn-primary" style={{ marginTop: '1rem' }} disabled={loading || !orderId}>
+          {loading ? 'Checking…' : 'Try again'}
+        </button>
         <button onClick={onBackToPortal} className="btn btn-secondary" style={{ marginTop: '1rem' }}>
           Back to Shop Portal
         </button>
@@ -145,23 +107,30 @@ export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onB
 
       {/* Order Status Header */}
       <div className="card" style={{ marginBottom: '1.5rem', textAlign: 'center', padding: '2.5rem 1.5rem' }}>
+        {error && <p role="status" className="mb-3 text-sm text-amber-700">{error} Showing the last status we received.</p>}
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', backgroundColor: '#EEF2FF', padding: '0.375rem 0.875rem', borderRadius: '9999px', color: '#4A69ED', fontWeight: 600, fontSize: '0.875rem', marginBottom: '1rem' }}>
           <span>Order #{order.orderNumber}</span>
         </div>
 
         <h1 style={{ fontSize: '1.875rem', fontWeight: 800, marginBottom: '0.5rem', color: '#182230' }}>
-          {order.status === 'READY_FOR_COLLECTION' ? '🎉 Your Prints are Ready for Pickup!' : 'Printing Order in Progress'}
+          {order.status === 'CANCELLED' || order.status === 'REJECTED'
+            ? 'This order was cancelled'
+            : order.status === 'READY_FOR_COLLECTION' || order.status === 'COLLECTED'
+              ? '🎉 Your Prints are Ready for Pickup!'
+              : 'Printing Order in Progress'}
         </h1>
 
         <p style={{ color: '#667085', fontSize: '0.9375rem', maxWidth: '480px', margin: '0 auto 1.5rem' }}>
-          Hello {order.customerName}, show this pickup screen at the counter when collecting your documents.
+          {order.status === 'CANCELLED' || order.status === 'REJECTED'
+            ? 'Contact the shop if you need help with this order.'
+            : `Hello ${order.customerName || 'there'}, show this pickup screen at the counter when collecting your documents.`}
         </p>
 
         {/* Pickup Token Card */}
         <div style={{ display: 'inline-block', backgroundColor: '#F7F8FA', border: '2px dashed #4A69ED', borderRadius: '12px', padding: '1rem 2rem', marginBottom: '2rem' }}>
           <div style={{ fontSize: '0.75rem', color: '#667085', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Counter Pickup Token</div>
           <div style={{ fontSize: '2.25rem', fontWeight: 800, color: '#182230', letterSpacing: '0.1em' }}>
-            {order.orderNumber.slice(-4)}
+            {order.tokenNumber || '—'}
           </div>
         </div>
 
@@ -206,7 +175,7 @@ export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onB
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', fontSize: '0.875rem', marginBottom: '1.25rem' }}>
           <div>
             <span style={{ color: '#667085', display: 'block', fontSize: '0.75rem' }}>Files Count</span>
-            <strong>{order.filesCount} file(s)</strong>
+            <strong>{order.filesCount ?? 0} file(s)</strong>
           </div>
           <div>
             <span style={{ color: '#667085', display: 'block', fontSize: '0.75rem' }}>Payment Status</span>

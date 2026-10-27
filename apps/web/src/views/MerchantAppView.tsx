@@ -106,6 +106,22 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       return null;
     }
   });
+  const [liveOrganization, setLiveOrganization] = useState<any>(() => {
+    try {
+      const stored = typeof window !== 'undefined' ? localStorage.getItem('inklly_organization') : null;
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [liveSubscription, setLiveSubscription] = useState<any>(() => {
+    try {
+      const stored = typeof window !== 'undefined' ? localStorage.getItem('inklly_subscription') : null;
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  });
 
   useEffect(() => {
     api.getMe()
@@ -117,6 +133,14 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
         if (data.user) {
           setLiveUser(data.user);
           localStorage.setItem('inklly_user', JSON.stringify(data.user));
+        }
+        if (data.organization) {
+          setLiveOrganization(data.organization);
+          localStorage.setItem('inklly_organization', JSON.stringify(data.organization));
+        }
+        if (data.subscription) {
+          setLiveSubscription(data.subscription);
+          localStorage.setItem('inklly_subscription', JSON.stringify(data.subscription));
         }
       })
       .catch(() => {
@@ -133,8 +157,12 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     phone: liveShop.phone || '',
     email: liveShop.email || liveUser?.email || 'shop@inklly.com',
     planTier: liveShop.planTier || 'starter',
-    planBadge: `${(liveShop.planTier || 'STARTER').toUpperCase()} · ACTIVE`,
-    planPriceText: liveShop.planTier === 'starter' ? '₹99 / month' : '₹199 / month',
+    planBadge: liveSubscription?.status === 'TRIALING'
+      ? `${(liveShop.planTier || 'STARTER').toUpperCase()} · FREE TRIAL`
+      : `${(liveShop.planTier || 'STARTER').toUpperCase()} · ${liveOrganization?.planStatus || 'PILOT'}`,
+    planPriceText: liveSubscription?.status === 'TRIALING' && liveSubscription.current_period_end
+      ? `Trial ends ${new Date(liveSubscription.current_period_end).toLocaleDateString()}`
+      : 'Pilot pricing',
     billingCycle: 'monthly',
     maxPrinters: liveShop.planTier === 'starter' ? 1 : 3,
     monthlyOrderLimit: 1000,
@@ -156,8 +184,8 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     phone: '',
     email: '',
     planTier: 'starter',
-    planBadge: 'STARTER · ₹99/mo',
-    planPriceText: '₹99 / month',
+    planBadge: 'Pilot account',
+    planPriceText: 'Pilot pricing',
     billingCycle: 'monthly',
     maxPrinters: 1,
     monthlyOrderLimit: 1000,
@@ -262,7 +290,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [showTourBanner, setShowTourBanner] = useState<boolean>(true);
 
   // Real Hardware Printer Connectivity & Detection State
-  const [agentConnected, setAgentConnected] = useState<boolean>(true);
+  const [agentConnected, setAgentConnected] = useState<boolean>(false);
   const [detectingPrinters, setDetectingPrinters] = useState<boolean>(false);
   const [detectedPrinters, setDetectedPrinters] = useState<Array<{
     name: string;
@@ -274,42 +302,8 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     supportsColor: boolean;
     supportsDuplex: boolean;
     tray: string;
-  }>>([
-    {
-      name: 'Canon LBP2900',
-      driver: 'Canon LBP2900 Advanced Printing Software',
-      port: 'USB001',
-      status: 'Ready',
-      isDefault: true,
-      isPhysical: true,
-      supportsColor: false,
-      supportsDuplex: false,
-      tray: 'Auto-Select (Tray 1: A4 Standard)',
-    },
-    {
-      name: 'Microsoft Print to PDF',
-      driver: 'Microsoft Print To PDF (Color/Duplex Spooler)',
-      port: 'PORTPROMPT:',
-      status: 'Ready',
-      isDefault: false,
-      isPhysical: false,
-      supportsColor: true,
-      supportsDuplex: true,
-      tray: 'Auto-Select (Virtual Spooler)',
-    },
-    {
-      name: 'Solid Edge PS Printer 3.0',
-      driver: 'Siemens SE PDF Driver (PostScript)',
-      port: 'SE_PORT:',
-      status: 'Ready',
-      isDefault: false,
-      isPhysical: false,
-      supportsColor: true,
-      supportsDuplex: true,
-      tray: 'Auto-Select',
-    },
-  ]);
-  const [selectedDefaultPrinter, setSelectedDefaultPrinter] = useState<string>('Canon LBP2900');
+  }>>([]);
+  const [selectedDefaultPrinter, setSelectedDefaultPrinter] = useState<string>('');
   const [selectedPaperTray, setSelectedPaperTray] = useState<string>('Auto-Select');
   const [showAddPrinterModal, setShowAddPrinterModal] = useState<boolean>(false);
   const [newPrinterName, setNewPrinterName] = useState<string>('');
@@ -319,12 +313,12 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
 
   // Checklist Interactive State
   const [checklistStatus, setChecklistStatus] = useState<Record<string, { status: string; ready: boolean }>>({
-    Profile: { status: 'Ready', ready: true },
-    Printers: { status: 'Ready', ready: true },
-    Pricing: { status: 'Ready', ready: true },
-    Discounts: { status: 'Ready', ready: true },
-    'Customer Portal': { status: 'Ready', ready: true },
-    'Automation & Payment': { status: 'Ready', ready: true },
+    Profile: { status: 'Needs review', ready: false },
+    Printers: { status: 'Connect agent', ready: false },
+    Pricing: { status: 'Needs review', ready: false },
+    Discounts: { status: 'Optional', ready: false },
+    'Customer Portal': { status: 'Needs review', ready: false },
+    'Automation & Payment': { status: 'Needs review', ready: false },
   });
 
 
@@ -756,15 +750,9 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const totalDueToday = totalUpgradeSubtotal + upgradeGst;
 
   const handleConfirmUpgrade = () => {
-    setUpgradeProcessing(true);
-    setTimeout(() => {
-      setUpgradeProcessing(false);
-      setUpgradeModalOpen(false);
-      const tierName = selectedPlanTier.charAt(0).toUpperCase() + selectedPlanTier.slice(1);
-      setCurrentPlan(`${tierName} Plan (${billingCycleUpgrade})`);
-      setSaveSuccessToast(`🎉 Successfully upgraded to ${tierName} Plan! AutoPay mandate configured.`);
-      setTimeout(() => setSaveSuccessToast(null), 4000);
-    }, 800);
+    setUpgradeModalOpen(false);
+    if (onNavigate) onNavigate('/pricing');
+    else setSaveSuccessToast('Pilot pricing is configured directly with Inklly. Visit Contact to discuss your shop.');
   };
 
   // Orders Search & Action Toast
@@ -772,38 +760,15 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [orderActionToast, setOrderActionToast] = useState<string | null>(null);
 
   // Storage State
-  const [storageAgentOnline, setStorageAgentOnline] = useState<boolean>(true);
+  const [storageAgentOnline, setStorageAgentOnline] = useState<boolean>(false);
   const [selectedStorageCategory, setSelectedStorageCategory] = useState<string>('college');
   const [selectedStorageFile, setSelectedStorageFile] = useState<any>(null);
   const [newCategoryModalOpen, setNewCategoryModalOpen] = useState<boolean>(false);
   const [newCategoryName, setNewCategoryName] = useState<string>('');
   const [storageCategories, setStorageCategories] = useState([
-    { id: 'college', name: 'College Exams & Question Papers', count: 4, size: '18.2 MB' },
-    { id: 'kyc', name: 'Govt ID & KYC Documents', count: 2, size: '4.1 MB' },
-    { id: 'thesis', name: 'Project Reports & Thesis', count: 3, size: '45.6 MB' },
-    { id: 'receipts', name: 'General Receipts & Invoices', count: 2, size: '1.2 MB' },
+    { id: 'temporary', name: 'Temporary customer uploads', count: 0, size: '0 MB' },
   ]);
-  const [storageFiles, setStorageFiles] = useState<Record<string, Array<{ id: string; name: string; pages: number; size: string; date: string; type: string }>>>({
-    college: [
-      { id: 'f-1', name: 'Engineering_Mathematics_Sem3_QuestionBank.pdf', pages: 12, size: '2.4 MB', date: '22 Oct 2026', type: 'PDF' },
-      { id: 'f-2', name: 'Data_Structures_Lab_Manual_2026.pdf', pages: 48, size: '6.8 MB', date: '19 Oct 2026', type: 'PDF' },
-      { id: 'f-3', name: 'Digital_Signal_Processing_Model_Paper.pdf', pages: 8, size: '1.2 MB', date: '15 Oct 2026', type: 'PDF' },
-      { id: 'f-4', name: 'Chemistry_Unit1_Formula_Sheet.pdf', pages: 4, size: '0.8 MB', date: '10 Oct 2026', type: 'PDF' },
-    ],
-    kyc: [
-      { id: 'f-5', name: 'Aadhaar_Card_Masked_Format.pdf', pages: 2, size: '1.1 MB', date: '24 Oct 2026', type: 'PDF' },
-      { id: 'f-6', name: 'PAN_Card_Verification_Doc.pdf', pages: 2, size: '3.0 MB', date: '18 Oct 2026', type: 'PDF' },
-    ],
-    thesis: [
-      { id: 'f-7', name: 'Final_Year_AI_Project_Report.pdf', pages: 86, size: '24.2 MB', date: '20 Oct 2026', type: 'PDF' },
-      { id: 'f-8', name: 'Mechanical_CAD_Design_Portfolio.pdf', pages: 42, size: '16.5 MB', date: '14 Oct 2026', type: 'PDF' },
-      { id: 'f-9', name: 'MBA_Marketing_Case_Study.pdf', pages: 28, size: '4.9 MB', date: '08 Oct 2026', type: 'PDF' },
-    ],
-    receipts: [
-      { id: 'f-10', name: 'GST_Invoice_Template_Inklly.pdf', pages: 1, size: '0.4 MB', date: '25 Oct 2026', type: 'PDF' },
-      { id: 'f-11', name: 'Challan_Payment_Receipt_B&W.pdf', pages: 2, size: '0.8 MB', date: '21 Oct 2026', type: 'PDF' },
-    ],
-  });
+  const [storageFiles, setStorageFiles] = useState<Record<string, Array<{ id: string; name: string; pages: number; size: string; date: string; type: string }>>>({ temporary: [] });
 
   // WhatsApp State
   const [whatsappConnected, setWhatsappConnected] = useState<boolean>(false);
@@ -878,6 +843,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     return {
       id: o.orderNumber || o.id,
       rawId: o.id,
+      rawStatus: o.status,
       customer: o.customerName || 'Walk-in Customer',
       phone: o.customerPhone || 'Counter QR',
       document: file?.fileName || 'Customer_Document.pdf',
@@ -947,28 +913,15 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     const order = ordersList.find((o) => o.id === orderId || o.rawId === orderId);
     const targetId = order?.rawId || orderId;
 
-    updateOrderInStorage(orderId, { tab: 'printing', status: 'Queued for the shop print agent...' });
-    setOrdersList((prev) =>
-      prev.map((o) =>
-        o.id === orderId || o.rawId === orderId
-          ? { ...o, tab: 'printing', status: 'Queued for the shop print agent...' }
-          : o
-      )
-    );
-    setOrderActionToast(`Order #${orderId} was sent to the shop print queue.`);
-
-    // 1. Dispatch on cloud server
     try {
       await api.dispatchPrint(targetId);
+      setOrderActionToast(`Order #${orderId} was queued for the shop print agent.`);
+      await fetchLiveOrdersFromApi();
     } catch (e) {
       console.warn('Server dispatch print warning:', e);
       setOrderActionToast(e instanceof Error ? e.message : 'Could not queue this order for printing.');
-      return;
     }
-
-    setTimeout(() => {
-      fetchLiveOrdersFromApi();
-    }, 1500);
+    setTimeout(() => setOrderActionToast(null), 3000);
   };
 
   const handleRejectOrder = async (orderId: string) => {
@@ -978,57 +931,42 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       await api.updateOrderStatus(targetId, 'REJECTED');
     } catch (e) {
       console.warn('Reject error:', e);
+      setOrderActionToast(e instanceof Error ? e.message : 'Could not reject this order.');
+      return;
     }
-    fetchLiveOrdersFromApi();
+    await fetchLiveOrdersFromApi();
     setOrderActionToast(`Order #${orderId} has been rejected.`);
     setTimeout(() => setOrderActionToast(null), 3000);
   };
 
   const handleRetryPrint = (orderId: string) => {
-    updateOrderInStorage(orderId, { tab: 'printing', status: 'Spooling retry after paper jam clearance...' });
-    setOrdersList((prev) =>
-      prev.map((o) =>
-        o.id === orderId ? { ...o, tab: 'printing', status: 'Spooling retry after paper jam clearance...' } : o
-      )
-    );
-    setOrderActionToast(`Cleared jam and resumed Order #${orderId}.`);
-    setTimeout(() => {
-      updateOrderInStorage(orderId, { tab: 'done', status: 'Print Completed & Delivered' });
-      setOrdersList((prev) =>
-        prev.map((o) =>
-          o.id === orderId ? { ...o, tab: 'done', status: 'Print Completed & Delivered' } : o
-        )
-      );
-      setOrderActionToast(`Order #${orderId} print confirmed!`);
-      setTimeout(() => setOrderActionToast(null), 3000);
-    }, 2500);
+    setOrderActionToast(`Order #${orderId} needs an operator review before retry. Check the printer and confirm the previous output to avoid duplicate pages.`);
+    setTimeout(() => setOrderActionToast(null), 5000);
   };
 
   const handleMarkCollected = async (orderId: string) => {
     const order = ordersList.find((o) => o.id === orderId || o.rawId === orderId);
     const targetId = order?.rawId || orderId;
     try {
-      if (order?.tab === 'pending') {
-        try {
-          await api.dispatchPrint(targetId);
-        } catch (_) {}
-        try {
-          await api.updateOrderStatus(targetId, 'READY_FOR_COLLECTION');
-        } catch (_) {}
-      } else if (order?.tab === 'printing' || order?.tab === 'processing') {
-        try {
-          await api.updateOrderStatus(targetId, 'READY_FOR_COLLECTION');
-        } catch (_) {}
+      if (order?.rawStatus === 'COLLECTED') {
+        setSelectedOrder(null);
+        return;
+      }
+      if (order?.rawStatus !== 'READY_FOR_COLLECTION') {
+        setOrderActionToast('An order can be collected only after the print agent confirms every job is ready.');
+        return;
       }
       await api.updateOrderStatus(targetId, 'COLLECTED');
     } catch (e) {
       console.warn('Update order status to COLLECTED warning:', e);
+      setOrderActionToast(e instanceof Error ? e.message : 'Could not mark this order collected.');
+      return;
     }
-    updateOrderInStorage(orderId, { tab: 'done', status: 'Cash Collected · Order Delivered' });
+    updateOrderInStorage(orderId, { tab: 'done', rawStatus: 'COLLECTED', status: 'Cash Collected · Order Delivered' });
     setOrdersList((prev) =>
       prev.map((o) =>
         o.id === orderId || o.rawId === orderId
-          ? { ...o, tab: 'done', status: 'Cash Collected · Order Delivered' }
+          ? { ...o, tab: 'done', rawStatus: 'COLLECTED', status: 'Cash Collected · Order Delivered' }
           : o
       )
     );
@@ -1039,33 +977,8 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   };
 
   const handlePrintStorageFile = (file: { id: string; name: string; pages: number }) => {
-    const newOrderId = `STR-${Date.now().toString().slice(-4)}`;
-    const newOrder = {
-      id: newOrderId,
-      customer: 'Local Storage Direct',
-      phone: '+91 Counter Desk',
-      time: 'Just now',
-      document: file.name,
-      pages: file.pages,
-      copies: 1,
-      status: 'Spooling to HP LaserJet Pro M401dne (port 8765)...',
-      amount: `₹${(file.pages * 1.2).toFixed(2)}`,
-      tab: 'printing',
-      colorMode: 'B&W',
-      duplex: 'Back-to-Back (Duplex)',
-      paymentMode: 'Internal Storage Spool',
-    };
-    setOrdersList((prev) => [newOrder, ...prev]);
-    setOrderActionToast(`Dispatched ${file.name} to connected Windows Spooler on port 8765.`);
-    setTimeout(() => {
-      setOrdersList((prev) =>
-        prev.map((o) =>
-          o.id === newOrderId ? { ...o, tab: 'done', status: 'Print Completed & Delivered to Tray' } : o
-        )
-      );
-      setOrderActionToast(`${file.name} printed successfully!`);
-      setTimeout(() => setOrderActionToast(null), 3000);
-    }, 2800);
+    setOrderActionToast(`${file.name} is a temporary customer upload. Create an order from the shop portal to price it and send it through the print agent.`);
+    setTimeout(() => setOrderActionToast(null), 5000);
   };
 
   const handlePurchaseCredits = (qty: number) => {
@@ -1085,7 +998,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       targetTab: 'business_setup',
       targetSubtab: 'profile',
       actionText: 'Open Store Profile',
-      tip: 'Customers see this identity on your ordering portal and WhatsApp auto-greeting.',
+      tip: 'Customers see this identity on your ordering portal.',
     },
     {
       step: 2,
@@ -1118,12 +1031,12 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     },
     {
       step: 5,
-      title: 'Live Print Spooler & WhatsApp Automation',
-      desc: 'Monitor jobs in real-time, route documents automatically, train your AI WhatsApp bot for customer questions, and settle earnings directly to your bank account or UPI.',
+      title: 'Live Print Queue',
+      desc: 'Review customer orders, dispatch approved jobs to the paired desktop agent, and confirm collection after the print agent reports completion.',
       badge: 'Step 5 of 5',
       targetTab: 'live_print',
       actionText: 'View Live Queue',
-      tip: 'Instant settlement to Kotak811 / NEFT with zero platform lock-in.',
+      tip: 'Customer payments go to the shop’s own Razorpay account. Cash can be collected at the counter.',
     },
   ];
 
@@ -1164,54 +1077,26 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   };
 
   // Hardware Printer Probing & Control Handlers
-  const handleRefreshPrinters = () => {
+  const handleRefreshPrinters = async () => {
     setDetectingPrinters(true);
-    setTimeout(() => {
-      setAgentConnected(true);
-      setDetectedPrinters([
-        {
-          name: 'Canon LBP2900',
-          driver: 'Canon LBP2900 Advanced Printing Software',
-          port: 'USB001',
-          status: 'Ready',
-          isDefault: true,
-          isPhysical: true,
-          supportsColor: false,
-          supportsDuplex: false,
-          tray: 'Auto-Select (Tray 1: A4 Standard)',
-        },
-        {
-          name: 'Microsoft Print to PDF',
-          driver: 'Microsoft Print To PDF (Color/Duplex Spooler)',
-          port: 'PORTPROMPT:',
-          status: 'Ready',
-          isDefault: false,
-          isPhysical: false,
-          supportsColor: true,
-          supportsDuplex: true,
-          tray: 'Auto-Select (Virtual Spooler)',
-        },
-        {
-          name: 'Solid Edge PS Printer 3.0',
-          driver: 'Siemens SE PDF Driver (PostScript)',
-          port: 'SE_PORT:',
-          status: 'Ready',
-          isDefault: false,
-          isPhysical: false,
-          supportsColor: true,
-          supportsDuplex: true,
-          tray: 'Auto-Select',
-        },
-      ]);
-      setSelectedDefaultPrinter('Canon LBP2900');
+    try {
+      const result = await api.getPrinters();
+      if (!Array.isArray(result)) throw new Error(result?.error || 'Printer list is unavailable.');
+      const livePrinters = result;
+      setDetectedPrinters(livePrinters);
+      setAgentConnected(livePrinters.some((printer: any) => printer.isOnline));
+      setSelectedDefaultPrinter(livePrinters.find((printer: any) => printer.isDefault)?.name || '');
+      triggerSaveNotification(livePrinters.length ? `Loaded ${livePrinters.length} printer(s) registered with this shop.` : 'No printers are registered yet. Pair the desktop agent to discover local printers.');
+    } catch (error) {
+      setAgentConnected(false);
+      triggerSaveNotification(error instanceof Error ? error.message : 'Could not load printers from the server.');
+    } finally {
       setDetectingPrinters(false);
-      triggerSaveNotification('✓ Found 3 Windows printers! Primary: Canon LBP2900 (Connected & Ready)');
-    }, 850);
+    }
   };
 
   const handleTestPrint = (printerName?: string) => {
-    const targetPrinter = printerName || selectedDefaultPrinter;
-    triggerSaveNotification(`✓ Test print dispatched to ${targetPrinter}! Paper feed confirmed.`);
+    triggerSaveNotification(`Test printing is not available from this dashboard yet${printerName || selectedDefaultPrinter ? ` for ${printerName || selectedDefaultPrinter}` : ''}. Use the paired desktop agent to verify printer output.`);
   };
 
   const handleDownloadAgentScript = async () => {
@@ -1634,11 +1519,11 @@ start "Inklly Agent" "InkllyAgent.exe"
             {/* Plan Upgrade Trigger */}
             <button
               type="button"
-              onClick={() => setUpgradeModalOpen(true)}
+              onClick={() => onNavigate?.('/pricing')}
               className="px-3.5 py-1.5 bg-[#4F46E5] hover:bg-indigo-600 text-white rounded-full text-xs font-bold shadow-xs cursor-pointer flex items-center gap-1 transition-all"
-              title="Compare all plans and add-ons"
+              title="View pilot pricing"
             >
-              <span>Plans</span>
+              <span>Pilot pricing</span>
             </button>
 
             {/* Dark Mode Toggle */}
@@ -3071,10 +2956,7 @@ start "Inklly Agent" "InkllyAgent.exe"
 
                 <button
                   type="button"
-                  onClick={() => {
-                    setWhatsappConnected(true);
-                    triggerSaveNotification('WhatsApp Cloud API connected successfully');
-                  }}
+                  onClick={() => triggerSaveNotification('WhatsApp integration is not connected to Meta yet. QR portal ordering is available now.')}
                   className="w-full py-3 bg-[#1877F2] hover:bg-[#166FE5] text-white font-bold text-xs rounded-xl shadow-md cursor-pointer transition-all"
                 >
                   {whatsappConnected ? 'Re-link with Facebook Cloud API' : 'Continue with Facebook'}
@@ -3102,10 +2984,7 @@ start "Inklly Agent" "InkllyAgent.exe"
                     <span>{whatsappQrTimer}s countdown</span>
                     <button
                       type="button"
-                      onClick={() => {
-                        setWhatsappQrTimer(60);
-                        setOrderActionToast('Generated new QR pairing ticket.');
-                      }}
+                      onClick={() => setOrderActionToast('WhatsApp pairing is unavailable until the Meta integration is configured.')}
                       className="font-bold text-[#4D64E6] cursor-pointer"
                     >
                       Refresh QR
@@ -3113,13 +2992,10 @@ start "Inklly Agent" "InkllyAgent.exe"
                   </div>
                   <button
                     type="button"
-                    onClick={() => {
-                      setWhatsappConnected(true);
-                      triggerSaveNotification('Device paired via WhatsApp QR');
-                    }}
+                    onClick={() => triggerSaveNotification('WhatsApp device pairing is not available until the Meta integration is configured.')}
                     className="w-full py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
                   >
-                    Simulate QR Scan & Pair
+                    WhatsApp pairing unavailable
                   </button>
                 </div>
               </div>
@@ -3201,23 +3077,14 @@ start "Inklly Agent" "InkllyAgent.exe"
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => setGlobalToast('📁 Connected local private directory: C:\\Users\\Merchant\\InkllyStorage\\documents\\')}
+                  onClick={() => setGlobalToast('The permanent file vault is not available. Customer files remain private and are deleted 24 hours after order completion.')}
                   className="px-3 py-1.5 border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-bold hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer"
                 >
                   📁 Select local folder
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    const name = prompt('Enter new category name:');
-                    if (name && name.trim()) {
-                      const newCatId = name.toLowerCase().replace(/\s+/g, '_');
-                      setStorageCategories((prev) => [...prev, { id: newCatId, name: name.trim(), count: 0, size: '0.0 MB' }]);
-                      setStorageFiles((prev) => ({ ...prev, [newCatId]: [] }));
-                      setSelectedStorageCategory(newCatId);
-                      setOrderActionToast(`Category "${name}" created.`);
-                    }
-                  }}
+                  onClick={() => setGlobalToast('Permanent document categories are not available in this pilot.')}
                   className="px-3 py-1.5 border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-bold hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer"
                 >
                   + New category
@@ -3225,26 +3092,7 @@ start "Inklly Agent" "InkllyAgent.exe"
                 <button
                   type="button"
                   onClick={() => {
-                    const fname = prompt('Enter document name to add:');
-                    if (fname && fname.trim()) {
-                      const doc = {
-                        id: `f-${Date.now()}`,
-                        name: fname.trim().endsWith('.pdf') ? fname.trim() : `${fname.trim()}.pdf`,
-                        pages: 10,
-                        size: '2.5 MB',
-                        date: 'Today',
-                        type: 'PDF',
-                      };
-                      setStorageFiles((prev) => ({
-                        ...prev,
-                        [selectedStorageCategory]: [doc, ...(prev[selectedStorageCategory] || [])],
-                      }));
-                      setStorageCategories((prev) =>
-                        prev.map((c) => (c.id === selectedStorageCategory ? { ...c, count: c.count + 1 } : c))
-                      );
-                      setSelectedStorageFile(doc);
-                      setOrderActionToast(`Added "${doc.name}" to category.`);
-                    }
+                    setGlobalToast('Receive documents through a customer order so private storage, pricing, and 24-hour deletion are tracked.');
                   }}
                   className="px-3.5 py-1.5 bg-[#4D64E6] hover:bg-[#3F54D1] text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer"
                 >
@@ -3254,13 +3102,13 @@ start "Inklly Agent" "InkllyAgent.exe"
             </div>
 
             {/* Storage Agent Status Banner */}
-            <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl text-xs text-emerald-800 dark:text-emerald-200 flex items-center justify-between">
+            <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl text-xs text-amber-800 dark:text-amber-200 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="font-bold">Inklly Local Spooler Daemon Online (Port 8765)</span>
-                <span className="text-[11px] text-gray-500 dark:text-gray-400">· C:\Users\Merchant\InkllyStorage\documents\</span>
+                <span className="w-2 h-2 rounded-full bg-amber-500" />
+                <span className="font-bold">No permanent customer file vault</span>
+                <span className="text-[11px] text-gray-500 dark:text-gray-400">· Customer files are temporary order documents</span>
               </div>
-              <span className="font-mono text-[10px] bg-white dark:bg-gray-800 px-2 py-0.5 rounded font-bold">100% PRIVATE</span>
+              <span className="font-mono text-[10px] bg-white dark:bg-gray-800 px-2 py-0.5 rounded font-bold">24 HOUR RETENTION</span>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
@@ -3393,7 +3241,7 @@ start "Inklly Agent" "InkllyAgent.exe"
         {/* ─────────────────────────────────────────────────────────────
     VIEW 6: CREDITS
 ───────────────────────────────────────────────────────────── */}
-{activeView === 'credits' && (
+{false && activeView === 'credits' && (
   <div className="p-6 max-w-5xl w-full mx-auto space-y-6 animate-fadeIn">
     <div className="flex justify-between items-center pb-2 border-b border-gray-100 dark:border-gray-800">
       <div>
@@ -3508,10 +3356,19 @@ start "Inklly Agent" "InkllyAgent.exe"
   </div>
 )}
 
+{activeView === 'credits' && (
+  <section className="mx-auto my-10 max-w-3xl rounded-2xl border border-slate-200 bg-white p-8 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+    <p className="text-xs font-bold uppercase tracking-wider text-indigo-600">Pilot billing</p>
+    <h2 className="mt-2 text-2xl font-extrabold text-slate-900 dark:text-white">Usage billing is not active yet</h2>
+    <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">The pilot will use a monthly subscription plus a configurable fee for each successfully printed side. Inkly does not currently sell conversion credits, so this page will not show a balance or take payment.</p>
+    <button type="button" onClick={() => onNavigate?.('/pricing')} className="mt-6 min-h-11 rounded-xl bg-indigo-600 px-5 text-sm font-bold text-white hover:bg-indigo-700">View pilot pricing</button>
+  </section>
+)}
+
 {/* ─────────────────────────────────────────────────────────────
     VIEW 7: WITHDRAW EARNINGS
 ───────────────────────────────────────────────────────────── */}
-{activeView === 'withdraw' && (
+{false && activeView === 'withdraw' && (
   <div className="p-6 max-w-5xl w-full mx-auto space-y-6 animate-fadeIn">
     <div>
       <span className="text-[10px] font-bold uppercase tracking-wider text-[#4D64E6] block">MERCHANT FINANCE</span>
@@ -3762,10 +3619,19 @@ start "Inklly Agent" "InkllyAgent.exe"
   </div>
 )}
 
+{activeView === 'withdraw' && (
+  <section className="mx-auto my-10 max-w-3xl rounded-2xl border border-slate-200 bg-white p-8 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+    <p className="text-xs font-bold uppercase tracking-wider text-indigo-600">Shop settlements</p>
+    <h2 className="mt-2 text-2xl font-extrabold text-slate-900 dark:text-white">Your customer payments go directly to your shop</h2>
+    <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">Inklly does not hold customer payments or run merchant payouts. Razorpay payments settle to the Razorpay account connected to this shop; cash payments are collected at your counter. Payout requests are unavailable.</p>
+    <button type="button" onClick={() => setActiveView('business_setup')} className="mt-6 min-h-11 rounded-xl border border-slate-300 px-5 text-sm font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-100">Review payment setup</button>
+  </section>
+)}
+
 {/* ─────────────────────────────────────────────────────────────
     VIEW 8: REFERRALS
 ───────────────────────────────────────────────────────────── */}
-{activeView === 'referrals' && (
+{false && activeView === 'referrals' && (
   <div className="p-6 max-w-5xl w-full mx-auto space-y-6 animate-fadeIn">
     <div className="flex justify-between items-center pb-2 border-b border-gray-100 dark:border-gray-800">
       <div>
@@ -3915,6 +3781,14 @@ start "Inklly Agent" "InkllyAgent.exe"
       </div>
     </div>
   </div>
+)}
+
+{activeView === 'referrals' && (
+  <section className="mx-auto my-10 max-w-3xl rounded-2xl border border-slate-200 bg-white p-8 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+    <p className="text-xs font-bold uppercase tracking-wider text-indigo-600">Referral program</p>
+    <h2 className="mt-2 text-2xl font-extrabold text-slate-900 dark:text-white">Referral rewards are not available in the pilot</h2>
+    <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">No referral balance or reward has been issued. We will show this program here once eligibility and payment rules are live.</p>
+  </section>
 )}
 
 {/* ─────────────────────────────────────────────────────────────
@@ -6723,7 +6597,7 @@ start "Inklly Agent" "InkllyAgent.exe"
       {/* ─────────────────────────────────────────────────────────────
           REVIEW YOUR PLAN MODAL (Upgrade Plan)
       ───────────────────────────────────────────────────────────── */}
-      {upgradeModalOpen && (
+      {false && upgradeModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5 overflow-y-auto animate-fadeIn">
           <div className="max-w-6xl w-full bg-white dark:bg-[#1E293B] rounded-3xl shadow-2xl border border-gray-100 dark:border-gray-800 overflow-hidden flex flex-col max-h-[94vh]">
             {/* Header */}

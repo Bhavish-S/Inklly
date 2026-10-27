@@ -1,4 +1,5 @@
 import { DatabaseService } from '../database';
+import * as crypto from 'node:crypto';
 import { User, UserRole, StaffPermission } from '@inklly/shared';
 
 export interface MembershipRecord {
@@ -267,5 +268,84 @@ export class UserRepository {
       details: r.details ? JSON.parse(r.details) : undefined,
       createdAt: r.created_at,
     }));
+  }
+
+  public getUserPreferences(userId: string) {
+    const row = this.db.queryOne<any>(
+      `SELECT * FROM user_preferences WHERE user_id = ?`,
+      [userId]
+    );
+    if (!row) {
+      return {
+        userId,
+        theme: 'light',
+        language: 'en-IN',
+        emailNotifications: true,
+        smsNotifications: false,
+      };
+    }
+    return {
+      userId: row.user_id,
+      theme: row.theme,
+      language: row.language,
+      emailNotifications: Boolean(row.email_notifications),
+      smsNotifications: Boolean(row.sms_notifications),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  public upsertUserPreferences(userId: string, preferences: { theme?: string; language?: string; emailNotifications?: boolean; smsNotifications?: boolean }) {
+    const now = new Date().toISOString();
+    const existing = this.db.queryOne<any>(
+      `SELECT id FROM user_preferences WHERE user_id = ?`,
+      [userId]
+    );
+
+    if (existing) {
+      const updates: string[] = [];
+      const params: any[] = [];
+      if (preferences.theme !== undefined) { updates.push(`theme = ?`); params.push(preferences.theme); }
+      if (preferences.language !== undefined) { updates.push(`language = ?`); params.push(preferences.language); }
+      if (preferences.emailNotifications !== undefined) { updates.push(`email_notifications = ?`); params.push(preferences.emailNotifications ? 1 : 0); }
+      if (preferences.smsNotifications !== undefined) { updates.push(`sms_notifications = ?`); params.push(preferences.smsNotifications ? 1 : 0); }
+      if (updates.length > 0) {
+        updates.push(`updated_at = ?`);
+        params.push(now, existing.id);
+        this.db.execute(`UPDATE user_preferences SET ${updates.join(', ')} WHERE id = ?`, params);
+      }
+      return this.getUserPreferences(userId);
+    }
+
+    const id = `pref-${crypto.randomUUID()}`;
+    this.db.execute(
+      `INSERT INTO user_preferences (id, user_id, theme, language, email_notifications, sms_notifications, created_at, updated_at)
+       VALUES (?, ?, 'light', 'en-IN', 1, 0, ?, ?)`,
+      [id, userId, now, now]
+    );
+    return this.getUserPreferences(userId);
+  }
+
+  public getUserSessions(userId: string) {
+    const rows = this.db.query<any>(
+      `SELECT id, device_info, ip_address, created_at, last_used_at, expires_at, revoked_at FROM user_sessions WHERE user_id = ? AND revoked_at IS NULL ORDER BY created_at DESC`,
+      [userId]
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      deviceInfo: r.device_info,
+      ipAddress: r.ip_address,
+      createdAt: r.created_at,
+      lastUsedAt: r.last_used_at,
+      expiresAt: r.expires_at,
+      isCurrent: false,
+    }));
+  }
+
+  public revokeUserSession(sessionId: string, userId: string) {
+    this.db.execute(
+      `UPDATE user_sessions SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL`,
+      [new Date().toISOString(), sessionId, userId]
+    );
   }
 }

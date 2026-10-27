@@ -97,7 +97,7 @@ interface DocumentItem {
 interface CustomerPortalOrderViewProps {
   shopCode?: string;
   onNavigateHome?: () => void;
-  onOrderSubmitted?: (orderId: string) => void;
+  onOrderSubmitted?: (orderId: string, shopCode?: string) => void;
 }
 
 export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = ({
@@ -968,7 +968,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
             {onOrderSubmitted && (
               <button
                 type="button"
-                onClick={() => onOrderSubmitted(orderResult.orderId)}
+                onClick={() => onOrderSubmitted(orderResult.orderId, shopCode)}
                 className="w-full py-3 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-bold rounded-xl shadow-xs transition-all text-xs flex items-center justify-center gap-2 cursor-pointer"
               >
                 <span>Check order status →</span>

@@ -352,6 +352,49 @@ export class MerchantController {
     }
   };
 
+  public testRazorpayCredentials = async (req: Request, res: Response) => {
+    const shopId = this.getShopId(req);
+    const credentials = this.paymentCredentials.getRazorpayCredentials(shopId);
+    if (!credentials || !credentials.webhookSecret) {
+      return res.status(409).json({ error: 'Razorpay credentials are not configured for this shop.' });
+    }
+
+    try {
+      // Verify the API credentials with a read-only request; never create an
+      // orphan provider order from a settings screen.
+      const response = await fetch('https://api.razorpay.com/v1/payments?count=1', {
+        method: 'GET',
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${credentials.keyId}:${credentials.secret}`).toString('base64')}`,
+          'Content-Type': 'application/json',
+        },
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (!response.ok) {
+        const errorBody = (await response.json().catch(() => ({}))) as any;
+        return res.status(400).json({
+          error: `Razorpay rejected these credentials: ${errorBody.error?.description || errorBody.error?.code || response.status}`,
+          configured: false,
+        });
+      }
+
+      res.json({
+        success: true,
+        configured: true,
+        message: 'Razorpay API credentials were accepted. Complete a test payment to verify the full checkout and webhook flow.',
+        keyIdPreview: `${credentials.keyId.slice(0, 8)}…`,
+        webhookConfigured: true,
+      });
+    } catch (error) {
+      console.error('[Razorpay credential test]', error);
+      res.status(503).json({
+        error: 'Unable to reach Razorpay API. Check your internet connection and try again.',
+        configured: false,
+      });
+    }
+  };
+
   public removeRazorpayCredentials = (req: Request, res: Response) => {
     try {
       this.paymentCredentials.removeRazorpay(this.getShopId(req));
@@ -486,5 +529,335 @@ export class MerchantController {
 
   public requestPayout = (req: Request, res: Response) => {
     return res.status(503).json({ error: 'Payouts are unavailable because customer payments settle directly to each shop.' });
+  };
+
+  // Storage / Document tools
+  public getStorageCategories = (req: Request, res: Response) => {
+    const shopId = this.getShopId(req);
+    const rows = this.db.query<any>(
+      `SELECT * FROM storage_categories WHERE shop_id = ? ORDER BY created_at DESC`,
+      [shopId]
+    );
+    res.json(rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      description: r.description,
+      documentCount: r.document_count,
+      createdAt: r.created_at,
+    })));
+  };
+
+  public createStorageCategory = (req: Request, res: Response) => {
+    const shopId = this.getShopId(req);
+    const { name, description } = req.body;
+
+    if (!name || typeof name !== 'string' || name.length < 2 || name.length > 100) {
+      return res.status(400).json({ error: 'Category name is required (2-100 characters).' });
+    }
+
+    const id = `storage-cat-${crypto.randomUUID()}`;
+    const now = new Date().toISOString();
+
+    this.db.execute(
+      `INSERT INTO storage_categories (id, shop_id, name, description, document_count, created_at)
+       VALUES (?, ?, ?, ?, 0, ?)`,
+      [id, shopId, name, description || null, now]
+    );
+
+    res.status(201).json({
+      success: true,
+      category: { id, name, description: description || null, documentCount: 0, createdAt: now },
+    });
+  };
+
+  public deleteStorageCategory = (req: Request, res: Response) => {
+    const shopId = this.getShopId(req);
+    const categoryId = String(req.params.id);
+
+    const category = this.db.queryOne<any>(
+      `SELECT id FROM storage_categories WHERE id = ? AND shop_id = ?`,
+      [categoryId, shopId]
+    );
+    if (!category) return res.status(404).json({ error: 'Storage category not found.' });
+
+    const docCount = this.db.queryOne<any>(
+      `SELECT COUNT(*) as cnt FROM storage_documents WHERE category_id = ?`,
+      [categoryId]
+    );
+    if (docCount.cnt > 0) {
+      return res.status(409).json({ error: 'Cannot delete a category that contains documents.' });
+    }
+
+    this.db.execute(`DELETE FROM storage_categories WHERE id = ?`, [categoryId]);
+    res.json({ success: true });
+  };
+
+  public getStorageDocuments = (req: Request, res: Response) => {
+    const shopId = this.getShopId(req);
+    const categoryId = String(req.query.categoryId || '');
+
+    let sql = `SELECT sd.*, sc.name as category_name FROM storage_documents sd LEFT JOIN storage_categories sc ON sc.id = sd.category_id WHERE sd.shop_id = ?`;
+    const params: any[] = [shopId];
+
+    if (categoryId) {
+      sql += ` AND sd.category_id = ?`;
+      params.push(categoryId);
+    }
+
+    sql += ` ORDER BY sd.created_at DESC`;
+
+    const rows = this.db.query<any>(sql, params);
+    res.json(rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      fileName: r.file_name,
+      mimeType: r.mime_type,
+      fileSizeBytes: r.file_size_bytes,
+      pageCount: r.page_count,
+      categoryId: r.category_id,
+      categoryName: r.category_name,
+      downloadUrl: `/api/v1/merchant/storage/documents/${r.id}/download`,
+      createdAt: r.created_at,
+    })));
+  };
+
+  public downloadStorageDocument = async (req: Request, res: Response) => {
+    const shopId = this.getShopId(req);
+    const docId = String(req.params.id);
+
+    const row = this.db.queryOne<any>(
+      `SELECT sd.storage_key, sd.file_name, sd.mime_type FROM storage_documents sd WHERE sd.id = ? AND sd.shop_id = ?`,
+      [docId, shopId]
+    );
+    if (!row || String(row.storage_key).startsWith('expired:')) return res.status(404).json({ error: 'Document is unavailable.' });
+
+    let content: Buffer | null;
+    try { content = await this.fileStorage.read(String(row.storage_key), shopId); }
+    catch { return res.status(503).json({ error: 'Private file storage is temporarily unavailable.' }); }
+    if (!content) return res.status(404).json({ error: 'Document is unavailable.' });
+
+    res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(row.file_name)}"`);
+    res.setHeader('Content-Length', String(content.length));
+    res.send(content);
+  };
+
+  public deleteStorageDocument = (req: Request, res: Response) => {
+    const shopId = this.getShopId(req);
+    const docId = String(req.params.id);
+
+    const row = this.db.queryOne<any>(
+      `SELECT sd.storage_key FROM storage_documents sd WHERE sd.id = ? AND sd.shop_id = ?`,
+      [docId, shopId]
+    );
+    if (!row) return res.status(404).json({ error: 'Document not found.' });
+
+    if (!String(row.storage_key).startsWith('expired:')) {
+      try { this.fileStorage.remove(String(row.storage_key)); } catch { /* best effort */ }
+    }
+
+    this.db.execute(`DELETE FROM storage_documents WHERE id = ?`, [docId]);
+    res.json({ success: true });
+  };
+
+  // WhatsApp Setup
+  public getWhatsAppSetup = (req: Request, res: Response) => {
+    const shopId = this.getShopId(req);
+
+    const accounts = this.db.query<any>(
+      `SELECT * FROM whatsapp_accounts WHERE shop_id = ? ORDER BY created_at DESC`,
+      [shopId]
+    );
+
+    const events = this.db.query<any>(
+      `SELECT * FROM whatsapp_events WHERE shop_id = ? ORDER BY created_at DESC LIMIT 50`,
+      [shopId]
+    );
+
+    const hasConnection = accounts.some((a) => a.status === 'CONNECTED');
+
+    res.json({
+      shopId,
+      provider: 'meta_whatsapp_cloud',
+      recommendedConnection: 'existing_business_number',
+      connectionOptions: [
+        { id: 'existing_business_number', label: 'Existing business number', requires: ['Meta business verification', 'WhatsApp business phone number ID'] },
+        { id: 'display_name', label: 'Display name', requires: ['Meta app registration', 'Phone number verification'] },
+        { id: 'qr_pairing', label: 'Link by QR', requires: ['WhatsApp mobile app', 'Linked devices screen'] },
+      ],
+      accounts: accounts.map((a) => ({
+        id: a.id,
+        wabaId: a.waba_id,
+        phoneNumberId: a.phone_number_id,
+        displayName: a.display_name,
+        status: a.status, // OFFLINE, ONLINE, PAIRING, EXPIRED, ERROR
+        accountsUsed: a.accounts_used,
+        maxAccounts: a.max_accounts,
+        qrExpiresAt: a.qr_expires_at,
+        createdAt: a.created_at,
+      })),
+      events: events.map((e) => ({
+        id: e.id,
+        eventType: e.event_type,
+        message: e.message,
+        createdAt: e.created_at,
+      })),
+      hasConnection,
+      canPair: !hasConnection,
+    });
+  };
+
+  public saveWhatsAppSetup = (req: Request, res: Response) => {
+    const shopId = this.getShopId(req);
+    const { connectionType, businessPhoneNumber, displayName, metaAppId, metaAppSecret } = req.body;
+
+    if (!connectionType || !['existing_business_number', 'display_name', 'qr_pairing'].includes(connectionType)) {
+      return res.status(400).json({ error: 'Invalid connection type.' });
+    }
+
+    const now = new Date().toISOString();
+    const id = `wa-${crypto.randomUUID()}`;
+
+    this.db.execute(
+      `INSERT INTO whatsapp_accounts (id, shop_id, connection_type, business_phone_number, display_name, meta_app_id, status, accounts_used, max_accounts, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'OFFLINE', 0, 1, ?, ?)`,
+      [id, shopId, connectionType, businessPhoneNumber || null, displayName || null, metaAppId || null, now, now]
+    );
+
+    this.db.execute(
+      `INSERT INTO whatsapp_events (id, shop_id, event_type, message, created_at)
+       VALUES (?, ?, 'SETUP_SAVED', 'WhatsApp setup saved. Connection is OFFLINE until paired.', ?)`,
+      [`wa-evt-${crypto.randomUUID()}`, shopId, now]
+    );
+
+    res.status(201).json({
+      success: true,
+      accountId: id,
+      connectionType,
+      status: 'OFFLINE',
+      message: 'WhatsApp setup saved. Use QR pairing to connect your Meta WhatsApp Business account.',
+    });
+  };
+
+  public generateWhatsAppQrPairing = (req: Request, res: Response) => {
+    const shopId = this.getShopId(req);
+
+    const existingPairing = this.db.queryOne<any>(
+      `SELECT * FROM whatsapp_accounts WHERE shop_id = ? AND status = 'PAIRING' ORDER BY created_at DESC LIMIT 1`,
+      [shopId]
+    );
+    if (existingPairing) {
+      return res.status(409).json({ error: 'A QR pairing session is already active. Wait for it to expire or refresh.' });
+    }
+
+    const accounts = this.db.query<any>(
+      `SELECT * FROM whatsapp_accounts WHERE shop_id = ? AND status = 'CONNECTED'`,
+      [shopId]
+    );
+    if (accounts.length > 0) {
+      return res.status(409).json({ error: 'A WhatsApp account is already connected. Remove it before pairing a new one.' });
+    }
+
+    const now = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + 60 * 1000).toISOString(); // 60-second countdown
+    const id = `wa-${crypto.randomUUID()}`;
+    const pairingCode = `WA-${Math.floor(100000 + Math.random() * 900000)}`;
+
+    this.db.execute(
+      `INSERT INTO whatsapp_accounts (id, shop_id, connection_type, status, accounts_used, max_accounts, qr_expires_at, pairing_code, created_at, updated_at)
+       VALUES (?, ?, 'qr_pairing', 'PAIRING', 0, 1, ?, ?, ?, ?)`,
+      [id, shopId, expiresAt, pairingCode, now, now]
+    );
+
+    this.db.execute(
+      `INSERT INTO whatsapp_events (id, shop_id, event_type, message, created_at)
+       VALUES (?, ?, 'QR_PAIRING_STARTED', 'QR pairing session started. Scan with WhatsApp mobile app. Expires in 60 seconds.', ?)`,
+      [`wa-evt-${crypto.randomUUID()}`, shopId, now]
+    );
+
+    res.json({
+      success: true,
+      pairingId: id,
+      pairingCode,
+      status: 'PAIRING',
+      qrExpiresAt: expiresAt,
+      countdownSeconds: 60,
+      instructions: 'Open WhatsApp → Linked devices → Link a device, then scan this QR code.',
+    });
+  };
+
+  public refreshWhatsAppQrPairing = (req: Request, res: Response) => {
+    const shopId = this.getShopId(req);
+
+    const activePairing = this.db.queryOne<any>(
+      `SELECT id FROM whatsapp_accounts WHERE shop_id = ? AND status = 'PAIRING' ORDER BY created_at DESC LIMIT 1`,
+      [shopId]
+    );
+    if (!activePairing) {
+      return res.status(404).json({ error: 'No active QR pairing session to refresh.' });
+    }
+
+    const now = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + 60 * 1000).toISOString();
+    const pairingCode = `WA-${Math.floor(100000 + Math.random() * 900000)}`;
+
+    this.db.execute(
+      `UPDATE whatsapp_accounts SET qr_expires_at = ?, pairing_code = ?, updated_at = ? WHERE id = ?`,
+      [expiresAt, pairingCode, now, activePairing.id]
+    );
+
+    this.db.execute(
+      `INSERT INTO whatsapp_events (id, shop_id, event_type, message, created_at)
+       VALUES (?, ?, 'QR_PAIRING_REFRESHED', 'QR pairing session refreshed. New 60-second countdown started.', ?)`,
+      [`wa-evt-${crypto.randomUUID()}`, shopId, now]
+    );
+
+    res.json({
+      success: true,
+      pairingId: activePairing.id,
+      pairingCode,
+      status: 'PAIRING',
+      qrExpiresAt: expiresAt,
+      countdownSeconds: 60,
+    });
+  };
+
+  public removeWhatsAppAccount = (req: Request, res: Response) => {
+    const shopId = this.getShopId(req);
+    const accountId = String(req.params.id);
+
+    const account = this.db.queryOne<any>(
+      `SELECT id, status FROM whatsapp_accounts WHERE id = ? AND shop_id = ?`,
+      [accountId, shopId]
+    );
+    if (!account) return res.status(404).json({ error: 'WhatsApp account not found.' });
+
+    this.db.execute(`DELETE FROM whatsapp_accounts WHERE id = ?`, [accountId]);
+
+    this.db.execute(
+      `INSERT INTO whatsapp_events (id, shop_id, event_type, message, created_at)
+       VALUES (?, ?, 'ACCOUNT_REMOVED', 'WhatsApp account removed. Connection terminated.', ?)`,
+      [`wa-evt-${crypto.randomUUID()}`, shopId, new Date().toISOString()]
+    );
+
+    res.json({ success: true, message: 'WhatsApp account removed.' });
+  };
+
+  public getWhatsAppEvents = (req: Request, res: Response) => {
+    const shopId = this.getShopId(req);
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50));
+    const offset = Math.min(10000, Math.max(0, Number(req.query.offset) || 0));
+
+    const rows = this.db.query<any>(
+      `SELECT * FROM whatsapp_events WHERE shop_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      [shopId, limit, offset]
+    );
+
+    res.json(rows.map((e) => ({
+      id: e.id,
+      eventType: e.event_type,
+      message: e.message,
+      createdAt: e.created_at,
+    })));
   };
 }

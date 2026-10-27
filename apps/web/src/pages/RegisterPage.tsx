@@ -67,6 +67,12 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
       if (res.shop) {
         localStorage.setItem('inklly_shop', JSON.stringify(res.shop));
       }
+      if (res.organization) {
+        localStorage.setItem('inklly_organization', JSON.stringify(res.organization));
+      }
+      if (res.subscription) {
+        localStorage.setItem('inklly_subscription', JSON.stringify(res.subscription));
+      }
 
       if (onRegisterSuccess) {
         onRegisterSuccess();
@@ -143,7 +149,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
               Create your merchant account
             </h3>
             <p className="text-xs text-[#5B6475]">
-              Get started in under 2 minutes. Free trial begins immediately.
+              Start your 7-day trial. No payment details required.
             </p>
           </div>
 

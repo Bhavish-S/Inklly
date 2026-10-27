@@ -8,6 +8,7 @@ import { inspectDocument } from '../services/document-page-count';
 
 export class PortalController {
   constructor(
+    private db: DatabaseService,
     private shopRepo: ShopRepository,
     private pricingRepo: PricingRepository,
     private orderRepo: OrderRepository,
@@ -15,12 +16,29 @@ export class PortalController {
     private fileStorage: PrivateFileStorage
   ) {}
 
+  private hasShopAccess(organizationId: string): boolean {
+    const organization = this.shopRepo.getOrganizationById(organizationId);
+    if (!organization) return false;
+    if (organization.planStatus === 'ACTIVE') return true;
+    if (organization.planStatus !== 'TRIAL') return false;
+    const trial = this.db.queryOne<any>(
+      `SELECT status, current_period_end FROM subscriptions WHERE organization_id = ? ORDER BY created_at DESC LIMIT 1`,
+      [organizationId]
+    );
+    if (trial?.status === 'TRIALING' && Date.parse(trial.current_period_end) > Date.now()) return true;
+    this.db.execute(`UPDATE organizations SET plan_status = 'PAST_DUE', updated_at = ? WHERE id = ? AND plan_status = 'TRIAL'`, [new Date().toISOString(), organizationId]);
+    return false;
+  }
+
   public getShopByCode = (req: Request, res: Response) => {
     const shop_code = String(req.params.shop_code);
     const shop = this.shopRepo.getShopByCode(shop_code);
 
     if (!shop || !shop.isActive) {
       return res.status(404).json({ error: 'Shop not found or currently offline' });
+    }
+    if (!this.hasShopAccess(shop.organizationId)) {
+      return res.status(402).json({ error: 'This shop is not currently accepting orders. Please contact the shop owner.' });
     }
 
     const rates = this.pricingRepo.getRateRules(shop.id);
@@ -56,6 +74,11 @@ export class PortalController {
     const body: PriceQuoteRequest = req.body;
     if (!body.shopId || !body.files || body.files.length === 0) {
       return res.status(400).json({ error: 'Missing shopId or files array in quote request' });
+    }
+
+    const shop = this.shopRepo.getShopById(body.shopId) || this.shopRepo.getShopByCode(body.shopId);
+    if (!shop || !shop.isActive || !this.hasShopAccess(shop.organizationId)) {
+      return res.status(402).json({ error: 'This shop is not currently accepting orders.' });
     }
 
     const rates = this.pricingRepo.getRateRules(body.shopId);
@@ -98,6 +121,9 @@ export class PortalController {
 
     if (!shop || !Array.isArray(files) || files.length === 0 || files.length > 20) {
       return res.status(400).json({ error: 'Incomplete order submission payload' });
+    }
+    if (!shop.isActive || !this.hasShopAccess(shop.organizationId)) {
+      return res.status(402).json({ error: 'This shop is not currently accepting orders.' });
     }
     const shopId = shop.id;
 
@@ -189,6 +215,9 @@ export class PortalController {
       id: orderId,
       shopId,
       orderNumber,
+      // Reuse the random, unique order suffix so two concurrent orders cannot
+      // accidentally receive the same short collection token.
+      tokenNumber: `T-${orderNumber.slice(-8)}`,
       customerName: customerName || 'Counter Customer',
       customerPhone,
       customerEmail,
@@ -210,6 +239,7 @@ export class PortalController {
       success: true,
       orderId: order.id,
       orderNumber: order.orderNumber,
+      tokenNumber: order.tokenNumber,
       status: order.status,
       paymentStatus: order.paymentStatus,
       totalAmountPaise: order.totalAmountPaise,
@@ -226,6 +256,7 @@ export class PortalController {
 
       const shop = typeof shopId === 'string' ? this.shopRepo.getShopById(shopId) : null;
       if (!shop || !shop.isActive) return res.status(404).json({ error: 'Shop not found or currently offline.' });
+      if (!this.hasShopAccess(shop.organizationId)) return res.status(402).json({ error: 'This shop is not currently accepting uploads.' });
       const safeShopId = shop.id.replace(/[^a-zA-Z0-9_-]/g, '_');
       const sanitizedName = fileName.replace(/[^a-zA-Z0-9_.-]/g, '_');
       const uniquePrefix = crypto.randomUUID();
@@ -273,6 +304,8 @@ export class PortalController {
     res.json({
       orderId: order.id,
       orderNumber: order.orderNumber,
+      tokenNumber: order.tokenNumber,
+      shopCode: this.shopRepo.getShopById(order.shopId)?.shopCode,
       customerName: order.customerName,
       status: order.status,
       paymentStatus: order.paymentStatus,

@@ -106,12 +106,38 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       assert.equal(res.status, 201);
       const data = (await res.json()) as any;
       assert.equal(data.success, true);
-      assert.ok(data.token);
+      assert.equal(data.registrationComplete, false);
+      assert.equal(data.organization.planStatus, 'PENDING_PAYMENT');
       assert.ok(data.shop.id);
       assert.equal(data.user.role, 'MERCHANT_OWNER');
       assert.ok(data.organization.id);
 
-      newMerchantToken = data.token;
+      // Activate subscription via platform admin
+      const activateRes = await fetch(`${baseUrl}/api/v1/platform/merchants/${data.organizationId}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({
+          planTier: 'STARTER',
+          planStatus: 'ACTIVE',
+        }),
+      });
+      assert.equal(activateRes.status, 200);
+
+      // Log in to get credentials
+      const loginRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: `rajesh_${uniqueSuffix}@metroprint.in`,
+          password: 'Password123!',
+        }),
+      });
+      assert.equal(loginRes.status, 200);
+      const loginData = await loginRes.json();
+      newMerchantToken = loginData.token;
       newShopId = data.shop.id;
       newShopCode = data.shop.shopCode;
     });
@@ -922,7 +948,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
   describe('Tier 3: Cross-Feature & Pairwise Integration Scenarios', { concurrency: false }, () => {
     it('T3.1: Pairwise: Merchant Registration -> Custom Rates -> Customer Intake Portal Reflects Custom Rates', async () => {
       const suffix = Date.now().toString(36);
-      // 1. Register merchant
+      // 1. Register merchant (account created pending subscription payment)
       const regRes = await fetch(`${baseUrl}/api/v1/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -936,11 +962,39 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       });
       assert.equal(regRes.status, 201);
       const regData = (await regRes.json()) as any;
+      assert.equal(regData.registrationComplete, false);
       const shopCode = regData.shop.shopCode;
       const shopId = regData.shop.id;
-      const token = regData.token;
+      const orgId = regData.organizationId;
 
-      // 2. Update custom rate to ₹5.00 (500 paise) for A4 B&W Simplex
+      // 2. Activate subscription via platform admin (simulate payment completion)
+      const activateRes = await fetch(`${baseUrl}/api/v1/platform/merchants/${orgId}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({
+          planTier: 'STARTER',
+          planStatus: 'ACTIVE',
+        }),
+      });
+      assert.equal(activateRes.status, 200);
+
+      // 3. Log in to get credentials
+      const loginRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: `rates_${suffix}@test.com`,
+          password: 'Password123!',
+        }),
+      });
+      assert.equal(loginRes.status, 200);
+      const loginData = (await loginRes.json()) as any;
+      const token = loginData.token;
+
+      // 4. Update custom rate to ₹5.00 (500 paise) for A4 B&W Simplex
       const rateRes = await fetch(`${baseUrl}/api/v1/merchant/rates`, {
         method: 'PUT',
         headers: {
@@ -956,7 +1010,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       });
       assert.equal(rateRes.status, 200);
 
-      // 3. Customer portal fetches shop rates
+      // 5. Customer portal fetches shop rates
       const portalRes = await fetch(`${baseUrl}/api/v1/portal/shop/${shopCode}`);
       assert.equal(portalRes.status, 200);
       const portalData = (await portalRes.json()) as any;
@@ -1486,6 +1540,291 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       const overview = (await overviewRes.json()) as any;
       assert.ok(overview.metrics.totalOrganizations >= 2);
       assert.ok(overview.metrics.totalShops >= 2);
+    });
+
+    // -----------------------------------------------------------------------
+    // SCENARIO 6: Complete End-to-End Workflow (Subscription → Dashboard → Printer → QR → Customer Order → Auto-Print → Token → Collect)
+    // -----------------------------------------------------------------------
+    it('Scenario 6: Complete print shop lifecycle from subscription payment to order collection', async () => {
+      const suffix = Date.now().toString(36);
+      const shopEmail = `workflow_${suffix}@printshop.in`;
+
+      // 1. Merchant registers (pending subscription payment)
+      const regRes = await fetch(`${baseUrl}/api/v1/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          businessName: `Workflow Print Shop ${suffix}`,
+          shopCode: `workflow-${suffix}`,
+          fullName: 'Workflow Owner',
+          email: shopEmail,
+          password: 'Password123!',
+          phone: '+91 98765 43210',
+          city: 'Pune',
+        }),
+      });
+      assert.equal(regRes.status, 201);
+      const regData = await regRes.json();
+      assert.equal(regData.registrationComplete, false);
+      assert.equal(regData.organization.planStatus, 'PENDING_PAYMENT');
+      const newShopId = regData.shop.id;
+      const newShopCode = regData.shop.shopCode;
+
+      // 2. Activate subscription via platform admin (simulate Razorpay payment completion)
+      const activateRes = await fetch(`${baseUrl}/api/v1/platform/merchants/${regData.organizationId}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({
+          planTier: 'STARTER',
+          planStatus: 'ACTIVE',
+        }),
+      });
+      assert.equal(activateRes.status, 200);
+
+      // 3. Merchant logs in with issued credentials
+      const loginRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: shopEmail, password: 'Password123!' }),
+      });
+      assert.equal(loginRes.status, 200);
+      const loginData = await loginRes.json();
+      const merchantToken = loginData.token;
+
+      // 4. Merchant accesses dashboard
+      const dashRes = await fetch(`${baseUrl}/api/v1/merchant/dashboard`, {
+        headers: { Authorization: `Bearer ${merchantToken}` },
+      });
+      assert.equal(dashRes.status, 200);
+      const dash = await dashRes.json();
+      assert.equal(dash.shopId, newShopId);
+
+      // 5. Merchant configures auto-print mode
+      const settingsRes = await fetch(`${baseUrl}/api/v1/merchant/settings`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${merchantToken}`,
+        },
+        body: JSON.stringify({ autoPrintMode: 'PRINT_AFTER_PAYMENT' }),
+      });
+      assert.equal(settingsRes.status, 200);
+
+      // 6. Merchant adds a printer
+      const printerRes = await fetch(`${baseUrl}/api/v1/merchant/printers`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${merchantToken}`,
+        },
+        body: JSON.stringify({
+          name: 'Canon LBP2900',
+          systemDriverName: 'Canon LBP2900',
+          supportsColor: false,
+          supportsDuplex: true,
+          trays: [{ name: 'Tray 1', supportedSizes: ['A4', 'PLAIN'], isDefault: true }],
+        }),
+      });
+      assert.equal(printerRes.status, 201);
+      const printerData = await printerRes.json();
+      assert.ok(printerData.id);
+
+      // 7. Customer uploads document via QR portal
+      const uploadRes = await fetch(`${baseUrl}/api/v1/portal/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shopId: newShopId,
+          fileName: 'assignment.pdf',
+          fileData: makeTestPdf(5).toString('base64'),
+          pageCount: 5,
+        }),
+      });
+      assert.equal(uploadRes.status, 201);
+      const uploadData = await uploadRes.json();
+      assert.ok(uploadData.storageKey);
+      assert.equal(uploadData.pageCount, 5);
+
+      // 8. Customer submits order with cash-on-collection payment
+      const orderRes = await fetch(`${baseUrl}/api/v1/portal/orders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shopId: newShopId,
+          customerName: 'Student Customer',
+          customerPhone: '+91 91234 56789',
+          paymentMethod: 'CASH_ON_COLLECTION',
+          files: [{
+            fileName: 'assignment.pdf',
+            storageKey: uploadData.storageKey,
+            pageCount: uploadData.pageCount,
+            fileSizeBytes: uploadData.fileSizeBytes,
+            mimeType: uploadData.mimeType,
+            options: { paperSize: 'A4', colorMode: 'bw', duplexMode: 'simplex', copies: 1 },
+          }],
+        }),
+      });
+      assert.equal(orderRes.status, 201);
+      const orderData = await orderRes.json();
+      assert.ok(orderData.orderId);
+      assert.ok(orderData.orderNumber);
+      assert.ok(orderData.tokenNumber); // Token number for collection
+      assert.equal(orderData.paymentStatus, 'PENDING');
+      assert.equal(orderData.status, 'AWAITING_REVIEW');
+
+      // 9. Razorpay payment intent is unavailable (no credentials configured in test env)
+      const intentRes = await fetch(`${baseUrl}/api/v1/payments/create-intent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: orderData.orderId }),
+      });
+      assert.equal(intentRes.status, 404);
+
+      // 10. Merchant collects cash at counter
+      const cashRes = await fetch(`${baseUrl}/api/v1/payments/orders/${orderData.orderId}/collect-cash`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${merchantToken}` },
+      });
+      assert.equal(cashRes.status, 200);
+
+      // 11. Verify order has token number and is AWAITING_REVIEW with VERIFIED payment
+      const statusRes = await fetch(`${baseUrl}/api/v1/portal/orders/${orderData.orderId}`, {
+        headers: { Authorization: `Bearer ${merchantToken}` },
+      });
+      assert.equal(statusRes.status, 200);
+      const statusData = await statusRes.json();
+      assert.equal(statusData.tokenNumber, orderData.tokenNumber);
+      assert.equal(statusData.status, 'AWAITING_REVIEW');
+      assert.equal(statusData.paymentStatus, 'VERIFIED');
+
+      // 12. Merchant reviews and prints the order
+      const printRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${orderData.orderId}/print`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${merchantToken}` },
+      });
+      assert.equal(printRes.status, 200);
+      const printData = await printRes.json();
+      assert.equal(printData.order.status, 'IN_PROGRESS');
+
+      // 13. Merchant marks order as ready for collection
+      const readyRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${orderData.orderId}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${merchantToken}`,
+        },
+        body: JSON.stringify({ status: 'READY_FOR_COLLECTION' }),
+      });
+      assert.equal(readyRes.status, 200);
+
+      // 14. Customer mentions token number; merchant confirms collection
+      const collectRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${orderData.orderId}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${merchantToken}`,
+        },
+        body: JSON.stringify({ status: 'COLLECTED' }),
+      });
+      assert.equal(collectRes.status, 200);
+
+      // 15. Verify order is collected
+      const finalStatus = await fetch(`${baseUrl}/api/v1/portal/orders/${orderData.orderId}`, {
+        headers: { Authorization: `Bearer ${merchantToken}` },
+      });
+      assert.equal(finalStatus.status, 200);
+      const finalData = await finalStatus.json();
+      assert.equal(finalData.status, 'COLLECTED');
+      assert.equal(finalData.tokenNumber, orderData.tokenNumber);
+    });
+
+    // -----------------------------------------------------------------------
+    // SCENARIO 7: Razorpay Credential Setup & Verification
+    // -----------------------------------------------------------------------
+    it('Scenario 7: Merchant configures Razorpay credentials and verifies them', async () => {
+      const suffix = Date.now().toString(36);
+      const shopEmail = `razor_${suffix}@printshop.in`;
+
+      // 1. Register merchant
+      const regRes = await fetch(`${baseUrl}/api/v1/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          businessName: `Razor Print Shop ${suffix}`,
+          shopCode: `razor-${suffix}`,
+          fullName: 'Razor Owner',
+          email: shopEmail,
+          password: 'Password123!',
+          phone: '+91 98765 43210',
+          city: 'Pune',
+        }),
+      });
+      assert.equal(regRes.status, 201);
+      const regData = await regRes.json();
+      assert.equal(regData.registrationComplete, false);
+
+      // 2. Activate subscription via platform admin
+      await fetch(`${baseUrl}/api/v1/platform/merchants/${regData.organizationId}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({ planTier: 'STARTER', planStatus: 'ACTIVE' }),
+      });
+
+      // 3. Merchant logs in
+      const loginRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: shopEmail, password: 'Password123!' }),
+      });
+      assert.equal(loginRes.status, 200);
+      const loginData = await loginRes.json();
+      const razorToken = loginData.token;
+
+      // 4. Initially Razorpay is not configured
+      const statusRes = await fetch(`${baseUrl}/api/v1/merchant/settings/razorpay`, {
+        headers: { Authorization: `Bearer ${razorToken}` },
+      });
+      assert.equal(statusRes.status, 200);
+      const statusBody = await statusRes.json();
+      assert.equal(statusBody.configured, false);
+
+      // 5. Save Razorpay credentials (using test-mode key format)
+      // Set encryption key for test environment
+      process.env.RAZORPAY_CREDENTIALS_ENCRYPTION_KEY = Buffer.alloc(32).toString('base64');
+      const saveRes = await fetch(`${baseUrl}/api/v1/merchant/settings/razorpay`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${razorToken}` },
+        body: JSON.stringify({
+          keyId: 'rzp_test_1234567890',
+          secret: 'test_secret_key_1234567890abcdef',
+          webhookSecret: 'test_webhook_secret_1234567890abcdef',
+        }),
+      });
+      assert.equal(saveRes.status, 200);
+      const saveBody = await saveRes.json();
+      assert.equal(saveBody.configured, true);
+
+      // 6. Test credentials will fail since Razorpay API is not reachable in test env
+      const testRes = await fetch(`${baseUrl}/api/v1/merchant/settings/razorpay/test`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${razorToken}` },
+      });
+      assert.ok([400, 503].includes(testRes.status));
+
+      // 7. Remove credentials
+      const removeRes = await fetch(`${baseUrl}/api/v1/merchant/settings/razorpay`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${razorToken}` },
+      });
+      assert.equal(removeRes.status, 200);
+      const removeBody = await removeRes.json();
+      assert.equal(removeBody.configured, false);
     });
   });
 });

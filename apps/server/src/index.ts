@@ -10,6 +10,7 @@ import { createPaymentRoutes } from './routes/payment-routes';
 import { createAgentRoutes } from './routes/agent-routes';
 import { createAdminRoutes } from './routes/admin-routes';
 import { createDeveloperRoutes } from './routes/developer-routes';
+import { createSubscriptionRoutes } from './routes/subscription-routes';
 import { assertSessionSecretConfigured } from './middleware/session-token';
 import { purgeExpiredPrintFiles } from './services/print-file-retention';
 import { PrivateFileStorage } from './services/private-file-storage';
@@ -84,6 +85,7 @@ export function createApp(db?: DatabaseService): express.Express {
   app.use('/api/v1/agent', createAgentRoutes(database, fileStorage));
   app.use('/api/v1/platform', createAdminRoutes(database));
   app.use('/api/v1/developer', createDeveloperRoutes(database));
+  app.use('/api/v1/subscriptions', createSubscriptionRoutes());
 
   // Global Error Handler
   app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

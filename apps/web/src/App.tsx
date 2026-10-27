@@ -28,27 +28,39 @@ export const App: React.FC = () => {
   const [currentPath, setCurrentPath] = useState<string>(() => {
     return window.location.pathname || '/';
   });
-  const [trackedOrderId, setTrackedOrderId] = useState<string>('order-demo-001');
+  const [trackedOrderId, setTrackedOrderId] = useState<string>(() => new URLSearchParams(window.location.search).get('order') || '');
+  const [trackedShopCode, setTrackedShopCode] = useState<string>(() => new URLSearchParams(window.location.search).get('shop') || 'campus1');
 
   useEffect(() => {
     const handlePopState = () => {
       setCurrentPath(window.location.pathname || '/');
+      if (window.location.pathname === '/track') {
+        const params = new URLSearchParams(window.location.search);
+        setTrackedOrderId(params.get('order') || '');
+        setTrackedShopCode(params.get('shop') || 'campus1');
+      }
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
   const navigate = (path: string) => {
-    if (window.location.pathname !== path) {
-      window.history.pushState({}, '', path);
+    const destination = new URL(path, window.location.origin);
+    if (`${window.location.pathname}${window.location.search}` !== `${destination.pathname}${destination.search}`) {
+      window.history.pushState({}, '', destination.href);
     }
-    setCurrentPath(path);
+    setCurrentPath(destination.pathname);
+    if (destination.pathname === '/track') {
+      setTrackedOrderId(destination.searchParams.get('order') || '');
+      setTrackedShopCode(destination.searchParams.get('shop') || 'campus1');
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleOrderSubmitted = (orderId: string) => {
+  const handleOrderSubmitted = (orderId: string, shopCode = 'campus1') => {
     setTrackedOrderId(orderId);
-    navigate('/track');
+    setTrackedShopCode(shopCode);
+    navigate(`/track?order=${encodeURIComponent(orderId)}&shop=${encodeURIComponent(shopCode)}`);
   };
 
   const isStandaloneApp =
@@ -192,12 +204,12 @@ export const App: React.FC = () => {
         {currentPath === '/track' && (
           <OrderTrackerView
             orderId={trackedOrderId}
-            onBackToPortal={() => navigate('/p/campus1')}
+            onBackToPortal={() => navigate(`/p/${encodeURIComponent(trackedShopCode)}`)}
           />
         )}
         {(currentPath === '/merchant' || currentPath === '/dashboard') && (
           <ProtectedRoute
-            allowedRoles={['MERCHANT_OWNER', 'SHOP_MANAGER', 'SHOP_STAFF', 'PLATFORM_OWNER', 'PLATFORM_ADMIN']}
+            allowedRoles={['MERCHANT_OWNER', 'SHOP_MANAGER', 'SHOP_STAFF']}
             fallbackPath="/login"
             onNavigate={navigate}
             requiredRoleName="Merchant"

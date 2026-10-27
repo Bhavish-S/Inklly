@@ -30,6 +30,15 @@ describe('Milestone 1 Challenger Adversarial Stress Suite', { concurrency: false
       });
     });
 
+    // 0. Setup Platform Admin (needed to activate tenant subscriptions)
+    const adminLoginRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'admin@inklly.com', password: 'DemoPlatformPassword123!' }),
+    });
+    const adminLoginData = await adminLoginRes.json();
+    platformAdminToken = adminLoginData.token;
+
     // 1. Setup Tenant 1
     const reg1Res = await fetch(`${baseUrl}/api/v1/auth/register`, {
       method: 'POST',
@@ -50,8 +59,33 @@ describe('Milestone 1 Challenger Adversarial Stress Suite', { concurrency: false
     });
     assert.equal(reg1Res.status, 201, 'Tenant 1 registration failed');
     const reg1Data = await reg1Res.json();
-    tenant1Token = reg1Data.token;
+    assert.equal(reg1Data.registrationComplete, false);
     tenant1ShopId = reg1Data.shopId;
+
+    // Activate tenant 1 subscription via platform admin
+    await fetch(`${baseUrl}/api/v1/platform/merchants/${reg1Data.organizationId}/status`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${platformAdminToken}`,
+      },
+      body: JSON.stringify({
+        planTier: 'STARTER',
+        planStatus: 'ACTIVE',
+      }),
+    });
+
+    // Log in as tenant 1 to get token
+    const login1Res = await fetch(`${baseUrl}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'alpha@print.in',
+        password: 'Password123!',
+      }),
+    });
+    assert.equal(login1Res.status, 200);
+    tenant1Token = (await login1Res.json()).token;
 
     const uploadRes = await fetch(`${baseUrl}/api/v1/portal/upload`, {
       method: 'POST',
@@ -123,17 +157,33 @@ describe('Milestone 1 Challenger Adversarial Stress Suite', { concurrency: false
     });
     assert.equal(reg2Res.status, 201, 'Tenant 2 registration failed');
     const reg2Data = await reg2Res.json();
-    tenant2Token = reg2Data.token;
+    assert.equal(reg2Data.registrationComplete, false);
     tenant2ShopId = reg2Data.shopId;
 
-    // 3. Platform Admin Token
-    const adminLoginRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
+    // Activate tenant 2 subscription via platform admin
+    await fetch(`${baseUrl}/api/v1/platform/merchants/${reg2Data.organizationId}/status`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${platformAdminToken}`,
+      },
+      body: JSON.stringify({
+        planTier: 'STARTER',
+        planStatus: 'ACTIVE',
+      }),
+    });
+
+    // Log in as tenant 2 to get token
+    const login2Res = await fetch(`${baseUrl}/api/v1/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'admin@inklly.com', password: 'DemoPlatformPassword123!' }),
+      body: JSON.stringify({
+        email: 'beta@print.in',
+        password: 'Password123!',
+      }),
     });
-    const adminLoginData = await adminLoginRes.json();
-    platformAdminToken = adminLoginData.token;
+    assert.equal(login2Res.status, 200);
+    tenant2Token = (await login2Res.json()).token;
   });
 
   after(() => {

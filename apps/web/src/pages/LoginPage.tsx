@@ -23,7 +23,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, onLoginSuccess
 
     try {
       const res = await api.login(identifier, password);
-      
+
+      const expectedRoles = selectedRole === 'owner'
+        ? ['PLATFORM_OWNER', 'PLATFORM_ADMIN']
+        : selectedRole === 'developer'
+          ? ['DEVELOPER', 'PLATFORM_OWNER', 'PLATFORM_ADMIN']
+          : ['MERCHANT_OWNER', 'SHOP_MANAGER', 'SHOP_STAFF'];
+      if (!res.user || !expectedRoles.includes(res.user.role)) {
+        throw new Error(`This account cannot sign in to the ${selectedRole === 'owner' ? 'platform admin' : selectedRole} workspace.`);
+      }
+
       if (res.token) {
         localStorage.setItem('inklly_token', res.token);
       }
@@ -35,10 +44,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, onLoginSuccess
       }
 
       if (selectedRole === 'owner') {
-        if (res.user?.role !== 'PLATFORM_OWNER' && res.user?.role !== 'PLATFORM_ADMIN') {
-          // Allow access if admin credentials
-          console.warn('Logging into Platform Console');
-        }
         onNavigate('/platform');
       } else if (selectedRole === 'developer') {
         onNavigate('/developer');
@@ -150,7 +155,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, onLoginSuccess
               {selectedRole === 'owner' ? 'Sign in as Platform Admin' : selectedRole === 'developer' ? 'Sign in to Developer Hub' : 'Sign in to your shop'}
             </h2>
             <p className="text-xs text-[#475467]">
-              Enter your registered email address or mobile number to authenticate.
+              Enter the email address on your Inklly account.
             </p>
           </div>
 
@@ -163,7 +168,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, onLoginSuccess
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-xs font-bold text-[#172031] mb-1.5">
-                Email or Mobile Number
+                Email address
               </label>
               <div className="relative">
                 <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400">
@@ -174,7 +179,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, onLoginSuccess
                   required
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
-                  placeholder={selectedRole === 'owner' ? 'admin@inklly.com' : selectedRole === 'developer' ? 'dev@inklly.com' : 'owner@campusprint.in or 9876543210'}
+                  placeholder={selectedRole === 'owner' ? 'admin@example.com' : selectedRole === 'developer' ? 'developer@example.com' : 'you@yourprintshop.in'}
                   className="w-full min-h-[44px] pl-10 pr-3.5 py-2.5 rounded-xl border border-[#E6E9F2] focus:border-[#4D64E6] focus:ring-2 focus:ring-[#4D64E6]/20 text-sm outline-hidden transition-all bg-white"
                 />
               </div>

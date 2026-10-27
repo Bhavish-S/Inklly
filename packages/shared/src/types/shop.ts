@@ -3,7 +3,7 @@ export interface Organization {
   name: string;
   ownerUserId: string;
   planTier: 'STARTER' | 'GROWTH' | 'PRO' | 'SCALE';
-  planStatus: 'TRIAL' | 'ACTIVE' | 'GRACE' | 'PAST_DUE' | 'CANCELLED' | 'SUSPENDED';
+  planStatus: 'TRIAL' | 'ACTIVE' | 'GRACE' | 'PAST_DUE' | 'CANCELLED' | 'SUSPENDED' | 'PENDING_PAYMENT';
   billingCurrency: string;
   createdAt: string;
   updatedAt: string;

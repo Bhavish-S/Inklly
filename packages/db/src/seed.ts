@@ -533,6 +533,7 @@ export function seedDatabase(db: DatabaseService, forceDemoSeed: boolean = false
       id: 'order-demo-001',
       shopId,
       orderNumber: 'INK-DEMO-001',
+      tokenNumber: 'T-8472',
       customerName: 'Aarav Sharma',
       customerPhone: '+91 91234 56789',
       channel: 'QR_PORTAL',
