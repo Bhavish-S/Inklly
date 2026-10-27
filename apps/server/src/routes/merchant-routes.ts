@@ -8,8 +8,10 @@ import {
   PrinterRepository,
   UserRepository,
   LedgerRepository,
+  AgentRepository,
 } from '@inklly/db';
 import { authenticate, requireRole, enforceTenantIsolation } from '../middleware/auth';
+import { ShopPaymentCredentialsService } from '../services/shop-payment-credentials';
 
 export function createMerchantRoutes(db: DatabaseService): Router {
   const router = Router();
@@ -27,7 +29,9 @@ export function createMerchantRoutes(db: DatabaseService): Router {
     pricingRepo,
     printerRepo,
     userRepo,
-    ledgerRepo
+    ledgerRepo,
+    new ShopPaymentCredentialsService(db),
+    new AgentRepository(db)
   );
 
   // Apply authentication and tenant isolation
@@ -40,6 +44,9 @@ export function createMerchantRoutes(db: DatabaseService): Router {
   router.patch('/orders/:id/status', controller.updateOrderStatus);
   router.post('/orders/:id/print', controller.printOrder);
 
+  router.post('/agents/pairing-code', requireRole('MERCHANT_OWNER'), controller.createAgentPairingCode);
+  router.delete('/agents/:id', requireRole('MERCHANT_OWNER'), controller.revokeAgent);
+
   router.get('/rates', controller.getRates);
   router.put('/rates', controller.updateRateRule);
   router.put('/discounts/bulk', controller.updateBulkDiscount);
@@ -48,7 +55,10 @@ export function createMerchantRoutes(db: DatabaseService): Router {
   router.post('/printers', controller.addPrinter);
 
   router.get('/settings', controller.getSettings);
-  router.put('/settings', controller.updateSettings);
+  router.put('/settings', requireRole('MERCHANT_OWNER', 'SHOP_MANAGER'), controller.updateSettings);
+  router.get('/settings/razorpay', requireRole('MERCHANT_OWNER'), controller.getRazorpayCredentials);
+  router.put('/settings/razorpay', requireRole('MERCHANT_OWNER'), controller.saveRazorpayCredentials);
+  router.delete('/settings/razorpay', requireRole('MERCHANT_OWNER'), controller.removeRazorpayCredentials);
 
   router.get('/staff', controller.getStaff);
   router.post('/staff', controller.addStaff);

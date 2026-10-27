@@ -1,34 +1,38 @@
 import { Request, Response } from 'express';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { AgentRepository, ShopRepository, PrinterRepository } from '@inklly/db';
+import * as crypto from 'node:crypto';
+import { AgentRepository, ShopRepository, PrinterRepository, DatabaseService } from '@inklly/db';
 import { SpoolerResult } from '@inklly/shared';
 
 export class AgentDispatchController {
   constructor(
     private agentRepo: AgentRepository,
     private shopRepo: ShopRepository,
-    private printerRepo: PrinterRepository
+    private printerRepo: PrinterRepository,
+    private db: DatabaseService
   ) {}
 
   public enroll = (req: Request, res: Response) => {
-    const { shopId, secretKey, hostname, osPlatform, osVersion, agentVersion } = req.body;
+    const { shopId, pairingCode, hostname, osPlatform, osVersion, agentVersion } = req.body;
 
-    if (!shopId) {
-      return res.status(400).json({ error: 'shopId is required for agent enrollment' });
+    if (typeof shopId !== 'string' || typeof pairingCode !== 'string' || pairingCode.length < 32 || pairingCode.length > 128) {
+      return res.status(400).json({ error: 'A valid shopId and one-time pairingCode are required' });
     }
 
     const shop = this.shopRepo.getShopById(shopId) || this.shopRepo.getShopByCode(shopId);
     if (!shop) {
-      return res.status(404).json({ error: 'Shop not found' });
+      return res.status(401).json({ error: 'Invalid pairing credentials' });
     }
+    if (!this.agentRepo.consumePairingCode(shop.id, pairingCode)) return res.status(401).json({ error: 'Invalid or expired pairing credentials' });
 
-    const agentId = `agt-${shop.id.substring(0, 8)}-${Date.now().toString(36)}`;
+    const agentId = `agt-${crypto.randomUUID()}`;
+    const agentSecret = crypto.randomBytes(32).toString('base64url');
 
     this.agentRepo.registerAgent({
       agentId,
       shopId: shop.id,
-      secretKey: secretKey || 'demo-agent-secret',
+      secretKey: agentSecret,
       hostname: hostname || 'DESKTOP-POS-1',
       osPlatform: osPlatform || process.platform,
       osVersion: osVersion || 'Windows 11 / macOS Sonoma',
@@ -38,6 +42,7 @@ export class AgentDispatchController {
     res.status(201).json({
       success: true,
       agentId,
+      agentSecret,
       shopId: shop.id,
       shopCode: shop.shopCode,
       shopName: shop.name,
@@ -47,15 +52,12 @@ export class AgentDispatchController {
   };
 
   public heartbeat = (req: Request, res: Response) => {
-    const { agentId, shopId, status, activePrintersCount, localQueueDepth, sqliteCacheHealthy } = req.body;
-
-    if (!agentId || !shopId) {
-      return res.status(400).json({ error: 'Missing agentId or shopId in heartbeat' });
-    }
+    const identity = (req as any).agent as { agentId: string; shopId: string };
+    const { status, activePrintersCount, localQueueDepth, sqliteCacheHealthy } = req.body;
 
     this.agentRepo.recordHeartbeat({
-      agentId,
-      shopId,
+      agentId: identity.agentId,
+      shopId: identity.shopId,
       timestamp: new Date().toISOString(),
       status: status || 'ONLINE',
       activePrintersCount: Number(activePrintersCount || 1),
@@ -67,13 +69,8 @@ export class AgentDispatchController {
   };
 
   public pollCommands = (req: Request, res: Response) => {
-    const shopId = (req.query.shopId as string) || req.headers['x-shop-id'] as string;
-
-    if (!shopId) {
-      return res.status(400).json({ error: 'shopId parameter or header is required' });
-    }
-
-    const tickets = this.agentRepo.getPendingPrintTickets(shopId);
+    const identity = (req as any).agent as { agentId: string; shopId: string };
+    const tickets = this.agentRepo.getPendingPrintTickets(identity.shopId, identity.agentId);
     res.json(tickets);
   };
 
@@ -84,7 +81,10 @@ export class AgentDispatchController {
       return res.status(400).json({ error: 'Incomplete spooler result report' });
     }
 
-    this.agentRepo.recordCommandResult(result);
+    const identity = (req as any).agent as { agentId: string; shopId: string };
+    if (!this.agentRepo.recordCommandResult(result, identity.agentId, identity.shopId)) {
+      return res.status(409).json({ error: 'Result does not match an active print attempt for this agent' });
+    }
 
     res.json({
       success: true,
@@ -94,14 +94,35 @@ export class AgentDispatchController {
     });
   };
 
+  public downloadPrintFile = (req: Request, res: Response) => {
+    const identity = (req as any).agent as { agentId: string; shopId: string };
+    const file = this.db.queryOne<any>(
+      `SELECT of.storage_key, of.file_name, of.mime_type, o.status
+       FROM order_files of JOIN orders o ON o.id = of.order_id
+       WHERE of.id = ? AND o.shop_id = ?`,
+      [String(req.params.fileId), identity.shopId]
+    );
+    if (!file || file.status === 'CANCELLED' || String(file.storage_key).startsWith('expired:')) {
+      return res.status(404).json({ error: 'Print file is unavailable.' });
+    }
+    const root = path.resolve(process.cwd(), 'uploads');
+    const filePath = path.resolve(process.cwd(), String(file.storage_key));
+    if (!filePath.startsWith(`${root}${path.sep}`) || !fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Print file is unavailable.' });
+    }
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
+    return res.download(filePath, path.basename(String(file.file_name)));
+  };
+
   public downloadAgent = (req: Request, res: Response) => {
     const platform = (req.query.platform as string) || 'win-x64';
-    const shopCode = (req.query.shopCode as string) || 'campus1';
+    const shopCode = (req.query.shopCode as string) || '';
     const format = (req.query.format as string) || 'json';
 
     const shop = this.shopRepo.getShopByCode(shopCode) || this.shopRepo.getShopById(shopCode);
-    const shopId = shop ? shop.id : 'shop-campus-1';
-    const pairingKey = `ink_live_sec_${Buffer.from(shopId).toString('hex').substring(0, 16)}`;
+    if (!shop) return res.status(404).json({ error: 'Shop not found' });
+    const shopId = shop.id;
     const possibleDirs = [
       path.join(process.cwd(), 'apps', 'server', 'downloads'),
       path.join(__dirname, '..', '..', 'downloads'),
@@ -109,7 +130,6 @@ export class AgentDispatchController {
       path.join(process.cwd(), 'downloads'),
     ];
     const downloadsDir = possibleDirs.find((d) => fs.existsSync(d)) || path.join(process.cwd(), 'downloads');
-    const serverBaseUrl = (process.env.SERVER_BASE_URL || process.env.INKLLY_SERVER_URL || 'https://inklly.onrender.com').replace(/\/api\/v1\/?$/, '');
 
     if (format === 'bundle' || format === 'zip' || platform === 'win-x64-bundle') {
       const zipPath = path.join(downloadsDir, 'Inklly-Agent-win-x64-Setup.zip');
@@ -147,54 +167,8 @@ export class AgentDispatchController {
     }
 
     if (format === 'script') {
-      const batScript = `@echo off
-chcp 65001 >nul
-title Inklly Edge Print Agent Setup v1.0.0
-cls
-echo ======================================================================
-echo           INKLLY EDGE PRINT AGENT - WINDOWS COUNTER TERMINAL
-echo ======================================================================
-echo.
-echo [1/4] Checking Windows Print Spooler Service...
-powershell -NoProfile -Command "Get-Service -Name Spooler | Select-Object Status, DisplayName"
-if %errorlevel% neq 0 (
-    echo [ERROR] Windows Print Spooler service not accessible.
-    pause
-    exit /b 1
-)
+      return res.status(410).json({ error: 'Setup scripts must be generated by an authenticated shop owner.' });
 
-echo.
-echo [2/4] Detecting connected local and network printers...
-powershell -NoProfile -Command "Get-Printer | Select-Object Name, DriverName, PortName, PrinterStatus | Format-Table -AutoSize"
-
-echo.
-echo [3/4] Configuring Inklly Pairing Credentials for Shop: ${shopCode}...
-set INKLLY_SERVER=${serverBaseUrl}
-set INKLLY_SHOP_ID=${shopId}
-set INKLLY_SHOP_CODE=${shopCode}
-set INKLLY_SECRET_KEY=${pairingKey}
-set INKLLY_PORT=8765
-
-echo.
-echo [4/4] Starting Inklly Local Loopback Spooler on port 8765...
-echo Platform Resiliency Mode: Active
-echo Offline SQLite Queue: Enabled (agent_queue.db)
-echo Hardware Safety Invariant: OUTPUT_UNCERTAIN on Jam
-echo.
-echo Launching Node daemon...
-node -e "console.log('Inklly Agent daemon running on http://127.0.0.1:8765');" 2>nul
-if %errorlevel% neq 0 (
-    echo [NOTE] Node.js not detected on system PATH.
-    echo Please install Node.js 20+ LTS or run the packaged standalone runtime.
-)
-echo.
-echo Inklly Edge Agent successfully configured. Keep this window running.
-echo ======================================================================
-pause
-`;
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      res.setHeader('Content-Disposition', `attachment; filename="Inklly-Agent-Setup-${platform}.bat"`);
-      return res.send(batScript);
     }
 
     res.json({
@@ -213,12 +187,8 @@ pause
         'Local SQLite queue persistence on physical SSD',
         'Strict loopback binding to 127.0.0.1 (zero public ingress)',
       ],
-      downloadUrl: `/api/v1/agent/download?platform=${platform}&shopCode=${shopCode}&format=script`,
-      shopConfig: {
-        shopCode,
-        shopId,
-        pairingKey,
-      },
+      downloadUrl: `/api/v1/agent/download?platform=${platform}&shopCode=${shopCode}&format=bundle`,
+      shopConfig: { shopCode, shopId },
     });
   };
 

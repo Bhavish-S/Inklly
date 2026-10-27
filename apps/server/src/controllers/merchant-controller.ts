@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import * as crypto from 'node:crypto';
 import {
   ShopRepository,
   OrderRepository,
@@ -6,8 +7,10 @@ import {
   PrinterRepository,
   UserRepository,
   LedgerRepository,
+  AgentRepository,
 } from '@inklly/db';
 import { OrderStatus, ROLE_PRESETS } from '@inklly/shared';
+import { ShopPaymentCredentialsService } from '../services/shop-payment-credentials';
 
 export class MerchantController {
   constructor(
@@ -16,12 +19,31 @@ export class MerchantController {
     private pricingRepo: PricingRepository,
     private printerRepo: PrinterRepository,
     private userRepo: UserRepository,
-    private ledgerRepo: LedgerRepository
+    private ledgerRepo: LedgerRepository,
+    private paymentCredentials: ShopPaymentCredentialsService,
+    private agentRepo: AgentRepository
   ) {}
 
   private getShopId(req: Request): string {
     return req.user?.shopId || (req.query.shopId as string) || (req.headers['x-shop-id'] as string) || '';
   }
+
+  public createAgentPairingCode = (req: Request, res: Response) => {
+    const shopId = req.user?.shopId;
+    if (!shopId) return res.status(403).json({ error: 'Shop owner account required' });
+    const pairingCode = crypto.randomBytes(32).toString('base64url');
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+    this.agentRepo.issuePairingCode(shopId, req.user!.userId, pairingCode, expiresAt);
+    return res.status(201).json({ pairingCode, expiresAt, shopId });
+  };
+
+  public revokeAgent = (req: Request, res: Response) => {
+    const shopId = req.user?.shopId;
+    if (!shopId || !this.agentRepo.revokeAgent(String(req.params.id), shopId)) {
+      return res.status(404).json({ error: 'Active agent not found for this shop' });
+    }
+    return res.status(204).send();
+  };
 
   public getDashboard = (req: Request, res: Response) => {
     const shopId = this.getShopId(req);
@@ -270,6 +292,41 @@ export class MerchantController {
       res.json({ success: true, shop: this.shopRepo.getShopById(shopId) });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
+    }
+  };
+
+  public getRazorpayCredentials = (req: Request, res: Response) => {
+    const shopId = this.getShopId(req);
+    res.json({ shopId, ...this.paymentCredentials.getRazorpayStatus(shopId) });
+  };
+
+  public saveRazorpayCredentials = (req: Request, res: Response) => {
+    const keyId = typeof req.body?.keyId === 'string' ? req.body.keyId.trim() : '';
+    const secret = typeof req.body?.secret === 'string' ? req.body.secret.trim() : '';
+    const webhookSecret = typeof req.body?.webhookSecret === 'string' ? req.body.webhookSecret.trim() : '';
+    if (!/^rzp_(test|live)_[A-Za-z0-9]+$/.test(keyId) || secret.length < 16 || secret.length > 256 || webhookSecret.length < 16 || webhookSecret.length > 256) {
+      return res.status(400).json({ error: 'Enter a valid Razorpay Key ID, API Secret, and Webhook Secret.' });
+    }
+    try {
+      this.paymentCredentials.saveRazorpay(this.getShopId(req), keyId, secret, webhookSecret);
+      const shopId = this.getShopId(req);
+      res.json({ success: true, shopId, ...this.paymentCredentials.getRazorpayStatus(shopId) });
+    } catch (error) {
+      console.error('[Razorpay credentials]', error);
+      if (error instanceof Error && error.message.startsWith('Resolve pending')) {
+        return res.status(409).json({ error: error.message });
+      }
+      res.status(503).json({ error: 'Payment credential encryption is not configured on this server.' });
+    }
+  };
+
+  public removeRazorpayCredentials = (req: Request, res: Response) => {
+    try {
+      this.paymentCredentials.removeRazorpay(this.getShopId(req));
+      const shopId = this.getShopId(req);
+      res.json({ success: true, shopId, ...this.paymentCredentials.getRazorpayStatus(shopId) });
+    } catch (error) {
+      return res.status(409).json({ error: error instanceof Error ? error.message : 'Unable to disconnect Razorpay.' });
     }
   };
 

@@ -6,6 +6,8 @@ import { OrderRepository } from './repositories/order-repository';
 import { UserRepository } from './repositories/user-repository';
 import { AgentRepository } from './repositories/agent-repository';
 import { ROLE_PRESETS } from '@inklly/shared';
+import * as crypto from 'node:crypto';
+import { hashPassword } from './password';
 
 export function seedDatabase(db: DatabaseService, forceDemoSeed: boolean = false): void {
   const shopRepo = new ShopRepository(db);
@@ -17,51 +19,65 @@ export function seedDatabase(db: DatabaseService, forceDemoSeed: boolean = false
 
   const now = new Date().toISOString();
 
-  // 1. Platform Super Admin & Developer Users (Always seeded for system administration)
-  if (!userRepo.getUserByEmail('admin@inklly.com')) {
-    userRepo.createUser(
-      {
-        id: 'user-admin-1',
-        email: 'admin@inklly.com',
-        phone: '+91 99999 00000',
-        fullName: 'Inklly Super Admin',
-        role: 'PLATFORM_OWNER',
-        isActive: true,
-        createdAt: now,
-        updatedAt: now,
-      },
-      '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9' // sha256 of admin123
-    );
-  }
-
-  if (!userRepo.getUserByEmail('dev@inklly.com')) {
-    userRepo.createUser(
-      {
-        id: 'user-dev-1',
-        email: 'dev@inklly.com',
-        phone: '+91 99999 11111',
-        fullName: 'Inklly Developer API',
-        role: 'DEVELOPER',
-        isActive: true,
-        createdAt: now,
-        updatedAt: now,
-      },
-      '87274af01876341455b32d805946f272871bb42effa6604dccf28bb027afa82b' // sha256 of dev123
-    );
-  }
-
-  // 2. Only seed demo merchants if explicitly requested or in test runner
+  const isTestMode = process.env.NODE_ENV === 'test' || process.env.npm_lifecycle_event === 'test';
+  // Never provision demo identities from a production process, even when a demo
+  // seed flag is accidentally left enabled.
   const shouldSeedDemos =
-    forceDemoSeed ||
-    process.env.NODE_ENV === 'test' ||
-    process.env.npm_lifecycle_event === 'test' ||
-    process.env.SEED_DEMOS === 'true';
+    isTestMode ||
+    (process.env.NODE_ENV !== 'production' && (forceDemoSeed || process.env.SEED_DEMOS === 'true'));
+
+  // Disable legacy fixed-credential accounts in existing non-test databases.
+  if (!isTestMode) {
+    const legacyAccounts = [
+      ['admin@inklly.com', '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9'],
+      ['dev@inklly.com', '87274af01876341455b32d805946f272871bb42effa6604dccf28bb027afa82b'],
+    ];
+    for (const [email, legacyHash] of legacyAccounts) {
+      const user = userRepo.getUserByEmail(email);
+      if (user?.passwordHash === legacyHash && user.isActive) {
+        userRepo.setUserActive(user.id, false);
+      }
+    }
+  }
+
+  if (process.env.NODE_ENV === 'production' && !userRepo.getActivePlatformOwner()) {
+    const bootstrapEmail = process.env.PLATFORM_OWNER_EMAIL?.trim().toLowerCase();
+    const bootstrapPassword = process.env.PLATFORM_OWNER_PASSWORD;
+    if (!bootstrapEmail || !bootstrapPassword || bootstrapPassword.length < 16) {
+      throw new Error(
+        'No active platform owner exists. Set PLATFORM_OWNER_EMAIL and a PLATFORM_OWNER_PASSWORD of at least 16 characters for initial bootstrap.'
+      );
+    }
+
+    const existing = userRepo.getUserByEmail(bootstrapEmail);
+    const passwordHash = hashPassword(bootstrapPassword);
+    if (existing) {
+      if (existing.role !== 'PLATFORM_OWNER') {
+        throw new Error('PLATFORM_OWNER_EMAIL is already assigned to a non-owner account');
+      }
+      userRepo.setUserPasswordHash(existing.id, passwordHash);
+      userRepo.setUserActive(existing.id, true);
+    } else {
+      userRepo.createUser(
+        {
+          id: `user-platform-${Date.now().toString(36)}`,
+          email: bootstrapEmail,
+          fullName: 'Platform Owner',
+          role: 'PLATFORM_OWNER',
+          isActive: true,
+          createdAt: now,
+          updatedAt: now,
+        },
+        passwordHash
+      );
+    }
+  }
 
   if (!shouldSeedDemos) {
     return;
   }
 
-  // 3. Organization & Shop (for automated test suite)
+  // Seed demo tenants and privileged test identities only outside production.
   const orgId = 'org-campus-network';
   const shopId = 'shop-campus-1';
 
@@ -264,7 +280,7 @@ export function seedDatabase(db: DatabaseService, forceDemoSeed: boolean = false
     });
   }
 
-  // 2. Users & Memberships
+  // Users & Memberships
   // Platform Owner
   if (!userRepo.getUserByEmail('admin@inklly.com')) {
     userRepo.createUser(

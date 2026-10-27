@@ -10,27 +10,44 @@ import { createPaymentRoutes } from './routes/payment-routes';
 import { createAgentRoutes } from './routes/agent-routes';
 import { createAdminRoutes } from './routes/admin-routes';
 import { createDeveloperRoutes } from './routes/developer-routes';
+import { assertSessionSecretConfigured } from './middleware/session-token';
+import { purgeExpiredPrintFiles } from './services/print-file-retention';
 
 export function createApp(db?: DatabaseService): express.Express {
+  assertSessionSecretConfigured();
   const app = express();
-  app.use(cors());
-  app.use(express.json({ limit: '50mb' }));
+  const allowedOrigins = new Set((process.env.CORS_ORIGIN || 'http://localhost:3000,http://127.0.0.1:3000,https://inklly.vercel.app,https://inklly.in')
+    .split(',').map((origin) => origin.trim()).filter(Boolean));
+  app.use(cors({
+    origin: (origin, callback) => callback(null, !origin || allowedOrigins.has(origin)),
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key'],
+  }));
+  app.use(express.json({
+    limit: `${Math.max(1, Math.min(35, Number(process.env.MAX_FILE_SIZE_MB) || 25)) * 2}mb`,
+    verify: (req, _res, buffer) => {
+      if (req.url?.startsWith('/api/v1/payments/webhook/')) (req as any).rawBody = Buffer.from(buffer);
+    },
+  }));
 
-  // Ensure uploads and downloads directories exist and are statically served
+  // Customer documents must never be exposed as guessable public static files.
   const uploadsDir = path.join(process.cwd(), 'uploads');
   if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
-  app.use('/uploads', express.static(uploadsDir));
-
   const downloadsDir = path.join(process.cwd(), 'downloads');
   if (!fs.existsSync(downloadsDir)) {
     fs.mkdirSync(downloadsDir, { recursive: true });
   }
-  app.use('/downloads', express.static(downloadsDir));
+  // Public downloads are deliberately disabled. Agent installers need an owner-scoped flow.
 
   const database = db || DatabaseService.getInstance(process.env.DATABASE_URL || process.env.DB_PATH || path.join(process.cwd(), 'data', 'inklly.db'));
   seedDatabase(database);
+  const retentionTimer = setInterval(() => {
+    try { purgeExpiredPrintFiles(database); } catch (error) { console.error('[File retention] Cleanup pass failed', error); }
+  }, 15 * 60 * 1000);
+  retentionTimer.unref();
+  try { purgeExpiredPrintFiles(database); } catch (error) { console.error('[File retention] Initial cleanup pass failed', error); }
 
   app.get(['/health', '/api/v1/health'], (_req, res) => {
     res.json({

@@ -89,6 +89,39 @@ export class UserRepository {
     };
   }
 
+  public setUserActive(id: string, isActive: boolean): void {
+    this.db.execute('UPDATE users SET is_active = ?, updated_at = ? WHERE id = ?', [
+      isActive ? 1 : 0,
+      new Date().toISOString(),
+      id,
+    ]);
+  }
+
+  public setUserPasswordHash(id: string, passwordHash: string): void {
+    this.db.execute('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?', [
+      passwordHash,
+      new Date().toISOString(),
+      id,
+    ]);
+  }
+
+  public getActivePlatformOwner(): User | null {
+    const row = this.db.queryOne<any>(
+      `SELECT * FROM users WHERE role = 'PLATFORM_OWNER' AND is_active = 1 ORDER BY created_at ASC LIMIT 1`
+    );
+    if (!row) return null;
+    return {
+      id: row.id,
+      email: row.email,
+      phone: row.phone || undefined,
+      fullName: row.full_name,
+      role: row.role as UserRole,
+      isActive: Boolean(row.is_active),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
   public createMembership(membership: MembershipRecord): void {
     this.db.execute(
       `INSERT INTO memberships (id, user_id, organization_id, shop_id, role, permissions, created_at, updated_at)

@@ -68,17 +68,17 @@ export const LegalPage: React.FC<LegalPageProps> = ({ initialTab = 'privacy', on
 
               <h3 className="text-base font-bold mb-2">1. Information We Collect</h3>
               <p className="text-xs text-[#5B6475] mb-4">
-                Inklly collects merchant registration data (name, email, phone number, shop address, and bank UPI VPA for settlement) and order telemetry (page counts, timestamps, printer status). Customer uploaded files are processed strictly for spooling and printing.
+                The preview collects merchant account details, shop profile information, order details, and print workflow data. Shops may also enter Razorpay API credentials in settings; these credentials are encrypted by the server and are not returned to the browser after saving. Customer files are used for the requested print workflow.
               </p>
 
               <h3 className="text-base font-bold mb-2">2. Ephemeral Document Retention & Shredding</h3>
               <p className="text-xs text-[#5B6475] mb-4">
-                All customer documents uploaded via QR code or WhatsApp bot are stored in encrypted, temporary storage. Immediately upon job completion or within 24 hours of creation, all document binaries are permanently and irreversibly purged from our servers. We never sell, index, or inspect customer files.
+                The 24-hour deletion period after order completion is the planned retention policy, but automated deletion and private file storage are not yet deployed in this preview. Use test documents only and do not upload sensitive files. We do not currently offer WhatsApp document intake.
               </p>
 
               <h3 className="text-base font-bold mb-2">3. Security Standards</h3>
               <p className="text-xs text-[#5B6475] mb-4">
-                All data transmission between customer smartphones, cloud servers, and local desktop edge spoolers is protected via TLS 1.3 encryption. Local edge communication uses mutual HMAC token validation.
+                Production security controls are still being implemented. Use the hosted preview only with test data; do not use it for sensitive documents or live payment processing.
               </p>
 
               <h3 className="text-base font-bold mb-2">4. Contact Information</h3>
@@ -134,17 +134,12 @@ export const LegalPage: React.FC<LegalPageProps> = ({ initialTab = 'privacy', on
 
               <h3 className="text-base font-bold mb-2">1. Digital SaaS Delivery</h3>
               <p className="text-xs text-[#5B6475] mb-4">
-                Access to the web platform, merchant portal, QR code generator, and downloadable Windows Edge Agent installer is delivered instantaneously upon account creation.
+                Access to the web preview is provided after account creation. Some screens and integrations are prototypes and are not available as production services.
               </p>
 
-              <h3 className="text-base font-bold mb-2">2. Physical Kiosk Hardware & Standee Delivery</h3>
+              <h3 className="text-base font-bold mb-2">2. Physical products and customer delivery</h3>
               <p className="text-xs text-[#5B6475] mb-4">
-                Counter acrylic standee kits ship via surface courier within 3 business days. Turnkey commercial Print ATM kiosk units ship within 7 to 10 business days with freight tracking and transit insurance.
-              </p>
-
-              <h3 className="text-base font-bold mb-2">3. Local Customer Campus Delivery</h3>
-              <p className="text-xs text-[#5B6475]">
-                For participating partner print shops offering local campus/hostel delivery, orders are batched and delivered according to the partner shop's published campus schedule and verified via OTP handover.
+                The current preview does not sell kiosk hardware or standees and does not arrange delivery of printed orders. Print pickup and payment are handled by the participating shop.
               </p>
             </div>
           )}

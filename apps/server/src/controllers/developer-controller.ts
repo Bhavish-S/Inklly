@@ -5,6 +5,15 @@ import { AgentRepository, DeveloperKeyRecord, WebhookSubscriptionRecord } from '
 export class DeveloperController {
   constructor(private agentRepo: AgentRepository) {}
 
+  private organizationId(req: Request, res: Response): string | null {
+    const orgId = req.user?.organizationId;
+    if (!orgId) {
+      res.status(403).json({ error: 'An organization membership is required.' });
+      return null;
+    }
+    return orgId;
+  }
+
   public getOpenApiSpec = (req: Request, res: Response) => {
     res.json({
       openapi: '3.0.3',
@@ -75,13 +84,15 @@ export class DeveloperController {
   };
 
   public getKeys = (req: Request, res: Response) => {
-    const orgId = req.user?.organizationId || 'org-campus-network';
+    const orgId = this.organizationId(req, res);
+    if (!orgId) return;
     const keys = this.agentRepo.getDeveloperKeysByOrg(orgId);
     res.json(keys);
   };
 
   public createKey = (req: Request, res: Response) => {
-    const orgId = req.user?.organizationId || 'org-campus-network';
+    const orgId = this.organizationId(req, res);
+    if (!orgId) return;
     const { keyName, environment, scopes } = req.body;
 
     if (!keyName) {
@@ -116,7 +127,8 @@ export class DeveloperController {
   };
 
   public revokeKey = (req: Request, res: Response) => {
-    const orgId = req.user?.organizationId || 'org-campus-network';
+    const orgId = this.organizationId(req, res);
+    if (!orgId) return;
     const id = String(req.params.id);
 
     this.agentRepo.revokeDeveloperKey(id, orgId);
@@ -124,8 +136,9 @@ export class DeveloperController {
   };
 
   public getWebhooks = (req: Request, res: Response) => {
-    const orgId = req.user?.organizationId || 'org-campus-network';
-    const webhooks = this.agentRepo.getWebhooksByOrg(orgId);
+    const orgId = this.organizationId(req, res);
+    if (!orgId) return;
+    const webhooks = this.agentRepo.getWebhooksByOrg(orgId).map(({ secret: _secret, ...webhook }) => webhook);
     res.json(webhooks);
   };
 
@@ -149,7 +162,8 @@ export class DeveloperController {
     };
 
     this.agentRepo.createWebhookSubscription(sub);
-    res.status(201).json(sub);
+    const { secret: webhookSecret, ...subscription } = sub;
+    res.status(201).json({ ...subscription, webhookSecret });
   };
 
   public testWebhook = (req: Request, res: Response) => {

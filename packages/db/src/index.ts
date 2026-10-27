@@ -1,4 +1,5 @@
 export * from './database';
+export * from './password';
 export * from './repositories/shop-repository';
 export * from './repositories/order-repository';
 export * from './repositories/pricing-repository';

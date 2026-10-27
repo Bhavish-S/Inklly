@@ -21,6 +21,29 @@ import {
   MessageSquareIcon,
 } from '../components/icons';
 
+declare global {
+  interface Window { Razorpay?: new (options: any) => any; }
+}
+
+function loadRazorpayCheckout(): Promise<void> {
+  if (window.Razorpay) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>('script[data-razorpay-checkout]');
+    if (existing) {
+      existing.addEventListener('load', () => resolve(), { once: true });
+      existing.addEventListener('error', () => reject(new Error('Razorpay Checkout could not be loaded.')), { once: true });
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.async = true;
+    script.dataset.razorpayCheckout = 'true';
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Razorpay Checkout could not be loaded.'));
+    document.head.appendChild(script);
+  });
+}
+
 const detectPdfPageCount = async (file: File): Promise<number> => {
   if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
     return 1;
@@ -95,7 +118,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
       color_simplex: 10.0,
       color_duplex: 9.0,
     },
-    onlinePaymentEnabled: true,
+    onlinePaymentAvailable: false,
   });
 
   useEffect(() => {
@@ -114,7 +137,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
               color_simplex: 10.0,
               color_duplex: 9.0,
             },
-            onlinePaymentEnabled: true,
+            onlinePaymentAvailable: Boolean(data.onlinePaymentAvailable),
           });
         }
       })
@@ -132,34 +155,21 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
   const [showOptionsAccordion, setShowOptionsAccordion] = useState<boolean>(true);
   const [globalCopies, setGlobalCopies] = useState<number>(1);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [customerName, setCustomerName] = useState<string>('');
+  const [customerPhone, setCustomerPhone] = useState<string>('');
+  const [paymentMethod, setPaymentMethod] = useState<'CASH_ON_COLLECTION' | 'ONLINE_RAZORPAY'>('CASH_ON_COLLECTION');
+  const [pendingOnlineOrder, setPendingOnlineOrder] = useState<{ orderId: string; orderNumber: string } | null>(null);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [reviewModalOpen, setReviewModalOpen] = useState<boolean>(false);
-  const [targetPaymentMethod, setTargetPaymentMethod] = useState<'CASH' | 'ONLINE'>('CASH');
-  const [paymentModalOpen, setPaymentModalOpen] = useState<boolean>(false);
-  const [upiTimer, setUpiTimer] = useState<number>(300);
-  const [upiCopied, setUpiCopied] = useState<boolean>(false);
-  const [upiVerifying, setUpiVerifying] = useState<boolean>(false);
   const [copiedToken, setCopiedToken] = useState<boolean>(false);
   const [orderResult, setOrderResult] = useState<{
     token: string;
     orderId: string;
     placedAt: string;
     totalAmount: string;
-    paymentMode?: 'CASH' | 'ONLINE';
+    paymentMode: 'CASH' | 'ONLINE';
   } | null>(null);
-
-  // Live timer for UPI QR expiry
-  useEffect(() => {
-    let interval: any;
-    if (paymentModalOpen && upiTimer > 0) {
-      interval = setInterval(() => {
-        setUpiTimer((t) => (t > 0 ? t - 1 : 0));
-      }, 1000);
-    }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [paymentModalOpen, upiTimer]);
 
   // Editor Modal State
   const [editorOpen, setEditorOpen] = useState<boolean>(false);
@@ -250,7 +260,14 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                 serverFileUrl = uploadRes.fileUrl;
               }
             } catch (err) {
-              console.warn('Document upload warning, fallback to local buffer:', err);
+              URL.revokeObjectURL(localBlobUrl);
+              reject(new Error(`Could not securely upload "${f.name}". Check your connection and try again.`));
+              return;
+            }
+            if (!storageKey) {
+              URL.revokeObjectURL(localBlobUrl);
+              reject(new Error(`The server did not confirm storage for "${f.name}". Please upload it again.`));
+              return;
             }
 
             resolve({
@@ -715,18 +732,25 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
     drawCropOverlay();
   }, [editorOpen, editorRotation, editorFilter, editorBrightness, editorContrast, editorCrop, activeDoc]);
 
-  // Submit Order (Cash on Counter or Online UPI)
-  const handlePlaceOrder = async (paymentType: 'CASH' | 'ONLINE') => {
+  // Create a real server order. Do not invent a local success when the API fails.
+  const handlePlaceOrder = async () => {
+    const normalizedPhone = customerPhone.replace(/\D/g, '').replace(/^91(?=\d{10}$)/, '');
+    if (!customerName.trim() || !/^[6-9]\d{9}$/.test(normalizedPhone)) {
+      setSubmitError('Enter your name and a valid 10-digit Indian mobile number.');
+      return;
+    }
+
     setIsSubmitting(true);
-    const fallbackToken = `INK-${Math.floor(1000 + Math.random() * 9000)}`;
-    const fallbackOrderId = `ord-${Date.now().toString().slice(-6)}`;
+    setSubmitError(null);
 
     try {
+      let order = pendingOnlineOrder;
+      if (!order) {
       const data = await api.submitOrder({
         shopId: shop.id || 'shop-campus-1',
-        customerName: 'Counter Customer',
-        customerPhone: '9876543210',
-        paymentMethod: paymentType === 'ONLINE' ? 'RAZORPAY_UPI' : 'CASH_ON_COLLECTION',
+        customerName: customerName.trim(),
+        customerPhone: normalizedPhone,
+        paymentMethod,
         quote: {
           quoteId: `quote-${Date.now()}`,
           version: 'v2.4',
@@ -775,117 +799,62 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
         }),
       });
 
-      if (data && (data.orderId || data.orderNumber)) {
-        const finalToken = data.orderNumber || fallbackToken;
-        const finalOrderId = data.orderId || fallbackOrderId;
+      if (!data?.orderId || !data?.orderNumber) {
+        throw new Error('The order service did not confirm your request. Please try again.');
+      }
+      order = { orderId: data.orderId, orderNumber: data.orderNumber };
+      if (paymentMethod === 'ONLINE_RAZORPAY') setPendingOnlineOrder(order);
+      }
 
-        const orderRecord = {
-          id: finalToken.replace('INK-', ''),
-          orderNumber: finalToken,
-          orderId: finalOrderId,
-          customer: 'Walk-in Customer (Counter QR)',
-          phone: '+91 98765 43210',
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          document: documents[0]?.fileName || 'Document_Print_Job.pdf',
-          pages: totalPagesCount,
-          copies: globalCopies,
-          status: 'Awaiting Merchant Action',
-          amount: `₹${grandTotal.toFixed(2)}`,
-          tab: 'pending',
-          colorMode: documents[0]?.options.colorMode === 'color' ? 'Colour' : 'B&W',
-          duplex: documents[0]?.options.duplexMode === 'duplex_auto' ? 'Back-to-Back (Duplex)' : 'Single-sided',
-          paymentMode: paymentType === 'ONLINE' ? 'Paid Online (UPI Auto-release)' : 'Cash on Collection',
-        };
+      if (!order) throw new Error('The order service did not confirm your request. Please try again.');
 
-        try {
-          const stored = JSON.parse(localStorage.getItem('inklly_live_orders') || '[]');
-          localStorage.setItem('inklly_live_orders', JSON.stringify([orderRecord, ...stored]));
-          localStorage.setItem(`inklly_order_${finalOrderId}`, JSON.stringify(orderRecord));
-          localStorage.setItem(`inklly_order_${finalToken}`, JSON.stringify(orderRecord));
-
-          // Automatic Silent Spooling to local Windows Agent on port 8765
-          fetch('http://127.0.0.1:8765/jobs/spool', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              jobId: `job-${finalToken}`,
-              shopId: shop.id || '',
-              printerId: 'Canon LBP2900',
-              fileName: documents[0]?.fileName || 'Customer_Document.pdf',
-              storageKey: documents[0]?.storageKey || '',
-              documentUrl: documents[0]?.storageKey
-                ? `http://localhost:4000/${documents[0].storageKey}`
-                : (documents[0]?.fileUrl || documents[0]?.previewUrl || ''),
-              options: {
-                copies: 1,
-                pageRange: '1',
-                color: documents[0]?.options.colorMode === 'color',
-                duplex: documents[0]?.options.duplexMode === 'duplex_auto',
-              },
-            }),
-          }).catch(() => {});
-        } catch (err) {
-          console.warn('LocalStorage error', err);
-        }
-
-        setPaymentModalOpen(false);
-        setOrderResult({
-          token: finalToken,
-          orderId: finalOrderId,
-          placedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          totalAmount: grandTotal.toFixed(2),
-          paymentMode: paymentType,
+      const onlineCheckout = paymentMethod === 'ONLINE_RAZORPAY' || Boolean(pendingOnlineOrder);
+      if (onlineCheckout) {
+        if (!shop.onlinePaymentAvailable) throw new Error('Online payment is not available for this shop. Choose cash at collection.');
+        const intent = await api.createPaymentIntent(order.orderId);
+        await loadRazorpayCheckout();
+        await new Promise<void>((resolve, reject) => {
+          if (!window.Razorpay) { reject(new Error('Razorpay Checkout could not be loaded.')); return; }
+          const checkout = new window.Razorpay({
+            key: intent.keyId,
+            amount: intent.amount,
+            currency: intent.currency,
+            name: shop.name,
+            description: `Print order ${order!.orderNumber}`,
+            order_id: intent.razorpayOrderId,
+            prefill: { name: customerName.trim(), contact: normalizedPhone },
+            handler: async (response: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) => {
+              try {
+                await api.verifyRazorpayPayment(response);
+                resolve();
+              } catch (error) { reject(error); }
+            },
+            modal: { ondismiss: () => reject(new Error('Checkout was closed. Your order is saved; retry payment to continue.')) },
+            theme: { color: '#4D64E6' },
+          });
+          checkout.on('payment.failed', () => reject(new Error('Payment did not complete. Your order is saved; retry payment to continue.')));
+          checkout.open();
         });
-        setIsSubmitting(false);
-        return;
-      }
-    } catch (err) {
-      console.warn('Live submit error, falling back:', err);
-    }
-
-    setTimeout(() => {
-      const orderRecord = {
-        id: fallbackToken.replace('INK-', ''),
-        orderNumber: fallbackToken,
-        orderId: fallbackOrderId,
-        customer: 'Walk-in Customer (Counter QR)',
-        phone: '+91 98765 43210',
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        document: documents[0]?.fileName || 'Document_Print_Job.pdf',
-        pages: totalPagesCount,
-        copies: globalCopies,
-        status: 'Awaiting Merchant Action',
-        amount: `₹${grandTotal.toFixed(2)}`,
-        tab: 'pending',
-        colorMode: documents[0]?.options.colorMode === 'color' ? 'Colour' : 'B&W',
-        duplex: documents[0]?.options.duplexMode === 'duplex_auto' ? 'Back-to-Back (Duplex)' : 'Single-sided',
-        paymentMode: paymentType === 'ONLINE' ? 'Paid Online (UPI Auto-release)' : 'Cash on Collection',
-      };
-
-      try {
-        const stored = JSON.parse(localStorage.getItem('inklly_live_orders') || '[]');
-        localStorage.setItem('inklly_live_orders', JSON.stringify([orderRecord, ...stored]));
-        localStorage.setItem(`inklly_order_${fallbackOrderId}`, JSON.stringify(orderRecord));
-        localStorage.setItem(`inklly_order_${fallbackToken}`, JSON.stringify(orderRecord));
-      } catch (err) {
-        console.warn('LocalStorage error', err);
       }
 
-      setPaymentModalOpen(false);
       setOrderResult({
-        token: fallbackToken,
-        orderId: fallbackOrderId,
+        token: order.orderNumber,
+        orderId: order.orderId,
         placedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         totalAmount: grandTotal.toFixed(2),
-        paymentMode: paymentType,
+        paymentMode: onlineCheckout ? 'ONLINE' : 'CASH',
       });
+      setPendingOnlineOrder(null);
+      setReviewModalOpen(false);
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'We could not submit your order. Please try again.');
+    } finally {
       setIsSubmitting(false);
-    }, 400);
+    }
   };
 
   // SUCCESS / CONFIRMATION VIEW
   if (orderResult) {
-    const isOnline = orderResult.paymentMode === 'ONLINE';
     return (
       <div className="min-h-screen bg-[#F5F6FA] flex flex-col items-center justify-center p-4">
         <div className="w-full max-w-md bg-white rounded-3xl shadow-xl border border-slate-100 overflow-hidden text-center p-6 sm:p-8 animate-fadeIn">
@@ -895,12 +864,14 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
           </div>
 
           <span className="inline-block px-3 py-1 bg-emerald-50 text-emerald-700 text-xs font-bold rounded-full mb-2 border border-emerald-200">
-            {isOnline ? 'PAID & SENT TO SPOOLER' : 'QUEUED • PAY CASH AT COUNTER'}
+            {orderResult.paymentMode === 'ONLINE' ? 'PAYMENT CONFIRMED' : 'ORDER RECEIVED • PAY AT THE COUNTER'}
           </span>
 
           <h2 className="text-xl font-extrabold text-slate-900 mb-1">Print Order Placed!</h2>
           <p className="text-xs text-slate-500 mb-5">
-            Your document is queued on the counter printer. Show your token for instant pickup.
+            {orderResult.paymentMode === 'ONLINE'
+              ? 'Your payment is confirmed. The shop has received your request and will update its status.'
+              : 'The shop has received your request. Staff will review it and update its status. Pay at the counter when you collect your prints.'}
           </p>
 
           {/* Large Monospace Token Box with Copy */}
@@ -927,7 +898,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
             </div>
             <div className="text-[11px] text-slate-400 mt-2.5 flex items-center justify-center gap-1">
               <ClockIcon size={13} />
-              Estimated Print Time: ~1 to 2 minutes
+              Keep this order number for reference
             </div>
           </div>
 
@@ -938,10 +909,10 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
             </div>
             <div className="space-y-2.5">
               {[
-                { label: 'Order Received & Validated', status: 'done' },
-                { label: 'Files Dispatched to Local Spooler', status: 'done' },
-                { label: 'High-Speed Laser Printing', status: 'active' },
-                { label: 'Collation & Counter Pickup', status: 'pending' },
+                { label: 'Order received', status: 'done' },
+                { label: 'Shop review', status: 'active' },
+                { label: 'Printing', status: 'pending' },
+                { label: 'Ready for pickup', status: 'pending' },
               ].map((step, idx) => (
                 <div key={idx} className="flex items-center gap-2.5 text-xs">
                   <span
@@ -983,15 +954,11 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
             </div>
             <div className="flex justify-between text-slate-600">
               <span>Payment Mode:</span>
-              <span className={`font-bold ${isOnline ? 'text-emerald-600' : 'text-indigo-600'}`}>
-                {isOnline ? 'Paid Online via UPI ✓' : 'Cash — Collect at Counter'}
-              </span>
+              <span className="font-bold text-indigo-600">{orderResult.paymentMode === 'ONLINE' ? 'Paid online' : 'Cash — collect at the counter'}</span>
             </div>
             <div className="pt-2 border-t border-slate-200 flex justify-between text-sm font-bold text-slate-900">
-              <span>{isOnline ? 'Amount Paid:' : 'Payable at Counter:'}</span>
-              <span className={isOnline ? 'text-emerald-600' : 'text-slate-900'}>
-                ₹{orderResult.totalAmount}
-              </span>
+              <span>{orderResult.paymentMode === 'ONLINE' ? 'Order total:' : 'Payable at counter:'}</span>
+              <span className="text-slate-900">₹{orderResult.totalAmount}</span>
             </div>
           </div>
 
@@ -1002,7 +969,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                 onClick={() => onOrderSubmitted(orderResult.orderId)}
                 className="w-full py-3 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-bold rounded-xl shadow-xs transition-all text-xs flex items-center justify-center gap-2 cursor-pointer"
               >
-                <span>📊 Track Live Spooling Status →</span>
+                <span>Check order status →</span>
               </button>
             )}
             <a
@@ -1524,7 +1491,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                 Sync WhatsApp Order
               </h2>
               <p className="text-[11px] text-slate-500">
-                Sent your files to this shop's WhatsApp bot? Enter your 10-digit number or 4-digit pickup token.
+                Already submitted a request? Open its tracking link to check the latest shop status.
               </p>
             </div>
 
@@ -2087,13 +2054,14 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
             </button>
           </div>
 
-          {/* Right: Dual Actions (Cash or Instant UPI) with Review Trigger */}
+          {/* Payment providers are not enabled until each shop connects its account. */}
           <div className="flex items-center gap-1.5 flex-1 justify-end min-w-[130px]">
             <button
               type="button"
               disabled={documents.length === 0 || isSubmitting}
               onClick={() => {
-                setTargetPaymentMethod('CASH');
+                setPaymentMethod('CASH_ON_COLLECTION');
+                setSubmitError(null);
                 setReviewModalOpen(true);
               }}
               className="min-h-[44px] px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 disabled:opacity-50 text-slate-800 font-bold rounded-xl text-xs transition-all flex flex-col items-center justify-center leading-tight cursor-pointer border border-slate-200"
@@ -2105,16 +2073,17 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
 
             <button
               type="button"
-              disabled={documents.length === 0 || isSubmitting}
+              disabled={documents.length === 0 || isSubmitting || !shop.onlinePaymentAvailable}
               onClick={() => {
-                setTargetPaymentMethod('ONLINE');
+                setPaymentMethod('ONLINE_RAZORPAY');
+                setSubmitError(null);
                 setReviewModalOpen(true);
               }}
-              className="min-h-[44px] px-3 py-1.5 bg-[#4D64E6] hover:bg-[#3B50D4] active:bg-[#2C3FA8] disabled:opacity-50 text-white font-bold rounded-xl text-xs shadow-md shadow-[#4D64E6]/25 transition-all flex flex-col items-center justify-center leading-tight cursor-pointer"
-              title="Pay immediately via UPI QR or Google Pay / PhonePe"
+              className={`min-h-[44px] px-2.5 py-1.5 rounded-xl text-xs transition-all flex flex-col items-center justify-center leading-tight border ${shop.onlinePaymentAvailable ? 'cursor-pointer bg-slate-100 border-slate-200 text-slate-800 hover:bg-slate-200' : 'cursor-not-allowed bg-slate-100 border-slate-200 text-slate-400'}`}
+              title={shop.onlinePaymentAvailable ? 'Pay securely with Razorpay' : 'Online payment is not enabled by this shop'}
             >
-              <span>⚡ UPI Pay</span>
-              <span className="text-[9px] font-medium text-indigo-100">Auto release</span>
+              <span>Online payment</span>
+              <span className="text-[9px] font-medium">{shop.onlinePaymentAvailable ? 'Razorpay' : 'unavailable'}</span>
             </button>
           </div>
         </div>
@@ -2144,6 +2113,34 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
               </button>
             </div>
 
+            <div className="space-y-3">
+              <div>
+                <label htmlFor="customer-name" className="block text-xs font-semibold text-slate-700 mb-1">Your name</label>
+                <input
+                  id="customer-name"
+                  autoComplete="name"
+                  value={customerName}
+                  onChange={(event) => setCustomerName(event.target.value)}
+                  maxLength={80}
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <div>
+                <label htmlFor="customer-phone" className="block text-xs font-semibold text-slate-700 mb-1">Mobile number</label>
+                <input
+                  id="customer-phone"
+                  type="tel"
+                  inputMode="tel"
+                  autoComplete="tel-national"
+                  value={customerPhone}
+                  onChange={(event) => setCustomerPhone(event.target.value)}
+                  maxLength={15}
+                  placeholder="10-digit mobile number"
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+            </div>
+
             <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/80 space-y-2.5 text-xs text-slate-700">
               <div className="flex justify-between">
                 <span className="text-slate-500">Print Shop:</span>
@@ -2167,7 +2164,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">Payment:</span>
-                <span className="font-bold text-indigo-700">{targetPaymentMethod === 'ONLINE' ? 'Instant UPI Payment' : 'Pay Cash at Counter'}</span>
+              <span className="font-bold text-indigo-700">{paymentMethod === 'ONLINE_RAZORPAY' ? 'Pay securely online' : 'Pay cash at the counter'}</span>
               </div>
               <div className="pt-2 border-t border-slate-200 flex justify-between text-sm font-black text-slate-900">
                 <span>Total Amount:</span>
@@ -2175,22 +2172,20 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
               </div>
             </div>
 
+            {submitError && (
+              <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                {submitError}
+              </p>
+            )}
+
             <div className="flex flex-col gap-2 pt-1">
               <button
                 type="button"
                 disabled={isSubmitting}
-                onClick={() => {
-                  setReviewModalOpen(false);
-                  if (targetPaymentMethod === 'ONLINE') {
-                    setUpiTimer(300);
-                    setPaymentModalOpen(true);
-                  } else {
-                    handlePlaceOrder('CASH');
-                  }
-                }}
+                onClick={handlePlaceOrder}
                 className="w-full min-h-[48px] bg-[#4D64E6] hover:bg-[#3B50D4] active:bg-[#2C3FA8] text-white font-bold rounded-xl text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
-                {targetPaymentMethod === 'ONLINE' ? 'Proceed to UPI Pay →' : 'Confirm Cash Order →'}
+                {isSubmitting ? 'Processing…' : pendingOnlineOrder ? 'Retry online payment →' : paymentMethod === 'ONLINE_RAZORPAY' ? 'Continue to secure payment →' : 'Confirm cash order →'}
               </button>
               <button
                 type="button"
@@ -2200,165 +2195,6 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                 Change Options
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* 5. UPI PAYMENT MODAL (Instant QR & App Launch) */}
-      {paymentModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
-          <div className="w-full max-w-sm bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden text-center p-6 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div className="flex items-center gap-2">
-                <InkllyMark size={24} />
-                <span className="font-extrabold text-sm text-slate-900">Instant UPI Payment</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setPaymentModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 text-sm p-1 rounded-lg"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Total Amount Badge */}
-            <div className="bg-indigo-50/70 border border-indigo-100 rounded-2xl p-3">
-              <div className="text-[10px] text-indigo-600 uppercase tracking-widest font-bold">
-                Amount Payable
-              </div>
-              <div className="text-3xl font-black text-indigo-950 mt-0.5">
-                ₹{grandTotal.toFixed(2)}
-              </div>
-              <div className="text-[11px] text-indigo-600 font-medium mt-1">
-                {totalPagesCount} pages • {documents.length} document{documents.length > 1 ? 's' : ''}
-              </div>
-            </div>
-
-            {/* Dynamic QR Code Container */}
-            <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 shadow-inner flex flex-col items-center justify-center">
-              <div className="bg-white p-3 rounded-xl shadow-md relative">
-                <svg width="150" height="150" viewBox="0 0 160 160" fill="none">
-                  {/* Outer corner finders */}
-                  <rect x="10" y="10" width="40" height="40" rx="6" fill="#1E293B" />
-                  <rect x="18" y="18" width="24" height="24" rx="3" fill="#FFFFFF" />
-                  <rect x="24" y="24" width="12" height="12" rx="2" fill="#4F46E5" />
-
-                  <rect x="110" y="10" width="40" height="40" rx="6" fill="#1E293B" />
-                  <rect x="118" y="18" width="24" height="24" rx="3" fill="#FFFFFF" />
-                  <rect x="124" y="24" width="12" height="12" rx="2" fill="#4F46E5" />
-
-                  <rect x="10" y="110" width="40" height="40" rx="6" fill="#1E293B" />
-                  <rect x="18" y="118" width="24" height="24" rx="3" fill="#FFFFFF" />
-                  <rect x="24" y="124" width="12" height="12" rx="2" fill="#4F46E5" />
-
-                  {/* QR Matrix Dots */}
-                  <rect x="60" y="15" width="8" height="8" rx="1.5" fill="#1E293B" />
-                  <rect x="75" y="15" width="8" height="8" rx="1.5" fill="#1E293B" />
-                  <rect x="90" y="15" width="8" height="8" rx="1.5" fill="#1E293B" />
-
-                  <rect x="60" y="30" width="8" height="8" rx="1.5" fill="#1E293B" />
-                  <rect x="75" y="30" width="8" height="8" rx="1.5" fill="#1E293B" />
-                  <rect x="90" y="30" width="8" height="8" rx="1.5" fill="#1E293B" />
-
-                  <rect x="15" y="60" width="8" height="8" rx="1.5" fill="#1E293B" />
-                  <rect x="30" y="60" width="8" height="8" rx="1.5" fill="#1E293B" />
-                  <rect x="15" y="75" width="8" height="8" rx="1.5" fill="#1E293B" />
-                  <rect x="30" y="75" width="8" height="8" rx="1.5" fill="#1E293B" />
-
-                  <rect x="120" y="60" width="8" height="8" rx="1.5" fill="#1E293B" />
-                  <rect x="135" y="60" width="8" height="8" rx="1.5" fill="#1E293B" />
-                  <rect x="120" y="75" width="8" height="8" rx="1.5" fill="#1E293B" />
-                  <rect x="135" y="75" width="8" height="8" rx="1.5" fill="#1E293B" />
-
-                  <rect x="60" y="120" width="8" height="8" rx="1.5" fill="#1E293B" />
-                  <rect x="75" y="120" width="8" height="8" rx="1.5" fill="#1E293B" />
-                  <rect x="90" y="120" width="8" height="8" rx="1.5" fill="#1E293B" />
-
-                  <rect x="60" y="135" width="8" height="8" rx="1.5" fill="#1E293B" />
-                  <rect x="75" y="135" width="8" height="8" rx="1.5" fill="#1E293B" />
-                  <rect x="90" y="135" width="8" height="8" rx="1.5" fill="#1E293B" />
-
-                  {/* Center Badge */}
-                  <rect x="62" y="62" width="36" height="36" rx="8" fill="#4F46E5" />
-                  <text x="80" y="85" textAnchor="middle" fill="#FFFFFF" fontSize="13" fontWeight="bold" fontFamily="sans-serif">
-                    ₹
-                  </text>
-                </svg>
-              </div>
-
-              {/* Countdown Timer */}
-              <div className="flex items-center gap-1.5 text-xs text-slate-300 mt-2.5">
-                <ClockIcon size={13} />
-                <span>Expires in:</span>
-                <span className="font-mono font-bold text-emerald-400">
-                  {Math.floor(upiTimer / 60)}:{(upiTimer % 60).toString().padStart(2, '0')}
-                </span>
-              </div>
-            </div>
-
-            {/* UPI ID with One-Click Copy */}
-            <div className="flex items-center justify-between p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs">
-              <span className="text-slate-600 font-mono">inklly.campus1@icici</span>
-              <button
-                type="button"
-                onClick={() => {
-                  navigator.clipboard.writeText('inklly.campus1@icici');
-                  setUpiCopied(true);
-                  setTimeout(() => setUpiCopied(false), 2000);
-                }}
-                className="text-xs text-indigo-600 font-bold hover:underline"
-              >
-                {upiCopied ? 'Copied! ✓' : 'Copy'}
-              </button>
-            </div>
-
-            {/* Quick UPI App Icons */}
-            <div className="flex items-center justify-center gap-2 pt-1">
-              {['GPay', 'PhonePe', 'Paytm', 'BHIM'].map((app) => (
-                <span
-                  key={app}
-                  className="px-2 py-1 rounded-md bg-slate-100 border border-slate-200 text-[10px] font-bold text-slate-700"
-                >
-                  {app}
-                </span>
-              ))}
-            </div>
-
-            {/* Confirm Payment Button */}
-            <button
-              type="button"
-              disabled={isSubmitting || upiVerifying}
-              onClick={() => {
-                setUpiVerifying(true);
-                setTimeout(() => {
-                  setUpiVerifying(false);
-                  handlePlaceOrder('ONLINE');
-                }, 800);
-              }}
-              className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
-            >
-              {upiVerifying ? (
-                <span>Verifying UPI webhook...</span>
-              ) : (
-                <>
-                  <CheckIcon size={16} />
-                  <span>I Have Paid — Release Print Job</span>
-                </>
-              )}
-            </button>
-
-            {/* Fallback to Cash */}
-            <button
-              type="button"
-              onClick={() => {
-                setPaymentModalOpen(false);
-                handlePlaceOrder('CASH');
-              }}
-              className="text-xs text-slate-500 hover:text-slate-800 underline block mx-auto cursor-pointer"
-            >
-              Prefer paying cash at counter? Click here
-            </button>
           </div>
         </div>
       )}

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { PortalController } from '../controllers/portal-controller';
 import { DatabaseService, OrderRepository, PricingRepository, ShopRepository } from '@inklly/db';
+import { ShopPaymentCredentialsService } from '../services/shop-payment-credentials';
 
 export function createPortalRoutes(db: DatabaseService): Router {
   const router = Router();
@@ -8,7 +9,7 @@ export function createPortalRoutes(db: DatabaseService): Router {
   const pricingRepo = new PricingRepository(db);
   const orderRepo = new OrderRepository(db);
 
-  const controller = new PortalController(shopRepo, pricingRepo, orderRepo);
+  const controller = new PortalController(shopRepo, pricingRepo, orderRepo, new ShopPaymentCredentialsService(db));
 
   router.get('/shop/:shop_code', controller.getShopByCode);
   router.post('/upload', controller.uploadDocument);

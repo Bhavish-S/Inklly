@@ -181,6 +181,56 @@ export const api = {
     return res.json();
   },
 
+  async createAgentPairingCode() {
+    const res = await fetch(`${API_BASE}/merchant/agents/pairing-code`, {
+      method: 'POST', headers: getHeaders(), body: JSON.stringify({}),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not create agent pairing code');
+    return body as { pairingCode: string; expiresAt: string; shopId: string };
+  },
+
+  async getRazorpayCredentials() {
+    const res = await fetch(`${API_BASE}/merchant/settings/razorpay`, { headers: getHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not load Razorpay settings');
+    return { ...body, webhookUrl: body.shopId ? `${API_BASE}/payments/webhook/razorpay/${encodeURIComponent(body.shopId)}` : '' };
+  },
+
+  async saveRazorpayCredentials(credentials: { keyId: string; secret: string; webhookSecret: string }) {
+    const res = await fetch(`${API_BASE}/merchant/settings/razorpay`, {
+      method: 'PUT', headers: getHeaders(), body: JSON.stringify(credentials),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not save Razorpay settings');
+    return { ...body, webhookUrl: body.shopId ? `${API_BASE}/payments/webhook/razorpay/${encodeURIComponent(body.shopId)}` : '' };
+  },
+
+  async removeRazorpayCredentials() {
+    const res = await fetch(`${API_BASE}/merchant/settings/razorpay`, { method: 'DELETE', headers: getHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not remove Razorpay settings');
+    return body;
+  },
+
+  async createPaymentIntent(orderId: string) {
+    const res = await fetch(`${API_BASE}/payments/create-intent`, {
+      method: 'POST', headers: getHeaders(), body: JSON.stringify({ orderId }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not start online payment');
+    return body as { success: boolean; razorpayOrderId: string; keyId: string; amount: number; currency: string };
+  },
+
+  async verifyRazorpayPayment(payment: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) {
+    const res = await fetch(`${API_BASE}/payments/verify`, {
+      method: 'POST', headers: getHeaders(), body: JSON.stringify(payment),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Payment status is still being confirmed');
+    return body;
+  },
+
   async getShopSettings() {
     const res = await fetch(`${API_BASE}/merchant/settings`, { headers: getHeaders() });
     if (!res.ok) throw new Error('Failed to load shop settings');
@@ -227,23 +277,19 @@ export const api = {
 
   // Platform Owner Console
   async getPlatformOverview() {
-    const res = await fetch(`${API_BASE}/platform/overview`, {
-      headers: getHeaders({ 'x-user-role': 'PLATFORM_OWNER' }),
-    });
+    const res = await fetch(`${API_BASE}/platform/overview`, { headers: getHeaders() });
     return res.json();
   },
 
   async getPlatformMerchants() {
-    const res = await fetch(`${API_BASE}/platform/merchants`, {
-      headers: getHeaders({ 'x-user-role': 'PLATFORM_OWNER' }),
-    });
+    const res = await fetch(`${API_BASE}/platform/merchants`, { headers: getHeaders() });
     return res.json();
   },
 
   async updateMerchantStatus(orgId: string, updates: any) {
     const res = await fetch(`${API_BASE}/platform/merchants/${orgId}/status`, {
       method: 'PATCH',
-      headers: getHeaders({ 'x-user-role': 'PLATFORM_OWNER' }),
+      headers: getHeaders(),
       body: JSON.stringify(updates),
     });
     return res.json();
@@ -251,16 +297,12 @@ export const api = {
 
   async getPlatformLedger(domain?: string) {
     const url = domain ? `${API_BASE}/platform/ledger?domain=${domain}` : `${API_BASE}/platform/ledger`;
-    const res = await fetch(url, {
-      headers: getHeaders({ 'x-user-role': 'PLATFORM_OWNER' }),
-    });
+    const res = await fetch(url, { headers: getHeaders() });
     return res.json();
   },
 
   async getAuditLogs() {
-    const res = await fetch(`${API_BASE}/platform/audit-logs`, {
-      headers: getHeaders({ 'x-user-role': 'PLATFORM_OWNER' }),
-    });
+    const res = await fetch(`${API_BASE}/platform/audit-logs`, { headers: getHeaders() });
     return res.json();
   },
 

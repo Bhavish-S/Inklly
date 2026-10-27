@@ -45,7 +45,7 @@ export class AgentDaemon {
     });
 
     // Auto-enroll if not yet paired
-    if (!config.isPaired) {
+    if (!config.isPaired && config.pairingCode) {
       await this.enrollWithServer();
     }
 
@@ -69,10 +69,10 @@ export class AgentDaemon {
     console.log('[Inklly Agent] Daemon stopped cleanly.');
   }
 
-  public async enrollWithServer(shopId?: string, secretKey?: string): Promise<boolean> {
+  public async enrollWithServer(shopId?: string, _secretKey?: string): Promise<boolean> {
     const config = this.configManager.get();
     const targetShopId = shopId || config.shopId;
-    const targetSecretKey = secretKey || config.secretKey || 'agent-secret-pos';
+    if (!targetShopId || !config.pairingCode) return false;
 
     try {
       const res = await fetch(`${config.serverUrl}/agent/enroll`, {
@@ -80,7 +80,7 @@ export class AgentDaemon {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           shopId: targetShopId,
-          secretKey: targetSecretKey,
+          pairingCode: config.pairingCode,
           hostname: process.env.COMPUTERNAME || 'LOCAL-POS-TERMINAL',
           osPlatform: process.platform,
           osVersion: 'Windows 11 / macOS',
@@ -94,8 +94,11 @@ export class AgentDaemon {
           shopId: body.shopId,
           shopCode: body.shopCode,
           agentId: body.agentId,
+          secretKey: body.agentSecret,
+          pairingCode: undefined,
           isPaired: true,
         });
+        delete process.env.INKLLY_PAIRING_CODE;
         console.log(`[Inklly Agent] Successfully paired with shop ${body.shopCode} (${body.agentId})`);
         return true;
       }
@@ -107,12 +110,12 @@ export class AgentDaemon {
 
   public async sendHeartbeat(): Promise<void> {
     const config = this.configManager.get();
-    if (!config.agentId || !config.shopId) return;
+    if (!config.agentId || !config.shopId || !config.secretKey) return;
 
     try {
       await fetch(`${config.serverUrl}/agent/heartbeat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.agentHeaders(config),
         body: JSON.stringify({
           agentId: config.agentId,
           shopId: config.shopId,
@@ -129,10 +132,10 @@ export class AgentDaemon {
 
   public async pollServerCommands(): Promise<number> {
     const config = this.configManager.get();
-    if (!config.shopId) return 0;
+    if (!config.agentId || !config.secretKey) return 0;
 
     try {
-      const res = await fetch(`${config.serverUrl}/agent/poll-commands?shopId=${config.shopId}`);
+      const res = await fetch(`${config.serverUrl}/agent/poll-commands`, { headers: this.agentHeaders(config) });
       if (!res.ok) return 0;
 
       const tickets = (await res.json()) as PrintCommandTicket[];
@@ -146,6 +149,10 @@ export class AgentDaemon {
     } catch {
       return 0;
     }
+  }
+
+  private agentHeaders(config: AgentConfig): Record<string, string> {
+    return { 'Content-Type': 'application/json', 'X-Agent-Id': config.agentId || '', Authorization: `Bearer ${config.secretKey || ''}` };
   }
 
   public async processNextQueueItem(): Promise<SpoolerResult | null> {
@@ -167,7 +174,10 @@ export class AgentDaemon {
       correlationId: `corr-${item.jobId}`,
     };
 
-    const result = await SpoolerExecutor.executeTicket(ticket);
+    const config = this.configManager.get();
+    const result = await SpoolerExecutor.executeTicket(ticket, {
+      downloadHeaders: this.agentHeaders(config),
+    });
 
     // Update local queue status
     if (result.status === 'PRINT_CONFIRMED') {
@@ -188,7 +198,7 @@ export class AgentDaemon {
     try {
       await fetch(`${config.serverUrl}/agent/command-result`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.agentHeaders(config),
         body: JSON.stringify(result),
       });
     } catch (err: any) {
@@ -197,17 +207,34 @@ export class AgentDaemon {
   }
 
   private handleLocalRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    const allowedOrigins = new Set((process.env.INKLLY_PORTAL_ORIGINS || 'http://localhost:3000,http://127.0.0.1:3000,https://inklly.vercel.app')
+      .split(',').map((origin) => origin.trim()).filter(Boolean));
+    const origin = req.headers.origin;
+    if (origin && allowedOrigins.has(origin)) res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
 
     if (req.method === 'OPTIONS') {
+      if (!origin || !allowedOrigins.has(origin)) {
+        res.writeHead(403);
+        res.end();
+        return;
+      }
       res.writeHead(204);
       res.end();
       return;
     }
 
     const config = this.configManager.get();
+
+    // Browser-originated requests can inspect agent status, but can never submit print work
+    // or overwrite the paired shop credentials. Cloud-authenticated polling is the only
+    // supported path for commands.
+    if (req.method !== 'GET') {
+      res.writeHead(origin && !allowedOrigins.has(origin) ? 403 : 410, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Local agent endpoints are read-only. Use authenticated server pairing and dispatch.' }));
+      return;
+    }
 
     if ((req.url === '/status' || req.url === '/health') && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -216,92 +243,10 @@ export class AgentDaemon {
           status: req.url === '/health' ? 'OK' : 'RUNNING',
           agentStatus: 'RUNNING',
           version: '1.0.0',
-          agentId: config.agentId || 'NOT_ENROLLED',
-          shopId: config.shopId,
-          shopCode: config.shopCode,
           isPaired: config.isPaired,
-          localQueueDepth: this.queue.getQueueDepth(),
-          discoveredPrinters: this.printers,
-          printers: this.printers.map((p) => p.name),
-          serverUrl: config.serverUrl,
           uptimeSec: Math.floor(process.uptime()),
         })
       );
-      return;
-    }
-
-    if ((req.url === '/printers' || req.url === '/printers/detect') && req.method === 'GET') {
-      PrinterDiscoveryService.discoverPrinters().then((prns) => {
-        this.printers = prns;
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, printers: prns }));
-      });
-      return;
-    }
-
-    if ((req.url === '/jobs/spool' || req.url === '/jobs' || req.url === '/print') && req.method === 'POST') {
-      let bodyStr = '';
-      req.on('data', (chunk) => {
-        bodyStr += chunk;
-      });
-      req.on('end', async () => {
-        try {
-          const raw = JSON.parse(bodyStr || '{}');
-          const ticket: PrintCommandTicket = {
-            commandId: raw.commandId || `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-            jobId: raw.jobId || `job-${Date.now()}`,
-            attemptId: raw.attemptId || `att-${Date.now()}`,
-            shopId: raw.shopId || this.configManager.get().shopId,
-            printerId: raw.printerId || 'Canon LBP2900',
-            documentUrl: raw.documentUrl || '',
-            storageKey: raw.storageKey,
-            fileName: raw.fileName || 'Customer_Print_Job.pdf',
-            options: raw.options || { copies: 1, color: false, duplex: false },
-            expiresAt: new Date(Date.now() + 60000).toISOString(),
-            correlationId: raw.correlationId || `corr-${Date.now()}`,
-          };
-          this.queue.enqueue(ticket);
-          const result = await this.processNextQueueItem();
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: true, result }));
-        } catch (err: any) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: err.message }));
-        }
-      });
-      return;
-    }
-
-    if (req.url === '/setup' && req.method === 'POST') {
-      let bodyStr = '';
-      req.on('data', (chunk) => {
-        bodyStr += chunk;
-      });
-      req.on('end', () => {
-        try {
-          const setupData = JSON.parse(bodyStr);
-          this.configManager.update(setupData);
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: true, message: 'Agent configuration updated' }));
-        } catch (err: any) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: err.message }));
-        }
-      });
-      return;
-    }
-
-    if (req.url === '/queue' && req.method === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(this.queue.getRecent(20)));
-      return;
-    }
-
-    if (req.url === '/sync' && req.method === 'POST') {
-      this.pollServerCommands().then((cnt) => {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, newCommandsPolled: cnt }));
-      });
       return;
     }
 

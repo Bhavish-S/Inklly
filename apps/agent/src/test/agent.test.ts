@@ -67,6 +67,12 @@ describe('Inklly Desktop Edge Print Agent Test Suite', () => {
     assert.equal(recent[0].status, 'COMPLETED');
   });
 
+  it('Rejects remote agent endpoints over unencrypted HTTP', () => {
+    const configManager = new ConfigManager(path.join(os.tmpdir(), `test-agent-url-${Date.now()}.json`));
+    assert.throws(() => configManager.update({ serverUrl: 'http://example.com/api/v1' }), /must use HTTPS/i);
+    assert.equal(configManager.update({ serverUrl: 'http://127.0.0.1:4000/api/v1' }).serverUrl, 'http://127.0.0.1:4000/api/v1');
+  });
+
   it('Discovers local printer capabilities including duplex and color', async () => {
     const printers = await PrinterDiscoveryService.discoverPrinters();
     assert.ok(printers.length >= 2, 'Should discover at least 2 printers');
@@ -79,7 +85,7 @@ describe('Inklly Desktop Edge Print Agent Test Suite', () => {
     assert.ok(colorPrinter, 'Should find color multi-format printer');
   });
 
-  it('SpoolerExecutor returns PRINT_CONFIRMED on clean print submission', async () => {
+  it('SpoolerExecutor never claims success when the host has no real printing capability', async () => {
     const ticket: PrintCommandTicket = {
       commandId: 'cmd-test-2',
       jobId: 'job-2',
@@ -103,9 +109,9 @@ describe('Inklly Desktop Edge Print Agent Test Suite', () => {
     };
 
     const result = await SpoolerExecutor.executeTicket(ticket);
-    assert.equal(result.status, 'PRINT_CONFIRMED');
-    assert.ok(result.driverJobId);
-    assert.equal(result.pagesPrinted, 1);
+    assert.equal(result.status, 'FAILED');
+    assert.match(result.errorMessage || '', /no print was submitted/i);
+    assert.equal(result.driverJobId, undefined);
   });
 
   it('Enforces Safety Invariant: Hardware paper jam triggers OUTPUT_UNCERTAIN without auto-retry', async () => {
@@ -153,12 +159,11 @@ describe('Inklly Desktop Edge Print Agent Test Suite', () => {
       assert.equal(res.status, 200);
       const data = (await res.json()) as any;
       assert.equal(data.status, 'RUNNING');
-      assert.ok(Array.isArray(data.discoveredPrinters));
+      assert.equal(data.isPaired, false);
+      assert.equal('discoveredPrinters' in data, false, 'local diagnostics must not expose printer inventory cross-origin');
 
       const queueRes = await fetch('http://127.0.0.1:8799/queue');
-      assert.equal(queueRes.status, 200);
-      const queueItems = (await queueRes.json()) as any[];
-      assert.ok(Array.isArray(queueItems));
+      assert.equal(queueRes.status, 404, 'local diagnostics must not expose or mutate print queue contents');
     } finally {
       daemon.stop();
     }

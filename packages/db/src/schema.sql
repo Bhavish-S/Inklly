@@ -40,6 +40,15 @@ CREATE TABLE IF NOT EXISTS shops (
 CREATE INDEX IF NOT EXISTS idx_shops_shop_code ON shops(shop_code);
 CREATE INDEX IF NOT EXISTS idx_shops_org ON shops(organization_id);
 
+CREATE TABLE IF NOT EXISTS shop_payment_credentials (
+    shop_id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    key_id TEXT NOT NULL,
+    encrypted_secret TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     email TEXT NOT NULL UNIQUE,
@@ -256,6 +265,17 @@ CREATE TABLE IF NOT EXISTS agent_registrations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_shop ON agent_registrations(shop_id);
+
+CREATE TABLE IF NOT EXISTS agent_pairing_codes (
+    id TEXT PRIMARY KEY,
+    shop_id TEXT NOT NULL UNIQUE,
+    code_hash TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE,
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE
+);
 
 CREATE TABLE IF NOT EXISTS audit_events (
     id TEXT PRIMARY KEY,

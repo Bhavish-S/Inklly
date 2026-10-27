@@ -221,27 +221,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
         if (showToast) {
           setGlobalToast('✓ Inklly Agent is ONLINE and communicating on port 8765');
         }
-        try {
-          const prnRes = await fetch('http://127.0.0.1:8765/printers', { signal: AbortSignal.timeout(2000) });
-          if (prnRes.ok) {
-            const prnData = await prnRes.json();
-            if (prnData.printers && prnData.printers.length > 0) {
-              setDetectedPrinters(prnData.printers.map((p: any) => ({
-                name: p.name,
-                driver: p.driverName || 'Windows Print Driver',
-                port: p.portName || 'USB001',
-                status: p.status || 'Ready',
-                isDefault: p.isDefault || false,
-                isPhysical: true,
-                supportsColor: true,
-                supportsDuplex: true,
-                tray: 'Auto-Select (Tray 1)',
-              })));
-            }
-          }
-        } catch {
-          // ignore error
-        }
         return true;
       }
     } catch {
@@ -332,7 +311,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   ]);
   const [selectedDefaultPrinter, setSelectedDefaultPrinter] = useState<string>('Canon LBP2900');
   const [selectedPaperTray, setSelectedPaperTray] = useState<string>('Auto-Select');
-  const [agentPairingKey, setAgentPairingKey] = useState<string>('ink_live_sec_7349568649ab01');
   const [showAddPrinterModal, setShowAddPrinterModal] = useState<boolean>(false);
   const [newPrinterName, setNewPrinterName] = useState<string>('');
   const [newPrinterPort, setNewPrinterPort] = useState<string>('USB002');
@@ -509,7 +487,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   ]);
 
   // Business Setup: Printers
-  const [pairingKeyShown, setPairingKeyShown] = useState<boolean>(false);
   const [testPrintAlert, setTestPrintAlert] = useState<string | null>(null);
   const [selectedAgentPlatform, setSelectedAgentPlatform] = useState<string>('win-x64');
   const [agentLoopbackChecking, setAgentLoopbackChecking] = useState<boolean>(false);
@@ -619,6 +596,10 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   // Business Setup: Automation & Payment
   const [automationCurrency, setAutomationCurrency] = useState<string>('INR');
   const [razorpayTestMode, setRazorpayTestMode] = useState<boolean>(false);
+  const [razorpayKeyId, setRazorpayKeyId] = useState('');
+  const [razorpaySecret, setRazorpaySecret] = useState('');
+  const [razorpayWebhookSecret, setRazorpayWebhookSecret] = useState('');
+  const [razorpayCredentialStatus, setRazorpayCredentialStatus] = useState<any>({ configured: false });
   const [acceptOnlinePayments, setAcceptOnlinePayments] = useState<boolean>(true);
   const [allowManualPayment, setAllowManualPayment] = useState<boolean>(true);
   const [autoPrintMode, setAutoPrintMode] = useState<'all' | 'after_payment' | 'off'>('after_payment');
@@ -630,6 +611,44 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [receiptIncludeQr, setReceiptIncludeQr] = useState<boolean>(true);
   const [notifyOnOrderReceived, setNotifyOnOrderReceived] = useState<boolean>(true);
   const [notifyOnOrderCompleted, setNotifyOnOrderCompleted] = useState<boolean>(true);
+
+  useEffect(() => {
+    let active = true;
+    if (liveShop?.id && localStorage.getItem('inklly_token')) {
+      api.getRazorpayCredentials().then((status) => {
+        if (active) setRazorpayCredentialStatus(status);
+      }).catch(() => {
+        if (active) setRazorpayCredentialStatus({ configured: false });
+      });
+    }
+    return () => { active = false; };
+  }, [liveShop?.id]);
+
+  const saveRazorpayCredentials = async () => {
+    try {
+      const status = await api.saveRazorpayCredentials({ keyId: razorpayKeyId, secret: razorpaySecret, webhookSecret: razorpayWebhookSecret });
+      setRazorpayCredentialStatus(status);
+      setRazorpayKeyId('');
+      setRazorpaySecret('');
+      setRazorpayWebhookSecret('');
+      triggerSaveNotification('Razorpay credentials');
+    } catch (error: any) {
+      triggerSaveNotification(error.message || 'Failed to save Razorpay credentials');
+    }
+  };
+
+  const removeRazorpayCredentials = async () => {
+    try {
+      const status = await api.removeRazorpayCredentials();
+      setRazorpayCredentialStatus(status);
+      setRazorpayKeyId('');
+      setRazorpaySecret('');
+      setRazorpayWebhookSecret('');
+      triggerSaveNotification('Razorpay credentials removed');
+    } catch (error: any) {
+      triggerSaveNotification(error.message || 'Failed to remove Razorpay credentials');
+    }
+  };
 
   const triggerSaveNotification = (sectionName: string) => {
     setSaveSuccessToast(`${sectionName} saved successfully to Inklly Cloud.`);
@@ -928,50 +947,23 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     const order = ordersList.find((o) => o.id === orderId || o.rawId === orderId);
     const targetId = order?.rawId || orderId;
 
-    updateOrderInStorage(orderId, { tab: 'printing', status: 'Spooling to Canon LBP2900 (port 8765)...' });
+    updateOrderInStorage(orderId, { tab: 'printing', status: 'Queued for the shop print agent...' });
     setOrdersList((prev) =>
       prev.map((o) =>
         o.id === orderId || o.rawId === orderId
-          ? { ...o, tab: 'printing', status: 'Spooling to Canon LBP2900 (port 8765)...' }
+          ? { ...o, tab: 'printing', status: 'Queued for the shop print agent...' }
           : o
       )
     );
-    setOrderActionToast(`Dispatched job ticket for Order #${orderId} to local Windows Spooler (Canon LBP2900).`);
+    setOrderActionToast(`Order #${orderId} was sent to the shop print queue.`);
 
     // 1. Dispatch on cloud server
     try {
       await api.dispatchPrint(targetId);
     } catch (e) {
       console.warn('Server dispatch print warning:', e);
-    }
-
-    // 2. Dispatch directly to local hardware print agent daemon on loopback port 8765
-    try {
-      fetch('http://127.0.0.1:8765/jobs/spool', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jobId: `job-${targetId}`,
-          shopId: liveShop?.id || currentMerchant.id,
-          printerId: 'Canon LBP2900',
-          fileName: order?.document || 'Print_Document.pdf',
-          storageKey: order?.storageKey,
-          options: {
-            copies: order?.copies || 1,
-            color: order?.colorMode === 'Colour Print',
-            duplex: order?.duplex === 'Back-to-Back',
-          },
-        }),
-      })
-        .then((res) => res.json())
-        .then((data) => {
-          console.log('[Inklly Spooler Response]:', data);
-        })
-        .catch((err) => {
-          console.warn('[Inklly Spooler Warning]: Local agent offline or waiting', err);
-        });
-    } catch (err) {
-      console.warn('Loopback spooling error:', err);
+      setOrderActionToast(e instanceof Error ? e.message : 'Could not queue this order for printing.');
+      return;
     }
 
     setTimeout(() => {
@@ -1222,46 +1214,23 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     triggerSaveNotification(`✓ Test print dispatched to ${targetPrinter}! Paper feed confirmed.`);
   };
 
-  const handleDownloadAgentScript = () => {
+  const handleDownloadAgentScript = async () => {
+    try {
+    const { pairingCode, expiresAt, shopId } = await api.createAgentPairingCode();
     const isProd = typeof window !== 'undefined' && !['localhost', '127.0.0.1'].includes(window.location.hostname);
-    const serverUrl = (import.meta.env.VITE_API_BASE as string)?.replace(/\/api\/v1\/?$/, '') || (isProd ? 'https://inklly.onrender.com' : 'http://localhost:4000');
+    const serverUrl = ((import.meta.env.VITE_API_BASE as string) || (isProd ? 'https://inklly.onrender.com/api/v1' : 'http://localhost:4000/api/v1')).replace(/\/+$/, '');
     const batContent = `@echo off
 chcp 65001 >nul
-title Inklly Edge Print Agent v1.6.1 - Windows Counter Terminal
-cls
-echo ======================================================================
-echo           INKLLY EDGE PRINT AGENT - WINDOWS COUNTER TERMINAL
-echo ======================================================================
-echo.
-echo [1/4] Checking Windows Print Spooler Service...
-powershell -NoProfile -Command "Get-Service -Name Spooler | Select-Object Status, DisplayName"
-if %errorlevel% neq 0 (
-    echo [ERROR] Windows Print Spooler service not accessible.
-    pause
-    exit /b 1
+set "INKLLY_SERVER_URL=${serverUrl}"
+set "INKLLY_SHOP_ID=${shopId}"
+set "INKLLY_PAIRING_CODE=${pairingCode}"
+set "INKLLY_AGENT_PORT=8765"
+if not exist "InkllyAgent.exe" (
+  echo Place this script beside the InkllyAgent.exe application first.
+  pause
+  exit /b 1
 )
-
-echo.
-echo [2/4] Detecting connected printers...
-powershell -NoProfile -Command "Get-Printer | Select-Object Name, DriverName, PortName, PrinterStatus | Format-Table -AutoSize"
-
-echo.
-echo [3/4] Pairing with Inklly Shop: ${currentMerchant.name} (${currentMerchant.shopCode})...
-set INKLLY_SERVER=${serverUrl}
-set INKLLY_SHOP_CODE=${currentMerchant.shopCode}
-set INKLLY_SHOP_ID=${currentMerchant.id}
-set INKLLY_PAIRING_KEY=${agentPairingKey}
-set INKLLY_PORT=8765
-echo Pairing confirmed for ${selectedDefaultPrinter} and connected Windows spoolers.
-echo.
-echo [4/4] Inklly Local Spooler Active on http://127.0.0.1:8765
-echo Platform Resiliency Mode: Active
-echo Offline SQLite Queue: Enabled (agent_queue.db)
-echo Hardware Safety Invariant: OUTPUT_UNCERTAIN on Jam
-echo.
-echo Ready to accept incoming print streams. Keep this terminal open.
-echo ======================================================================
-pause
+start "Inklly Agent" "InkllyAgent.exe"
 `;
     const blob = new Blob([batContent], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -1272,14 +1241,10 @@ pause
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    triggerSaveNotification('✓ Inklly Agent Setup batch script downloaded! Run it on your print PC.');
-  };
-
-  const handleRegenerateCredentials = () => {
-    const newKey = 'ink_live_sec_' + Math.random().toString(16).substring(2, 10) + Math.random().toString(16).substring(2, 10);
-    setAgentPairingKey(newKey);
-    navigator.clipboard?.writeText(newKey);
-    triggerSaveNotification('✓ Agent pairing key regenerated and copied to clipboard!');
+    triggerSaveNotification(`One-time setup script downloaded. Pairing code expires ${new Date(expiresAt).toLocaleTimeString()}.`);
+    } catch (error) {
+      triggerSaveNotification(error instanceof Error ? error.message : 'Could not create pairing code.');
+    }
   };
 
   const handleToggleChecklist = (key: string) => {
@@ -5255,13 +5220,14 @@ pause
                         <div className="flex items-start gap-2.5">
                           <span className="text-emerald-500 font-bold mt-0.5">✓</span>
                           <div className="w-full">
-                            <div className="font-bold">2. Run Inklly-Agent-Setup.bat</div>
-                            <div className="text-[11px] text-gray-400 mb-2">Auto-configures autostart &amp; detects Canon/HP printers</div>
+                            <div className="font-bold">2. Download a one-time setup script</div>
+                            <div className="text-[11px] text-gray-400 mb-2">Generate it only when you are ready to pair the print computer.</div>
                             <div className="p-3 bg-white dark:bg-gray-800 border rounded-xl space-y-2">
-                              <div className="font-bold text-[11px]">Shop Pairing Code</div>
+                              <div className="font-bold text-[11px]">Agent pairing</div>
                               <p className="text-[10px] text-gray-400 leading-tight">
-                                Shop: <strong className="text-indigo-600">{currentMerchant.shopCode}</strong> · ID: {currentMerchant.id}
+                                The setup code expires after 15 minutes and can be used once. Keep the downloaded script private.
                               </p>
+                              <button type="button" onClick={handleDownloadAgentScript} className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-[11px] font-bold">Generate setup script</button>
                             </div>
                           </div>
                         </div>
@@ -5272,10 +5238,10 @@ pause
                           </span>
                           <div>
                             <div className={`font-bold ${agentOnline ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-500'}`}>
-                              {agentOnline ? '3. Connected to print computer!' : '3. Waiting for agent on port 8765'}
+                            {agentOnline ? '3. Agent is reachable on this computer' : '3. Waiting for agent on port 8765'}
                             </div>
                             <div className="text-[11px] text-gray-400">
-                              {agentOnline ? 'Live bidirectional spooling active' : 'Launch InkllyAgent.exe on this PC'}
+                              {agentOnline ? 'Local health check responded.' : 'Start the installed agent on the print computer.'}
                             </div>
                           </div>
                         </div>
@@ -6310,7 +6276,7 @@ pause
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs items-center">
                     <div>
                       <label className="block text-gray-700 dark:text-gray-300 font-bold mb-1">Customer payment currency</label>
-                      <select className="w-full px-3 py-2 border rounded-xl bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-700 font-bold">
+                      <select disabled className="w-full px-3 py-2 border rounded-xl bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-700 font-bold">
                         <option>INR — Indian Rupee</option>
                       </select>
                     </div>
@@ -6332,45 +6298,42 @@ pause
                     <div className="p-4 border rounded-2xl space-y-3">
                       <div className="flex justify-between items-center">
                         <span className="font-extrabold text-sm text-[#172031] dark:text-white">Razorpay</span>
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">not configured</span>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${razorpayCredentialStatus.configured ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
+                          {razorpayCredentialStatus.configured && razorpayCredentialStatus.webhookConfigured
+                            ? `checkout ready · ${razorpayCredentialStatus.keyIdPreview}`
+                            : razorpayCredentialStatus.configured ? 'webhook setup needed' : 'not configured'}
+                        </span>
                       </div>
                       <p className="text-[11px] text-gray-500 leading-relaxed">
-                        Receive customer payments in your Razorpay account with 0% Inklly commission. Disabling your own account may use the platform's Razorpay account instead.
+                        Connect this shop’s Razorpay account and webhook. Customer payments go directly to this shop’s account; Inklly does not fall back to a platform account.
                       </p>
-                      <button
-                        type="button"
-                        onClick={() => triggerSaveNotification('Opening Razorpay gateway configuration...')}
-                        className="px-4 py-2 bg-[#4F46E5] text-white rounded-xl text-xs font-bold"
-                      >
-                        Enable Razorpay
-                      </button>
+                      <div className="space-y-2">
+                        <label className="block text-[10px] font-bold text-gray-600 dark:text-gray-300">
+                          Razorpay Key ID
+                          <input value={razorpayKeyId} onChange={(event) => setRazorpayKeyId(event.target.value)} autoComplete="off" spellCheck={false} placeholder={razorpayCredentialStatus.keyIdPreview || 'rzp_test_…'} className="mt-1 w-full px-3 py-2 border rounded-xl bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-700 font-normal" />
+                        </label>
+                        <label className="block text-[10px] font-bold text-gray-600 dark:text-gray-300">
+                          Razorpay Key Secret
+                          <input type="password" value={razorpaySecret} onChange={(event) => setRazorpaySecret(event.target.value)} autoComplete="new-password" placeholder={razorpayCredentialStatus.configured ? 'Enter a new secret to rotate' : 'Paste your Key Secret'} className="mt-1 w-full px-3 py-2 border rounded-xl bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-700 font-normal" />
+                        </label>
+                        <label className="block text-[10px] font-bold text-gray-600 dark:text-gray-300">
+                          Razorpay Webhook Secret
+                          <input type="password" value={razorpayWebhookSecret} onChange={(event) => setRazorpayWebhookSecret(event.target.value)} autoComplete="new-password" placeholder={razorpayCredentialStatus.webhookConfigured ? 'Enter a new webhook secret to rotate' : 'Create a webhook secret in Razorpay'} className="mt-1 w-full px-3 py-2 border rounded-xl bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-700 font-normal" />
+                        </label>
+                        <div className="flex gap-2">
+                          <button type="button" disabled={!razorpayKeyId || !razorpaySecret || !razorpayWebhookSecret} onClick={saveRazorpayCredentials} className="px-4 py-2 bg-[#4F46E5] text-white rounded-xl text-xs font-bold disabled:opacity-50">
+                            Save credentials
+                          </button>
+                          {razorpayCredentialStatus.configured && <button type="button" onClick={removeRazorpayCredentials} className="px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-bold">Disconnect</button>}
+                        </div>
+                      </div>
                       <div className="space-y-1 text-[10px] text-gray-400">
-                        <p>Enable opens setup. Your own account must be verified and activated before use.</p>
-                        <p>Account actions save immediately. Select this gateway under Customer payment options and save page settings to use it for new orders.</p>
+                        <p>Both secrets are encrypted before storage and are never shown again. Create the webhook in Razorpay with <code>payment.captured</code> enabled.</p>
+                        {razorpayCredentialStatus.webhookUrl && <div className="flex items-center gap-2"><code className="break-all">{razorpayCredentialStatus.webhookUrl}</code><button type="button" onClick={() => navigator.clipboard?.writeText(razorpayCredentialStatus.webhookUrl)} className="shrink-0 underline">Copy URL</button></div>}
+                        <p>Checkout becomes available after credentials are saved and the webhook secret is set.</p>
                       </div>
                     </div>
 
-                    {/* Stripe */}
-                    <div className="p-4 border rounded-2xl space-y-3">
-                      <div className="flex justify-between items-center">
-                        <span className="font-extrabold text-sm text-[#172031] dark:text-white">Stripe</span>
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">not configured</span>
-                      </div>
-                      <p className="text-[11px] text-gray-500 leading-relaxed">
-                        Receive customer payments in your Stripe account. Manage your bank and payouts in Stripe.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => triggerSaveNotification('Opening Stripe gateway configuration...')}
-                        className="px-4 py-2 bg-[#4F46E5] text-white rounded-xl text-xs font-bold"
-                      >
-                        Set up Stripe
-                      </button>
-                      <div className="space-y-1 text-[10px] text-gray-400">
-                        <p>Open setup to connect your account. Your own account must be verified and activated before use.</p>
-                        <p>Account actions save immediately. Select this gateway under Customer payment options and save page settings to use it for new orders.</p>
-                      </div>
-                    </div>
                   </div>
                 </div>
 
@@ -6388,28 +6351,28 @@ pause
                         <option>Razorpay</option>
                       </select>
                       <span className="text-[10px] text-gray-400 block mt-1">
-                        Currency does not select a gateway automatically. Razorpay uses your enabled account or the platform account; Stripe requires your connected account.
+                        Razorpay is the planned provider. Credentials are stored per shop; no platform account fallback is used.
                       </span>
                     </div>
 
                     <div className="p-3.5 border-2 border-emerald-400 dark:border-emerald-700 rounded-2xl flex justify-between items-center bg-emerald-50/20 dark:bg-emerald-950/20">
                       <div>
-                        <div className="font-bold text-sm text-[#172031] dark:text-white">Accept online payments on customer portals</div>
-                        <div className="text-[10px] text-gray-500">Default is OFF. Turn this on to use the selected gateway on QR and WhatsApp portal orders. The selected gateway must be enabled and ready to collect payments.</div>
+                        <div className="font-bold text-sm text-[#172031] dark:text-white">Online checkout</div>
+                        <div className="text-[10px] text-gray-500">Not available yet. Saving Razorpay credentials does not turn on checkout or verify payments.</div>
                       </div>
-                      <input type="checkbox" defaultChecked className="toggle-checkbox w-4 h-4 text-emerald-600" />
+                      <input type="checkbox" disabled checked={false} readOnly aria-label="Online checkout unavailable" className="toggle-checkbox w-4 h-4 text-emerald-600" />
                     </div>
 
                     <div className="p-3.5 border-2 border-indigo-200 dark:border-indigo-800 rounded-2xl flex justify-between items-center bg-indigo-50/20 dark:bg-indigo-950/20">
                       <div>
-                        <div className="font-bold text-sm text-[#172031] dark:text-white">Allow confirmation with manual payment</div>
-                        <div className="text-[10px] text-gray-500">Default is ON. Customers can confirm their order and pay cash or offline directly to the shop. The order remains payment pending until the merchant approves it.</div>
+                        <div className="font-bold text-sm text-[#172031] dark:text-white">Cash on collection</div>
+                        <div className="text-[10px] text-gray-500">Available in the customer preview; staff record cash after collecting payment at the counter.</div>
                       </div>
-                      <input type="checkbox" defaultChecked className="toggle-checkbox w-4 h-4 text-[#4D64E6]" />
+                      <input type="checkbox" disabled checked readOnly aria-label="Cash on collection available" className="toggle-checkbox w-4 h-4 text-[#4D64E6]" />
                     </div>
 
-                    <div className="pt-2 text-xs font-bold text-gray-600 dark:text-gray-300 cursor-pointer">
-                      ▶ Razorpay checkout branding (optional)
+                    <div className="pt-2 text-xs text-gray-500 dark:text-gray-400">
+                      Checkout branding options will be available after payment integration is complete.
                     </div>
                   </div>
                 </div>

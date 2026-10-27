@@ -11,6 +11,7 @@ const execFileAsync = promisify(execFile);
 export interface SpoolerExecutionOptions {
   simulateFailure?: 'TIMEOUT' | 'PAPER_JAM_UNCERTAIN' | 'SPOOLER_CRASH';
   targetPrinterOverride?: string;
+  downloadHeaders?: Record<string, string>;
 }
 
 export class SpoolerExecutor {
@@ -54,7 +55,7 @@ export class SpoolerExecutor {
     // 2. Physical Hardware Spooling (if on Windows and not in pure unit test mock mode)
     if (process.platform === 'win32' && process.env.NODE_ENV !== 'test') {
       try {
-        const result = await this.spoolToWindowsPrinter(ticket, options?.targetPrinterOverride);
+        const result = await this.spoolToWindowsPrinter(ticket, options?.targetPrinterOverride, options?.downloadHeaders);
         if (result) return result;
       } catch (err: any) {
         console.error('[SpoolerExecutor] Windows physical spool error:', err);
@@ -68,23 +69,23 @@ export class SpoolerExecutor {
       }
     }
 
-    // 3. Fallback / Test Simulation Pathway
-    const simulatedDriverJobId = Math.floor(100 + Math.random() * 900);
-    const pages = ticket.options?.copies || 1;
-
+    // Never report success unless a real printer spooler accepted the document.
+    // A missing platform driver or unsupported OS must not create billable output.
     return {
       attemptId: ticket.attemptId,
       jobId: ticket.jobId,
-      status: 'PRINT_CONFIRMED',
-      driverJobId: simulatedDriverJobId,
-      pagesPrinted: pages,
+      status: 'FAILED',
+      errorMessage: process.platform === 'win32'
+        ? 'No supported print spooler executable is installed; no print was submitted.'
+        : 'Physical printing is supported only by the Windows desktop agent; no print was submitted.',
       timestamp,
     };
   }
 
   private static async spoolToWindowsPrinter(
     ticket: PrintCommandTicket,
-    printerOverride?: string
+    printerOverride?: string,
+    downloadHeaders?: Record<string, string>
   ): Promise<SpoolerResult | null> {
     if (process.env.NODE_ENV === 'test') {
       return null;
@@ -94,14 +95,10 @@ export class SpoolerExecutor {
       path.join(__dirname, '..', 'bin', 'SumatraPDF.exe'),
       path.join(process.cwd(), 'bin', 'SumatraPDF.exe'),
       path.join(process.cwd(), 'apps', 'agent', 'bin', 'SumatraPDF.exe'),
-      path.join('D:', 'Inkly', 'Source Code', 'apps', 'agent', 'bin', 'SumatraPDF.exe'),
     ];
 
     const sumatraExe = possibleBinPaths.find((p) => fs.existsSync(p));
-    if (!sumatraExe) {
-      console.warn('[SpoolerExecutor] SumatraPDF.exe not found in bin paths. Falling back to simulation.');
-      return null;
-    }
+    if (!sumatraExe) throw new Error('SumatraPDF.exe is not installed with the agent.');
 
     // Determine target printer name dynamically (supports Canon, HP, Epson, Brother, PDF, etc.)
     let targetPrinter = printerOverride || ticket.printerId;
@@ -130,8 +127,6 @@ export class SpoolerExecutor {
     const customKey = (ticket as any).storageKey as string | undefined;
     const candidatePaths = [
       customKey ? path.join(process.cwd(), customKey) : '',
-      customKey ? path.join('D:', 'Inkly', 'Source Code', 'apps', 'server', customKey) : '',
-      ticket.fileName && ticket.shopId ? path.join('D:', 'Inkly', 'Source Code', 'apps', 'server', 'uploads', ticket.shopId, ticket.fileName) : '',
     ].filter(Boolean);
 
     for (const cp of candidatePaths) {
@@ -148,7 +143,7 @@ export class SpoolerExecutor {
         const tempDir = path.join(process.cwd(), 'temp');
         if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
         const localPath = path.join(tempDir, `${ticket.jobId}-${ticket.fileName || 'job.pdf'}`);
-        const res = await fetch(ticket.documentUrl);
+        const res = await fetch(ticket.documentUrl, { headers: downloadHeaders });
         if (res.ok) {
           const buffer = Buffer.from(await res.arrayBuffer());
           fs.writeFileSync(localPath, buffer);
@@ -162,9 +157,13 @@ export class SpoolerExecutor {
     }
 
     if (!filePath || !fs.existsSync(filePath)) {
-      // Generate clean test/order receipt PDF
-      filePath = this.generateOrderPdf(ticket, targetPrinter);
-      isTempFile = true;
+      return {
+        attemptId: ticket.attemptId,
+        jobId: ticket.jobId,
+        status: 'FAILED',
+        errorMessage: 'The customer document is unavailable; no substitute document was printed.',
+        timestamp: new Date().toISOString(),
+      };
     }
 
     // SumatraPDF print settings: strictly print 1 page only during test/evaluation to conserve physical paper

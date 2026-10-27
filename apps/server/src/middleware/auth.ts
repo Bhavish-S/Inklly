@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
-import { UserRole, StaffPermission } from '@inklly/shared';
+import { UserRole } from '@inklly/shared';
+import { verifySessionToken } from './session-token';
 
 export interface AuthenticatedUser {
   userId: string;
@@ -20,45 +21,28 @@ declare global {
 
 /**
  * Multi-Tenant Authentication & Scoping Middleware
- * Supports standard Bearer session tokens and simulated development headers.
+ * Supports only server-signed Bearer session tokens. Identity and authorization
+ * claims from request headers are never trusted.
  */
 export function authenticate(req: Request, res: Response, next: NextFunction): void {
   const authHeader = req.headers.authorization;
-  const devShopHeader = req.headers['x-shop-id'] as string | undefined;
-  const devRoleHeader = req.headers['x-user-role'] as UserRole | undefined;
-
-  // Development / Staging fallback header parsing for robust testing
-  if (devRoleHeader) {
-    req.user = {
-      userId: (req.headers['x-user-id'] as string) || 'user-dev-1',
-      email: (req.headers['x-user-email'] as string) || 'dev@inklly.com',
-      role: devRoleHeader,
-      shopId: devShopHeader || 'shop-campus-1',
-      organizationId: 'org-campus-network',
-      permissions: ['*'],
-    };
-    return next();
-  }
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     // Public routes proceed without user
     return next();
   }
 
-  const token = authHeader.substring(7);
-
-  // Simple token decoder for session simulation
-  try {
-    const payload = JSON.parse(Buffer.from(token, 'base64').toString('utf-8'));
-    if (payload.exp && typeof payload.exp === 'number' && payload.exp < Math.floor(Date.now() / 1000)) {
-      res.status(401).json({ error: 'Token has expired' });
-      return;
-    }
-    req.user = payload;
-    next();
-  } catch {
-    res.status(401).json({ error: 'Invalid authentication token' });
+  const session = verifySessionToken(authHeader.substring(7));
+  if (session === 'expired') {
+    res.status(401).json({ error: 'Token has expired' });
+    return;
   }
+  if (!session) {
+    res.status(401).json({ error: 'Invalid authentication token' });
+    return;
+  }
+  req.user = session;
+  next();
 }
 
 export function requireRole(...allowedRoles: UserRole[]) {
@@ -82,12 +66,16 @@ export function enforceTenantIsolation(req: Request, res: Response, next: NextFu
     return next();
   }
 
+  if (!req.user.shopId) {
+    return res.status(403).json({ error: 'An active shop membership is required for this operation' });
+  }
+
   const requestedShopId =
     req.params.shopId ||
     req.body?.shopId ||
     (req.query.shopId as string) ||
     (req.headers['x-shop-id'] as string);
-  if (requestedShopId && req.user.shopId && requestedShopId !== req.user.shopId) {
+  if (requestedShopId && requestedShopId !== req.user.shopId) {
     return res.status(403).json({
       error: 'Tenant isolation violation: Cross-tenant access denied',
       requestedShopId,

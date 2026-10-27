@@ -125,7 +125,7 @@ export const MarketingView: React.FC<MarketingViewProps> = ({ onNavigate }) => {
             How Inklly Works in 4 Simple Steps
           </h2>
           <p style={{ color: '#667085', fontSize: '1rem' }}>
-            Fast, intuitive document intake from counter arrival to collected printout.
+              A shop QR page sends customer requests into the merchant review queue.
           </p>
         </div>
 
@@ -134,9 +134,9 @@ export const MarketingView: React.FC<MarketingViewProps> = ({ onNavigate }) => {
             <div style={{ width: '40px', height: '40px', borderRadius: '50%', backgroundColor: '#EEF2FF', color: '#4A69ED', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '1.125rem', marginBottom: '1rem' }}>
               1
             </div>
-            <h3 style={{ fontSize: '1.125rem', fontWeight: 700, marginBottom: '0.5rem' }}>Customer Scans Standee QR</h3>
+            <h3 style={{ fontSize: '1.125rem', fontWeight: 700, marginBottom: '0.5rem' }}>Customer Opens Shop QR Page</h3>
             <p style={{ color: '#667085', fontSize: '0.875rem', lineHeight: 1.5 }}>
-              Your dedicated branded QR standee launches the shop portal instantly on any smartphone without installing an app.
+              Customers open the shop page from its link or QR code in a mobile browser.
             </p>
           </div>
 
@@ -154,9 +154,9 @@ export const MarketingView: React.FC<MarketingViewProps> = ({ onNavigate }) => {
             <div style={{ width: '40px', height: '40px', borderRadius: '50%', backgroundColor: '#EEF2FF', color: '#4A69ED', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '1.125rem', marginBottom: '1rem' }}>
               3
             </div>
-            <h3 style={{ fontSize: '1.125rem', fontWeight: 700, marginBottom: '0.5rem' }}>Instant Quote & Payment</h3>
+            <h3 style={{ fontSize: '1.125rem', fontWeight: 700, marginBottom: '0.5rem' }}>Review Quote & Submit</h3>
             <p style={{ color: '#667085', fontSize: '0.875rem', lineHeight: 1.5 }}>
-              System computes exact price in Paise with copy/bulk discounts. Customer pays online or chooses cash on counter collection.
+              The portal calculates a quote from shop rates. Online payment verification is not active; cash on collection is the current preview path.
             </p>
           </div>
 
@@ -226,7 +226,7 @@ export const MarketingView: React.FC<MarketingViewProps> = ({ onNavigate }) => {
                     <QrCodeIcon size={80} />
                   </div>
                   <div style={{ fontWeight: 800, fontSize: '1.125rem' }}>Campus Print Express</div>
-                  <div style={{ color: '#98A2B3', fontSize: '0.8125rem', marginTop: '0.25rem' }}>Scan to Print Instantly • inklly.com/p/campus1</div>
+                  <div style={{ color: '#98A2B3', fontSize: '0.8125rem', marginTop: '0.25rem' }}>Open shop order page • inklly.com/p/campus1</div>
                 </div>
               </div>
             )}
@@ -234,19 +234,18 @@ export const MarketingView: React.FC<MarketingViewProps> = ({ onNavigate }) => {
             {activeFeatureTab === 'whatsapp' && (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '2rem', alignItems: 'center' }}>
                 <div>
-                  <span className="badge badge-success" style={{ marginBottom: '0.75rem' }}>WhatsApp Automation</span>
-                  <h3 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.75rem' }}>Automated WhatsApp Bot & Order Notifications</h3>
+                  <span className="badge badge-warning" style={{ marginBottom: '0.75rem' }}>Planned integration</span>
+                  <h3 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.75rem' }}>WhatsApp ordering is not active</h3>
                   <p style={{ color: '#667085', fontSize: '0.9375rem', lineHeight: 1.6, marginBottom: '1rem' }}>
-                    Free your staff from constantly monitoring WhatsApp chats. Inklly's bot rules automatically answer pricing queries, send upload links, and dispatch "Order Ready" notifications when prints are completed.
+                    The current preview accepts requests through the shop QR page. WhatsApp intake, replies, and status notifications are planned and are not available yet.
                   </p>
                   <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.875rem', color: '#344054' }}>
-                    <li>✓ Customizable response templates with variable placeholders</li>
-                    <li>✓ {"Your Order #{{order_number}} is Ready!"} collection alerts</li>
-                    <li>✓ Automated greeting with direct QR portal link</li>
+                    <li>WhatsApp Business connection is not configured.</li>
+                    <li>Automated order notifications are not active.</li>
                   </ul>
                 </div>
                 <div style={{ backgroundColor: '#F0F9FF', border: '1px solid #B9E6FE', borderRadius: '12px', padding: '1.5rem' }}>
-                  <div style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#026AA2', marginBottom: '0.75rem' }}>WhatsApp Template Editor Preview</div>
+                  <div style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#026AA2', marginBottom: '0.75rem' }}>Future integration preview</div>
                   <div style={{ backgroundColor: '#FFFFFF', padding: '1rem', borderRadius: '8px', border: '1px solid #D0D5DD', fontSize: '0.875rem', color: '#182230' }}>
                     {"Hello "}<span style={{ color: '#4A69ED' }}>{"{{customer_name}}"}</span>{"! Your print order "}<span style={{ color: '#4A69ED' }}>{"#{{order_number}}"}</span>{" has been printed and verified. Please collect it from Counter 1."}
                   </div>
@@ -285,11 +284,11 @@ export const MarketingView: React.FC<MarketingViewProps> = ({ onNavigate }) => {
                   <span className="badge badge-warning" style={{ marginBottom: '0.75rem' }}>Queue & Finance</span>
                   <h3 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.75rem' }}>7-Status Queue & Dual Financial Ledgers</h3>
                   <p style={{ color: '#667085', fontSize: '0.9375rem', lineHeight: 1.6, marginBottom: '1rem' }}>
-                    Manage incoming counter orders with complete clarity. Transition orders through `Awaiting Review`, `Ready for Print`, `Printing`, and `Ready for Collection`. Record counter cash and online UPI payments in an immutable ledger.
+                    Review orders and update their workflow in the merchant workspace. The current preview supports staff cash collection; online payment verification and a production audit ledger are not available.
                   </p>
                   <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.875rem', color: '#344054' }}>
-                    <li>✓ Instant "Collect Cash at Counter" verification</li>
-                    <li>✓ 1-Click "Dispatch Print" to connected desktop agent</li>
+                    <li>Cash collection can be recorded by shop staff.</li>
+                    <li>Print agent integration is still being secured and validated.</li>
                     <li>✓ Staff Role Presets: Order Handler, Print Operator, Manager</li>
                     <li>✓ Detailed daily revenue and order metrics</li>
                   </ul>
@@ -378,7 +377,7 @@ export const MarketingView: React.FC<MarketingViewProps> = ({ onNavigate }) => {
           {[
             {
               q: 'Do customers need to download an app or create an account?',
-              a: 'No! Customers simply open their smartphone camera (or Google Lens / Paytm) and scan your counter QR code standee. The ordering portal opens instantly in their mobile browser without any app installation or tedious sign-up.',
+              a: 'No. Customers open the shop link or scan its QR code in a mobile browser. The preview does not provide a physical standee.',
             },
             {
               q: 'Does Inklly work with my existing printers and computers?',

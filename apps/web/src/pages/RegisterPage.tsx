@@ -126,7 +126,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
                 <div className="w-5 h-5 rounded-full bg-[#EAFBF0] text-[#1F8A4C] flex items-center justify-center shrink-0 mt-0.5">
                   <CheckIcon size={12} />
                 </div>
-                <span><strong>0% Commission:</strong> UPI payments go directly into your own merchant bank account.</span>
+                <span><strong>Payment setup:</strong> Each shop can enter its own Razorpay credentials. Online checkout and payment verification are not active in this preview.</span>
               </div>
             </div>
           </div>
@@ -289,10 +289,11 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
                   <input
                     type={showPassword ? 'text' : 'password'}
                     required
-                    minLength={6}
+                    minLength={12}
+                    maxLength={1024}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Min 6 characters"
+                    placeholder="At least 12 characters"
                     className="w-full min-h-[44px] pr-12 pl-3.5 py-2.5 rounded-xl border border-[#E6E9F2] focus:border-[#4D64E6] focus:ring-2 focus:ring-[#4D64E6]/20 text-sm outline-hidden transition-all bg-white"
                   />
                   <button

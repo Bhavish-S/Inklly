@@ -8,12 +8,23 @@ export function createAgentRoutes(db: DatabaseService): Router {
   const shopRepo = new ShopRepository(db);
   const printerRepo = new PrinterRepository(db);
 
-  const controller = new AgentDispatchController(agentRepo, shopRepo, printerRepo);
+  const controller = new AgentDispatchController(agentRepo, shopRepo, printerRepo, db);
+
+  const authenticateAgent = (req: any, res: any, next: any) => {
+    const agentId = req.header('x-agent-id');
+    const authorization = req.header('authorization') || '';
+    const secret = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
+    const identity = agentRepo.authenticateAgent(agentId, secret);
+    if (!identity) return res.status(401).json({ error: 'Agent authentication required' });
+    req.agent = identity;
+    next();
+  };
 
   router.post('/enroll', controller.enroll);
-  router.post('/heartbeat', controller.heartbeat);
-  router.get('/poll-commands', controller.pollCommands);
-  router.post('/command-result', controller.reportCommandResult);
+  router.post('/heartbeat', authenticateAgent, controller.heartbeat);
+  router.get('/poll-commands', authenticateAgent, controller.pollCommands);
+  router.post('/command-result', authenticateAgent, controller.reportCommandResult);
+  router.get('/files/:fileId', authenticateAgent, controller.downloadPrintFile);
   router.get('/download', controller.downloadAgent);
   router.get('/driver-matrix', controller.getDriverMatrix);
   router.get('/diagnostics', controller.getDiagnostics);

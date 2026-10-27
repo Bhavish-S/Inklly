@@ -1,11 +1,7 @@
 import { Request, Response } from 'express';
-import * as crypto from 'node:crypto';
-import { ShopRepository, UserRepository, PricingRepository } from '@inklly/db';
+import { ShopRepository, UserRepository, PricingRepository, hashPassword, verifyPassword } from '@inklly/db';
 import { UserRole, ROLE_PRESETS } from '@inklly/shared';
-
-function hashPassword(password: string): string {
-  return crypto.createHash('sha256').update(password).digest('hex');
-}
+import { createSessionToken } from '../middleware/session-token';
 
 export class AuthController {
   constructor(
@@ -17,26 +13,27 @@ export class AuthController {
   public login = (req: Request, res: Response) => {
     const { email, password } = req.body;
 
-    if (!email || !password) {
+    if (typeof email !== 'string' || !email || email.length > 320 || typeof password !== 'string' || !password || password.length > 1024) {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
     const userWithHash = this.userRepo.getUserByEmail(email.toLowerCase().trim());
-    if (!userWithHash) {
+    if (!userWithHash || !userWithHash.isActive) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    const inputHash = hashPassword(password);
-    const cleanEmail = email.toLowerCase().trim();
-    const isValid =
-      userWithHash.passwordHash === inputHash ||
-      userWithHash.passwordHash === `hash_${password}` ||
-      userWithHash.passwordHash === `hash_${password.replace(/(\d+)/, '_$1')}` ||
-      (cleanEmail === 'admin@inklly.com' && password === 'admin123') ||
-      (cleanEmail === 'dev@inklly.com' && password === 'dev123');
+    const isTestMode = process.env.NODE_ENV === 'test' || process.env.npm_lifecycle_event === 'test';
+    const verified = verifyPassword(password, userWithHash.passwordHash);
+    const isValid = verified.valid ||
+      (isTestMode &&
+        (userWithHash.passwordHash === `hash_${password}` ||
+          userWithHash.passwordHash === `hash_${password.replace(/(\d+)/, '_$1')}`));
 
     if (!isValid) {
       return res.status(401).json({ error: 'Invalid email or password' });
+    }
+    if (verified.valid && verified.needsRehash) {
+      this.userRepo.setUserPasswordHash(userWithHash.id, hashPassword(password));
     }
 
     // Get primary membership
@@ -45,18 +42,14 @@ export class AuthController {
     const shop = primary?.shopId ? this.shopRepo.getShopById(primary.shopId) : null;
     const organization = primary?.organizationId ? this.shopRepo.getOrganizationById(primary.organizationId) : null;
 
-    const tokenPayload = {
+    const token = createSessionToken({
       userId: userWithHash.id,
       email: userWithHash.email,
       role: userWithHash.role,
       organizationId: primary?.organizationId,
       shopId: primary?.shopId,
       permissions: primary?.permissions || ['*'],
-      iat: Math.floor(Date.now() / 1000),
-      exp: Math.floor(Date.now() / 1000) + 86400 * 7, // 7 days
-    };
-
-    const token = Buffer.from(JSON.stringify(tokenPayload)).toString('base64');
+    });
 
     res.json({
       token,
@@ -111,8 +104,10 @@ export class AuthController {
     const effectiveShopName = shopName || businessName;
     const effectiveOwnerName = ownerName || fullName;
 
-    if (!effectiveShopName || !email || !password || !effectiveOwnerName) {
-      return res.status(400).json({ error: 'Missing required onboarding registration fields (Shop name, owner name, email, password)' });
+    if (typeof effectiveShopName !== 'string' || !effectiveShopName.trim() || typeof effectiveOwnerName !== 'string' || !effectiveOwnerName.trim() ||
+        typeof email !== 'string' || email.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
+        typeof password !== 'string' || password.length < 12 || password.length > 1024) {
+      return res.status(400).json({ error: 'Shop name, owner name, email, and a password of 12 to 1024 characters are required.' });
     }
 
     let cleanCode = (shopCode || effectiveShopName)
@@ -247,18 +242,14 @@ export class AuthController {
       isEnabled: true,
     });
 
-    const tokenPayload = {
+    const token = createSessionToken({
       userId,
       email: email.toLowerCase().trim(),
       role: 'MERCHANT_OWNER' as UserRole,
       organizationId: orgId,
       shopId,
       permissions: ['*'],
-      iat: Math.floor(Date.now() / 1000),
-      exp: Math.floor(Date.now() / 1000) + 86400 * 7,
-    };
-
-    const token = Buffer.from(JSON.stringify(tokenPayload)).toString('base64');
+    });
 
     res.status(201).json({
       success: true,

@@ -1,4 +1,5 @@
 import { DatabaseService } from '../database';
+import * as crypto from 'node:crypto';
 import {
   AgentHeartbeat,
   AgentRegistration,
@@ -45,7 +46,7 @@ export class AgentRepository {
       [
         reg.agentId,
         reg.shopId,
-        reg.secretKey, // In production this is the hash
+        crypto.createHash('sha256').update(reg.secretKey).digest('hex'),
         reg.hostname,
         reg.osPlatform,
         reg.osVersion,
@@ -57,6 +58,53 @@ export class AgentRepository {
     );
   }
 
+  public issuePairingCode(shopId: string, createdBy: string, pairingCode: string, expiresAt: string): void {
+    const now = new Date().toISOString();
+    const codeHash = crypto.createHash('sha256').update(pairingCode).digest('hex');
+    this.db.transaction(() => {
+      this.db.execute('DELETE FROM agent_pairing_codes WHERE shop_id = ?', [shopId]);
+      this.db.execute(
+        `INSERT INTO agent_pairing_codes (id, shop_id, code_hash, expires_at, created_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [crypto.randomUUID(), shopId, codeHash, expiresAt, createdBy, now]
+      );
+    });
+  }
+
+  public consumePairingCode(shopId: string, pairingCode: string): boolean {
+    const codeHash = crypto.createHash('sha256').update(pairingCode).digest('hex');
+    // A single conditional delete is the consume operation, so concurrent requests can
+    // never both enroll with the same one-time code.
+    const consumed = this.db.queryOne<any>(
+      `DELETE FROM agent_pairing_codes WHERE shop_id = ? AND code_hash = ? AND expires_at > ? RETURNING id`,
+      [shopId, codeHash, new Date().toISOString()]
+    );
+    return Boolean(consumed);
+  }
+
+  public authenticateAgent(agentId: string, secret: string): { agentId: string; shopId: string } | null {
+    if (!agentId || typeof secret !== 'string' || secret.length < 40 || secret.length > 100) return null;
+    const row = this.db.queryOne<any>(
+      `SELECT id, shop_id, secret_key_hash FROM agent_registrations WHERE id = ? AND is_active = 1`,
+      [agentId]
+    );
+    if (!row) return null;
+    const expected = Buffer.from(row.secret_key_hash, 'hex');
+    const supplied = crypto.createHash('sha256').update(secret).digest();
+    if (expected.length !== supplied.length || !crypto.timingSafeEqual(expected, supplied)) return null;
+    return { agentId: row.id, shopId: row.shop_id };
+  }
+
+  public revokeAgent(agentId: string, shopId: string): boolean {
+    const row = this.db.queryOne<any>(
+      `SELECT id FROM agent_registrations WHERE id = ? AND shop_id = ? AND is_active = 1`,
+      [agentId, shopId]
+    );
+    if (!row) return false;
+    this.db.execute(`UPDATE agent_registrations SET is_active = 0, updated_at = ? WHERE id = ?`, [new Date().toISOString(), agentId]);
+    return true;
+  }
+
   public getAgentByShop(shopId: string): AgentRegistration | null {
     const row = this.db.queryOne<any>(
       `SELECT * FROM agent_registrations WHERE shop_id = ? AND is_active = 1 ORDER BY created_at DESC LIMIT 1`,
@@ -66,7 +114,7 @@ export class AgentRepository {
     return {
       agentId: row.id,
       shopId: row.shop_id,
-      secretKey: row.secret_key_hash,
+      secretKey: '',
       hostname: row.hostname,
       osPlatform: row.os_platform,
       osVersion: row.os_version,
@@ -77,55 +125,54 @@ export class AgentRepository {
   public recordHeartbeat(hb: AgentHeartbeat): void {
     const now = new Date().toISOString();
     this.db.execute(
-      `UPDATE agent_registrations SET last_heartbeat = ?, updated_at = ? WHERE id = ?`,
-      [now, now, hb.agentId]
+      `UPDATE agent_registrations SET last_heartbeat = ?, updated_at = ? WHERE id = ? AND shop_id = ? AND is_active = 1`,
+      [now, now, hb.agentId, hb.shopId]
     );
   }
 
-  public getPendingPrintTickets(shopId: string): PrintCommandTicket[] {
-    // Finds orders that are QUEUED or PRINTING and have print_jobs in RECEIVED / DISPATCHED / SPOOLING
+  public getPendingPrintTickets(shopId: string, agentId: string): PrintCommandTicket[] {
+    // Only RECEIVED jobs can be claimed. The conditional update below arbitrates concurrent polls.
     const rows = this.db.query<any>(
-      `SELECT pj.id as job_id, pj.order_id, pj.order_file_id, pj.printer_id,
+      `SELECT pj.id as job_id, pj.order_id, pj.order_file_id, pj.printer_id, of.id as file_id,
               of.file_name, of.storage_key, of.print_options,
               p.id as target_printer_id
        FROM print_jobs pj
        JOIN orders o ON pj.order_id = o.id
        JOIN order_files of ON pj.order_file_id = of.id
        LEFT JOIN printers p ON pj.printer_id = p.id
-       WHERE o.shop_id = ? AND pj.status IN ('RECEIVED', 'DISPATCHED')
+       WHERE o.shop_id = ? AND pj.status = 'RECEIVED'
        ORDER BY pj.created_at ASC`,
       [shopId]
     );
 
-    return rows.map((r) => {
-      const attemptId = `att-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
-      const commandId = `cmd-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
+    return this.db.transaction(() => rows.flatMap((r): PrintCommandTicket[] => {
+      const claimed = this.db.queryOne<any>(
+        `UPDATE print_jobs SET status = 'DISPATCHED', updated_at = ? WHERE id = ? AND status = 'RECEIVED' RETURNING id`,
+        [new Date().toISOString(), r.job_id]
+      );
+      if (!claimed) return [];
+
+      const attemptId = `att-${crypto.randomUUID()}`;
+      const commandId = `cmd-${crypto.randomUUID()}`;
 
       // Insert print attempt
       this.db.execute(
-        `INSERT INTO print_attempts (id, print_job_id, printer_id, attempt_number, status, created_at, updated_at)
-         VALUES (?, ?, ?, 1, 'DISPATCHED_TO_AGENT', ?, ?)`,
+        `INSERT INTO print_attempts (id, print_job_id, printer_id, agent_id, attempt_number, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 1, 'DISPATCHED_TO_AGENT', ?, ?)`,
         [
           attemptId,
           r.job_id,
           r.target_printer_id || 'printer-hp-laserjet',
+          agentId,
           new Date().toISOString(),
           new Date().toISOString(),
         ]
       );
 
-      // Advance job to DISPATCHED
-      this.db.execute(
-        `UPDATE print_jobs SET status = 'DISPATCHED', updated_at = ? WHERE id = ?`,
-        [new Date().toISOString(), r.job_id]
-      );
-
       const cleanBase = (process.env.SERVER_BASE_URL || process.env.INKLLY_SERVER_URL || 'https://inklly.onrender.com').replace(/\/api\/v1\/?$/, '');
-      const docUrl = r.storage_key.startsWith('http')
-        ? r.storage_key
-        : `${cleanBase}/${r.storage_key.replace(/^\//, '')}`;
+      const docUrl = `${cleanBase}/api/v1/agent/files/${encodeURIComponent(r.file_id)}`;
 
-      return {
+      return [{
         commandId,
         jobId: r.job_id,
         attemptId,
@@ -137,12 +184,24 @@ export class AgentRepository {
         options: JSON.parse(r.print_options),
         expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
         correlationId: `corr-${r.order_id}`,
-      };
-    });
+      }];
+    }));
   }
 
-  public recordCommandResult(result: SpoolerResult): void {
+  public recordCommandResult(result: SpoolerResult, agentId: string, shopId: string): boolean {
     const now = new Date().toISOString();
+
+    if (!['SUBMITTED_TO_SPOOLER', 'PRINT_CONFIRMED', 'OUTPUT_UNCERTAIN', 'FAILED'].includes(result.status)) return false;
+    return this.db.transaction(() => {
+    const ownedAttempt = this.db.queryOne<any>(
+      `SELECT pa.status AS attempt_status
+       FROM print_attempts pa
+       JOIN print_jobs pj ON pj.id = pa.print_job_id
+       JOIN orders o ON o.id = pj.order_id
+       WHERE pa.id = ? AND pj.id = ? AND pa.agent_id = ? AND o.shop_id = ?`,
+      [result.attemptId, result.jobId, agentId, shopId]
+    );
+    if (!ownedAttempt) return false;
 
     // Map spooler result to PrintJobStatus
     let nextJobStatus: PrintJobStatus;
@@ -163,10 +222,15 @@ export class AgentRepository {
       nextAttemptStatus = 'FAILED';
     }
 
+    if (['SUCCESS', 'OUTPUT_UNCERTAIN', 'FAILED'].includes(ownedAttempt.attempt_status)) {
+      return ownedAttempt.attempt_status === nextAttemptStatus;
+    }
+    if (!['DISPATCHED_TO_AGENT', 'SPOOLING'].includes(ownedAttempt.attempt_status)) return false;
+
     // Update attempt
     this.db.execute(
-      `UPDATE print_attempts SET status = ?, error_details = ?, updated_at = ? WHERE id = ?`,
-      [nextAttemptStatus, result.errorMessage || null, now, result.attemptId]
+      `UPDATE print_attempts SET status = ?, error_details = ?, updated_at = ? WHERE id = ? AND agent_id = ?`,
+      [nextAttemptStatus, typeof result.errorMessage === 'string' ? result.errorMessage.slice(0, 1000) : null, now, result.attemptId, agentId]
     );
 
     // Update print job
@@ -176,7 +240,10 @@ export class AgentRepository {
     );
 
     // If all print jobs in the order are PRINT_CONFIRMED, move order to READY_FOR_COLLECTION
-    const jobRow = this.db.queryOne<any>(`SELECT order_id FROM print_jobs WHERE id = ?`, [result.jobId]);
+    const jobRow = this.db.queryOne<any>(
+      `SELECT pj.order_id FROM print_jobs pj JOIN orders o ON o.id = pj.order_id WHERE pj.id = ? AND o.shop_id = ?`,
+      [result.jobId, shopId]
+    );
     if (jobRow && nextJobStatus === 'PRINT_CONFIRMED') {
       const remainingIncomplete = this.db.queryOne<any>(
         `SELECT COUNT(*) as cnt FROM print_jobs WHERE order_id = ? AND status != 'PRINT_CONFIRMED'`,
@@ -189,6 +256,8 @@ export class AgentRepository {
         );
       }
     }
+    return true;
+    });
   }
 
   // Developer Keys
