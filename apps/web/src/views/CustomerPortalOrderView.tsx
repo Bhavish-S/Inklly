@@ -324,6 +324,32 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
     );
   };
 
+  const parsePageRangeCount = (rangeStr: string, maxPages: number): number => {
+    if (!rangeStr || rangeStr.trim().toLowerCase() === 'all') return Math.max(1, maxPages);
+    const parts = rangeStr.split(',').map((p) => p.trim());
+    const selected = new Set<number>();
+    for (const part of parts) {
+      if (part.includes('-')) {
+        const [s, e] = part.split('-').map((str) => parseInt(str.trim(), 10));
+        const start = Math.max(1, isNaN(s) ? 1 : s);
+        const end = Math.min(maxPages, isNaN(e) ? maxPages : e);
+        for (let i = start; i <= end; i++) selected.add(i);
+      } else {
+        const num = parseInt(part, 10);
+        if (!isNaN(num) && num >= 1 && num <= maxPages) selected.add(num);
+      }
+    }
+    return selected.size > 0 ? selected.size : Math.max(1, maxPages);
+  };
+
+  const updateActiveRotation = () => {
+    setDocuments((prev) =>
+      prev.map((doc, idx) =>
+        idx === activeDocIndex ? { ...doc, rotation: ((doc.rotation || 0) + 90) % 360 } : doc
+      )
+    );
+  };
+
   // Price Calculation in Rupees & integer minor units
   const calculateTotal = () => {
     let total = 0;
@@ -350,7 +376,8 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
       else if (doc.options.finishing === 'thermal') finishingCost = 60.0;
       else if (doc.options.finishing === 'lamination') finishingCost = 25.0;
 
-      total += (doc.pageCount * rate * doc.options.copies) + finishingCost;
+      const effectivePages = parsePageRangeCount(doc.options.pageRange || 'All', doc.pageCount);
+      total += (effectivePages * rate * (doc.options.copies || 1)) + finishingCost;
     });
     return total * globalCopies;
   };
@@ -473,7 +500,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
     }, 600);
   };
 
-  const totalPagesCount = documents.reduce((acc, d) => acc + d.pageCount * d.options.copies, 0) * globalCopies;
+  const totalPagesCount = documents.reduce((acc, d) => acc + parsePageRangeCount(d.options.pageRange || 'All', d.pageCount) * (d.options.copies || 1), 0) * globalCopies;
   const grandTotal = calculateTotal();
 
   // Open Document Editor
@@ -683,7 +710,15 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
           storageKey: d.storageKey || `uploads/${shop.id || 'shop-campus-1'}/${Date.now()}-${d.fileName}`,
           fileUrl: d.fileUrl || '',
           pageCount: d.pageCount,
-          options: d.options,
+          options: {
+            ...d.options,
+            rotation: d.rotation || 0,
+            filter: d.filter || 'natural',
+            brightness: d.brightness || 100,
+            contrast: d.contrast || 100,
+            cropBox: d.cropBox,
+            note: d.note || '',
+          },
           subtotalPaise: Math.round(d.pageCount * 150),
         })),
       });
@@ -1529,6 +1564,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                 pageCount={activeDoc.pageCount}
                 rotation={activeDoc.rotation}
                 options={activeDoc.options}
+                onRotate={updateActiveRotation}
                 onOpenEditor={openEditorForActiveDoc}
                 onPageCountDetected={(detected) => {
                   if (detected && detected !== activeDoc.pageCount) {
@@ -1553,6 +1589,110 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
 
               {showOptionsAccordion && (
                 <div className="p-4 space-y-3.5 bg-white text-xs">
+                  {/* Pages to Print (Page Range Selector) */}
+                  <div>
+                    <label className="block text-slate-700 font-bold mb-1.5 flex items-center justify-between">
+                      <span>Pages to Print</span>
+                      <span className="text-[10px] text-indigo-600 font-semibold">
+                        {parsePageRangeCount(activeDoc.options.pageRange || 'All', activeDoc.pageCount)} of {activeDoc.pageCount} pages selected
+                      </span>
+                    </label>
+                    <div className="grid grid-cols-2 gap-2 mb-2">
+                      <button
+                        type="button"
+                        onClick={() => updateActiveOptions({ pageRange: 'All' })}
+                        className={`p-2.5 rounded-xl border text-center font-bold text-xs transition-all ${
+                          (activeDoc.options.pageRange || 'All').toLowerCase() === 'all'
+                            ? 'border-indigo-600 bg-indigo-50 text-indigo-900 ring-2 ring-indigo-500/20'
+                            : 'border-slate-200 text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        All Pages (1-{activeDoc.pageCount})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if ((activeDoc.options.pageRange || 'All').toLowerCase() === 'all') {
+                            updateActiveOptions({ pageRange: `1-${Math.min(activeDoc.pageCount, 1)}` });
+                          }
+                        }}
+                        className={`p-2.5 rounded-xl border text-center font-bold text-xs transition-all ${
+                          (activeDoc.options.pageRange || 'All').toLowerCase() !== 'all'
+                            ? 'border-indigo-600 bg-indigo-50 text-indigo-900 ring-2 ring-indigo-500/20'
+                            : 'border-slate-200 text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        Custom Range
+                      </button>
+                    </div>
+                    {(activeDoc.options.pageRange || 'All').toLowerCase() !== 'all' && (
+                      <div className="space-y-1 mt-1.5 animate-fadeIn">
+                        <input
+                          type="text"
+                          value={activeDoc.options.pageRange === 'All' ? '' : activeDoc.options.pageRange}
+                          onChange={(e) => updateActiveOptions({ pageRange: e.target.value })}
+                          placeholder={`e.g. 1-${Math.min(activeDoc.pageCount, 2)}, ${activeDoc.pageCount}`}
+                          className="w-full p-2.5 rounded-xl border border-indigo-300 text-xs text-slate-900 font-mono focus:ring-2 focus:ring-indigo-500 outline-none"
+                        />
+                        <p className="text-[10px] text-slate-400">
+                          Type individual pages or ranges separated by commas (e.g. <code>1, 3-5</code>).
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Document Copies */}
+                  <div>
+                    <label className="block text-slate-700 font-bold mb-1.5 flex items-center justify-between">
+                      <span>Copies of this Document</span>
+                      <span className="text-[10px] text-slate-400 font-normal">Sets to print</span>
+                    </label>
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-2 bg-slate-100 rounded-xl p-1 border border-slate-200">
+                        <button
+                          type="button"
+                          onClick={() => updateActiveOptions({ copies: Math.max(1, (activeDoc.options.copies || 1) - 1) })}
+                          className="w-8 h-8 rounded-lg bg-white shadow-xs font-bold text-sm text-slate-700 hover:bg-slate-50 flex items-center justify-center cursor-pointer disabled:opacity-40"
+                          disabled={(activeDoc.options.copies || 1) <= 1}
+                        >
+                          -
+                        </button>
+                        <span className="w-8 text-center font-bold text-xs text-slate-900">
+                          {activeDoc.options.copies || 1}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => updateActiveOptions({ copies: (activeDoc.options.copies || 1) + 1 })}
+                          className="w-8 h-8 rounded-lg bg-white shadow-xs font-bold text-sm text-slate-700 hover:bg-slate-50 flex items-center justify-center cursor-pointer"
+                        >
+                          +
+                        </button>
+                      </div>
+                      <span className="text-xs text-slate-500 font-medium">
+                        {((activeDoc.options.copies || 1) > 1) ? `${activeDoc.options.copies} print sets` : '1 single set'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Special Instructions / Note for Shopkeeper */}
+                  <div>
+                    <label className="block text-slate-700 font-bold mb-1.5 flex items-center justify-between">
+                      <span>Special Instructions for Shopkeeper</span>
+                      <span className="text-[10px] text-slate-400 font-normal">Optional</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={activeDoc.note || ''}
+                      onChange={(e) => {
+                        const noteVal = e.target.value;
+                        setDocuments((prev) =>
+                          prev.map((d, i) => (i === activeDocIndex ? { ...d, note: noteVal } : d))
+                        );
+                      }}
+                      placeholder="e.g. Please staple top left corner, print on heavy paper..."
+                      className="w-full p-2.5 rounded-xl border border-slate-200 text-xs text-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none"
+                    />
+                  </div>
                   {/* Color Mode */}
                   <div>
                     <label className="block text-slate-700 font-bold mb-1.5 flex items-center justify-between">

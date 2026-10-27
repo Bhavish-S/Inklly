@@ -120,13 +120,19 @@ export class AgentRepository {
         [new Date().toISOString(), r.job_id]
       );
 
+      const cleanBase = (process.env.SERVER_BASE_URL || process.env.INKLLY_SERVER_URL || 'https://inklly.onrender.com').replace(/\/api\/v1\/?$/, '');
+      const docUrl = r.storage_key.startsWith('http')
+        ? r.storage_key
+        : `${cleanBase}/${r.storage_key.replace(/^\//, '')}`;
+
       return {
         commandId,
         jobId: r.job_id,
         attemptId,
         shopId,
         printerId: r.target_printer_id || 'printer-hp-laserjet',
-        documentUrl: `https://storage.inklly.com/${r.storage_key}`,
+        documentUrl: docUrl,
+        storageKey: r.storage_key,
         fileName: r.file_name,
         options: JSON.parse(r.print_options),
         expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),

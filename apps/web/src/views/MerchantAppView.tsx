@@ -381,7 +381,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
 
   // Dashboard state
   const [dashboardMetricToggle, setDashboardMetricToggle] = useState<'orders' | 'revenue'>('orders');
-  const [screenshotEmptyMode, setScreenshotEmptyMode] = useState<boolean>(true);
+  const [screenshotEmptyMode, setScreenshotEmptyMode] = useState<boolean>(false);
   const [selectedCurrency, setSelectedCurrency] = useState<string>('INR');
 
   // Orders queue state
@@ -825,26 +825,74 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [newEmpShift, setNewEmpShift] = useState<'Morning (8 AM - 2 PM)' | 'Evening (2 PM - 9 PM)' | 'Full Day'>('Morning (8 AM - 2 PM)');
   const [employeeList, setEmployeeList] = useState<Array<{ id: string; name: string; phone: string; role: string; shift: string; status: string }>>([]);
 
-  // Live Orders Data (Starts 100% fresh - populated in real-time from customer intake)
-  const [ordersList, setOrdersList] = useState<any[]>(() => {
+  // Live Orders Data (Populated in real-time from server API and customer intake)
+  const [ordersList, setOrdersList] = useState<any[]>([]);
+  const [isRefreshingOrders, setIsRefreshingOrders] = useState<boolean>(false);
+  const [lastOrderSyncTime, setLastOrderSyncTime] = useState<string>('Just now');
+
+  const mapServerOrderToUiOrder = (o: any) => {
+    const file = o.files?.[0];
+    const printOpts = file?.printOptions || {};
+
+    let tab: 'pending' | 'processing' | 'printing' | 'rejected' | 'print_failed' | 'done' = 'pending';
+    if (o.status === 'READY_FOR_PRINT') tab = 'processing';
+    else if (o.status === 'IN_PROGRESS' || o.status === 'SPOOLING') tab = 'printing';
+    else if (o.status === 'CANCELLED' || o.status === 'REJECTED') tab = 'rejected';
+    else if (o.status === 'FAILED' || o.status === 'OUTPUT_UNCERTAIN') tab = 'print_failed';
+    else if (o.status === 'COLLECTED' || o.status === 'READY_FOR_COLLECTION' || o.status === 'COMPLETED') tab = 'done';
+    else tab = 'pending';
+
+    const orderTime = o.createdAt
+      ? new Date(o.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : 'Just now';
+
+    return {
+      id: o.orderNumber || o.id,
+      rawId: o.id,
+      customer: o.customerName || 'Walk-in Customer',
+      phone: o.customerPhone || 'Counter QR',
+      document: file?.fileName || 'Customer_Document.pdf',
+      pages: file?.pageCount || 1,
+      copies: printOpts.copies || 1,
+      colorMode: printOpts.colorMode === 'color' ? 'Colour Print' : 'Black & White',
+      duplex: printOpts.duplexMode === 'duplex_auto' ? 'Back-to-Back' : 'Single Sided',
+      amount: `₹${((o.totalAmountPaise || 0) / 100).toFixed(2)}`,
+      time: orderTime,
+      tab,
+      status: o.status,
+      paymentStatus: o.paymentStatus,
+      paymentMode: o.paymentMethod === 'ONLINE_UPI' ? 'Online UPI' : 'Cash on Counter',
+      paymentMethod: o.paymentMethod,
+      storageKey: file?.storageKey,
+      fileUrl: file?.storageKey,
+      notes: o.notes,
+      rawOrder: o,
+    };
+  };
+
+  const fetchLiveOrdersFromApi = async () => {
     try {
-      const stored = localStorage.getItem('inklly_live_orders');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        const cleaned = parsed.filter((o: any) =>
-          !['0001', '0002', '0003', '0004', '0005', '0006', '0007', 'order-demo-001'].includes(o.id) &&
-          !['Ramesh Patel', 'Priya Sharma', 'Amit Kumar', 'Sneha Verma', 'Karan Singh', 'Arjun Das', 'Meera Nair'].includes(o.customer)
-        );
-        if (cleaned.length !== parsed.length) {
-          localStorage.setItem('inklly_live_orders', JSON.stringify(cleaned));
-        }
-        return cleaned;
+      setIsRefreshingOrders(true);
+      const serverOrders = await api.getOrders('ALL');
+      if (Array.isArray(serverOrders)) {
+        const mapped = serverOrders.map(mapServerOrderToUiOrder);
+        setOrdersList(mapped);
+        setLastOrderSyncTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
       }
-      return [];
-    } catch {
-      return [];
+    } catch (err) {
+      console.warn('[MerchantAppView] Could not fetch live orders from API:', err);
+    } finally {
+      setIsRefreshingOrders(false);
     }
-  });
+  };
+
+  useEffect(() => {
+    fetchLiveOrdersFromApi();
+    const interval = setInterval(() => {
+      fetchLiveOrdersFromApi();
+    }, 3000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Synchronize orders with Customer Portal via LocalStorage
   const updateOrderInStorage = (orderId: string, updates: any) => {
@@ -852,112 +900,76 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       const stored = JSON.parse(localStorage.getItem('inklly_live_orders') || '[]');
       const updated = stored.map((o: any) => (o.id === orderId || o.orderNumber === orderId ? { ...o, ...updates } : o));
       localStorage.setItem('inklly_live_orders', JSON.stringify(updated));
-      const single = localStorage.getItem(`inklly_order_${orderId}`);
-      if (single) {
-        localStorage.setItem(`inklly_order_${orderId}`, JSON.stringify({ ...JSON.parse(single), ...updates }));
-      }
     } catch (e) {
       console.warn('Sync storage error', e);
     }
   };
 
-  useEffect(() => {
-    const syncFromStorage = () => {
-      try {
-        const stored = localStorage.getItem('inklly_live_orders');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          const cleaned = parsed.filter((o: any) =>
-            !['0001', '0002', '0003', '0004', '0005', '0006', '0007', 'order-demo-001'].includes(o.id) &&
-            !['Ramesh Patel', 'Priya Sharma', 'Amit Kumar', 'Sneha Verma', 'Karan Singh', 'Arjun Das', 'Meera Nair'].includes(o.customer)
-          );
-          if (Array.isArray(cleaned)) {
-            setOrdersList((prev) => {
-              const existingIds = new Set(prev.map((o) => o.id));
-              const fresh = cleaned.filter((o: any) => !existingIds.has(o.id));
-              if (fresh.length > 0) {
-                // Automated printing workflow
-                if (autoPrintMode !== 'off') {
-                  fresh.forEach((freshOrder) => {
-                    setTimeout(() => {
-                      handleOneClickPrint(freshOrder.id);
-                      setGlobalToast(`🚀 Auto-Print: Order #${freshOrder.id} automatically dispatched to Canon LBP2900!`);
-                    }, 800);
-                  });
-                }
-                return [...fresh, ...prev];
-              }
-              return prev;
-            });
-          }
-        }
-      } catch (e) {
-        console.warn('Storage sync error', e);
-      }
-    };
-    syncFromStorage();
-    window.addEventListener('storage', syncFromStorage);
-    return () => window.removeEventListener('storage', syncFromStorage);
-  }, []);
-
   // Order Queue Handlers
-  const handleOneClickPrint = (orderId: string) => {
-    const order = ordersList.find((o) => o.id === orderId);
+  const handleOneClickPrint = async (orderId: string) => {
+    const order = ordersList.find((o) => o.id === orderId || o.rawId === orderId);
+    const targetId = order?.rawId || orderId;
+
     updateOrderInStorage(orderId, { tab: 'printing', status: 'Spooling to Canon LBP2900 (port 8765)...' });
     setOrdersList((prev) =>
       prev.map((o) =>
-        o.id === orderId
+        o.id === orderId || o.rawId === orderId
           ? { ...o, tab: 'printing', status: 'Spooling to Canon LBP2900 (port 8765)...' }
           : o
       )
     );
     setOrderActionToast(`Dispatched job ticket for Order #${orderId} to local Windows Spooler (Canon LBP2900).`);
 
-    // Dispatch directly to local hardware print agent daemon on loopback port 8765
-    fetch('http://127.0.0.1:8765/jobs/spool', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jobId: `job-${orderId}`,
-        shopId: currentMerchant.id,
-        printerId: 'Canon LBP2900',
-        fileName: order?.document || 'Print_Document.pdf',
-        options: {
-          copies: order?.copies || 1,
-          color: order?.colorMode === 'Colour',
-          duplex: order?.duplex?.includes('Duplex'),
-        },
-      }),
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        console.log('[Inklly Spooler Response]:', data);
+    // 1. Dispatch on cloud server
+    try {
+      await api.dispatchPrint(targetId);
+    } catch (e) {
+      console.warn('Server dispatch print warning:', e);
+    }
+
+    // 2. Dispatch directly to local hardware print agent daemon on loopback port 8765
+    try {
+      fetch('http://127.0.0.1:8765/jobs/spool', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jobId: `job-${targetId}`,
+          shopId: liveShop?.id || currentMerchant.id,
+          printerId: 'Canon LBP2900',
+          fileName: order?.document || 'Print_Document.pdf',
+          storageKey: order?.storageKey,
+          options: {
+            copies: order?.copies || 1,
+            color: order?.colorMode === 'Colour Print',
+            duplex: order?.duplex === 'Back-to-Back',
+          },
+        }),
       })
-      .catch((err) => {
-        console.warn('[Inklly Spooler Warning]: Local agent offline or waiting', err);
-      });
+        .then((res) => res.json())
+        .then((data) => {
+          console.log('[Inklly Spooler Response]:', data);
+        })
+        .catch((err) => {
+          console.warn('[Inklly Spooler Warning]: Local agent offline or waiting', err);
+        });
+    } catch (err) {
+      console.warn('Loopback spooling error:', err);
+    }
 
     setTimeout(() => {
-      updateOrderInStorage(orderId, { tab: 'done', status: 'Print Completed & Delivered to Tray' });
-      setOrdersList((prev) =>
-        prev.map((o) =>
-          o.id === orderId
-            ? { ...o, tab: 'done', status: 'Print Completed & Delivered to Tray' }
-            : o
-        )
-      );
-      setOrderActionToast(`Order #${orderId} physical print confirmed! Marked as Done.`);
-      setTimeout(() => setOrderActionToast(null), 3000);
-    }, 2800);
+      fetchLiveOrdersFromApi();
+    }, 1500);
   };
 
-  const handleRejectOrder = (orderId: string) => {
-    updateOrderInStorage(orderId, { tab: 'rejected', status: 'Rejected by Merchant' });
-    setOrdersList((prev) =>
-      prev.map((o) =>
-        o.id === orderId ? { ...o, tab: 'rejected', status: 'Rejected by Merchant' } : o
-      )
-    );
+  const handleRejectOrder = async (orderId: string) => {
+    const order = ordersList.find((o) => o.id === orderId || o.rawId === orderId);
+    const targetId = order?.rawId || orderId;
+    try {
+      await api.updateOrderStatus(targetId, 'REJECTED');
+    } catch (e) {
+      console.warn('Reject error:', e);
+    }
+    fetchLiveOrdersFromApi();
     setOrderActionToast(`Order #${orderId} has been rejected.`);
     setTimeout(() => setOrderActionToast(null), 3000);
   };
@@ -1929,7 +1941,7 @@ pause
                         <line x1="0" y1="75" x2="500" y2="75" stroke="#E2E8F0" strokeDasharray="3 3" />
                         <line x1="0" y1="98" x2="500" y2="98" stroke="#4E65F6" strokeWidth="2" />
 
-                        {screenshotEmptyMode ? (
+                        {ordersList.length === 0 ? (
                           <>
                             <line x1="15" y1="98" x2="485" y2="98" stroke="#4E65F6" strokeWidth="2" />
                             {[15, 93, 171, 250, 328, 406, 485].map((cx, i) => (
@@ -2090,7 +2102,7 @@ pause
                         <line x1="0" y1="75" x2="300" y2="75" stroke="#E2E8F0" strokeDasharray="3 3" />
                         <line x1="0" y1="98" x2="300" y2="98" stroke="#4E65F6" strokeWidth="2" />
 
-                        {screenshotEmptyMode ? (
+                        {ordersList.length === 0 ? (
                           <>
                             <line x1="15" y1="98" x2="285" y2="98" stroke="#4E65F6" strokeWidth="2" />
                             {[15, 60, 105, 150, 195, 240, 285].map((cx, i) => (
@@ -2161,7 +2173,7 @@ pause
                       </tr>
                     </thead>
                     <tbody>
-                      {screenshotEmptyMode ? (
+                      {ordersList.length === 0 ? (
                         <tr>
                           <td colSpan={4} className="py-12 text-center">
                             <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 mx-auto mb-3">
@@ -2243,7 +2255,18 @@ pause
                 </div>
               </div>
 
-              <div className="flex items-center gap-6 text-right">
+              <div className="flex items-center gap-4 sm:gap-6 text-right">
+                <button
+                  type="button"
+                  onClick={fetchLiveOrdersFromApi}
+                  disabled={isRefreshingOrders}
+                  className="px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition-all flex items-center gap-1.5 border border-indigo-200 cursor-pointer shadow-xs disabled:opacity-50"
+                  title="Force refresh order queue from server"
+                >
+                  <span className={isRefreshingOrders ? 'animate-spin' : ''}>🔄</span>
+                  <span>{isRefreshingOrders ? 'Syncing...' : 'Refresh'}</span>
+                  <span className="text-[10px] text-indigo-400 font-normal hidden sm:inline">({lastOrderSyncTime})</span>
+                </button>
                 <div>
                   <div className="text-lg font-extrabold text-[#172031] dark:text-white">
                     {screenshotEmptyMode ? 0 : activeFilteredOrders.length}
@@ -2385,8 +2408,8 @@ pause
               </div>
             </div>
 
-            {/* Table or Empty State matching Screenshot 2026-10-23 074435.png */}
-            {!screenshotEmptyMode && activeFilteredOrders.length > 0 ? (
+            {/* Table or Empty State */}
+            {activeFilteredOrders.length > 0 ? (
               <div className="bg-white dark:bg-[#1E293B] border border-[#E8EAF3] dark:border-gray-800 rounded-2xl overflow-hidden shadow-xs">
                 <table className="w-full text-xs text-left">
                   <thead className="bg-gray-50 dark:bg-gray-800/60 border-b border-gray-100 dark:border-gray-800 text-[10px] font-bold text-gray-400 uppercase tracking-wider">

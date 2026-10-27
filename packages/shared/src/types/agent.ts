@@ -27,6 +27,7 @@ export interface PrintCommandTicket {
   shopId: string;
   printerId: string;
   documentUrl: string;
+  storageKey?: string;
   fileName: string;
   options: PrintOptions;
   expiresAt: string;

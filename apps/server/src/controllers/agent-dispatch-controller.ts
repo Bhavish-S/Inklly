@@ -102,7 +102,14 @@ export class AgentDispatchController {
     const shop = this.shopRepo.getShopByCode(shopCode) || this.shopRepo.getShopById(shopCode);
     const shopId = shop ? shop.id : 'shop-campus-1';
     const pairingKey = `ink_live_sec_${Buffer.from(shopId).toString('hex').substring(0, 16)}`;
-    const downloadsDir = path.join(process.cwd(), 'downloads');
+    const possibleDirs = [
+      path.join(process.cwd(), 'apps', 'server', 'downloads'),
+      path.join(__dirname, '..', '..', 'downloads'),
+      path.join(__dirname, '..', 'downloads'),
+      path.join(process.cwd(), 'downloads'),
+    ];
+    const downloadsDir = possibleDirs.find((d) => fs.existsSync(d)) || path.join(process.cwd(), 'downloads');
+    const serverBaseUrl = (process.env.SERVER_BASE_URL || process.env.INKLLY_SERVER_URL || 'https://inklly.onrender.com').replace(/\/api\/v1\/?$/, '');
 
     if (format === 'bundle' || format === 'zip' || platform === 'win-x64-bundle') {
       const zipPath = path.join(downloadsDir, 'Inklly-Agent-win-x64-Setup.zip');
@@ -162,7 +169,7 @@ powershell -NoProfile -Command "Get-Printer | Select-Object Name, DriverName, Po
 
 echo.
 echo [3/4] Configuring Inklly Pairing Credentials for Shop: ${shopCode}...
-set INKLLY_SERVER=http://localhost:4000
+set INKLLY_SERVER=${serverBaseUrl}
 set INKLLY_SHOP_ID=${shopId}
 set INKLLY_SHOP_CODE=${shopCode}
 set INKLLY_SECRET_KEY=${pairingKey}

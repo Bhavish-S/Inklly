@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { PdfPageRenderer } from './PdfPageRenderer';
-import { FileTextIcon, CropIcon } from './icons';
+import { FileTextIcon, CropIcon, RotateCwIcon } from './icons';
 
 interface DocumentViewerProps {
   fileName: string;
@@ -9,6 +9,7 @@ interface DocumentViewerProps {
   rotation?: number;
   onPageCountDetected?: (pages: number) => void;
   onOpenEditor?: () => void;
+  onRotate?: () => void;
   options: {
     colorMode: 'bw' | 'color';
     duplexMode: 'simplex' | 'duplex_auto';
@@ -24,6 +25,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   rotation = 0,
   onPageCountDetected,
   onOpenEditor,
+  onRotate,
   options,
 }) => {
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -36,20 +38,33 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     <div className="relative bg-slate-950 rounded-2xl overflow-hidden min-h-[340px] flex flex-col items-center justify-between border border-slate-800 shadow-inner group">
       {/* Top Bar: File Details & Edit Shortcut */}
       <div className="w-full flex items-center justify-between px-3 py-2 bg-slate-900/90 border-b border-slate-800 backdrop-blur-sm z-20">
-        <div className="flex items-center gap-2 truncate max-w-[70%]">
+        <div className="flex items-center gap-2 truncate max-w-[50%]">
           <FileTextIcon size={14} className="text-[#A9B6FF] shrink-0" />
           <span className="text-xs font-bold text-slate-200 truncate">{fileName}</span>
         </div>
-        {onOpenEditor && (
-          <button
-            type="button"
-            onClick={onOpenEditor}
-            className="text-[11px] font-bold text-indigo-300 hover:text-white bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-400/30 px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 cursor-pointer"
-          >
-            <CropIcon size={12} />
-            <span>Enhance</span>
-          </button>
-        )}
+        <div className="flex items-center gap-1.5">
+          {onRotate && (
+            <button
+              type="button"
+              onClick={onRotate}
+              className="text-[11px] font-bold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 cursor-pointer"
+              title="Rotate document 90 degrees clockwise"
+            >
+              <RotateCwIcon size={12} />
+              <span>Rotate 90°</span>
+            </button>
+          )}
+          {onOpenEditor && (
+            <button
+              type="button"
+              onClick={onOpenEditor}
+              className="text-[11px] font-bold text-indigo-300 hover:text-white bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-400/30 px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 cursor-pointer"
+            >
+              <CropIcon size={12} />
+              <span>Edit / Crop</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Main Preview Container */}

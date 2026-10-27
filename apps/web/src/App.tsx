@@ -61,6 +61,49 @@ export const App: React.FC = () => {
     currentPath === '/admin' ||
     currentPath === '/developer';
 
+  // Normalize common typo redirects
+  useEffect(() => {
+    const lower = currentPath.toLowerCase().replace(/\/$/, '');
+    if (lower === '/merchat' || lower === '/merchants') {
+      navigate('/merchant');
+    } else if (lower === '/admins' || lower === '/platform-admin') {
+      navigate('/admin');
+    } else if (lower === '/dev' || lower === '/devs' || lower === '/developers') {
+      navigate('/developer');
+    }
+  }, [currentPath]);
+
+  const knownRoutes = [
+    '/',
+    '/print-shop-automation-software',
+    '/whatsapp-printing-software',
+    '/qr-code-printing-system',
+    '/kiosk-software',
+    '/franchise',
+    '/how-it-works',
+    '/pricing',
+    '/contact',
+    '/login',
+    '/register',
+    '/legal',
+    '/legal/privacy-policy',
+    '/legal/terms',
+    '/legal/refund-policy',
+    '/legal/delivery-policy',
+    '/customer',
+    '/track',
+    '/merchant',
+    '/dashboard',
+    '/platform',
+    '/admin',
+    '/developer',
+  ];
+
+  const isKnown =
+    knownRoutes.includes(currentPath) ||
+    currentPath.startsWith('/p/') ||
+    ['/merchat', '/merchants', '/admins', '/platform-admin', '/dev', '/devs', '/developers'].includes(currentPath.toLowerCase().replace(/\/$/, ''));
+
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#FBFCFE' }}>
       {/* Primary Sticky Website Navbar (Hidden in Standalone Workspace/Portal mode) */}
@@ -274,6 +317,39 @@ export const App: React.FC = () => {
               </div>
             </div>
           </ProtectedRoute>
+        )}
+
+        {/* 404 Fallback for Unmatched Routes */}
+        {!isKnown && (
+          <div className="min-h-[70vh] flex items-center justify-center p-6 text-center">
+            <div className="max-w-md w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-8 shadow-xl space-y-6">
+              <div className="w-16 h-16 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mx-auto text-2xl font-black">
+                404
+              </div>
+              <div className="space-y-2">
+                <h2 className="text-xl font-extrabold text-slate-900 dark:text-white">Page Not Found</h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  The page <code className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 font-mono text-[11px]">{currentPath}</code> does not exist or has been relocated.
+                </p>
+              </div>
+              <div className="pt-2 flex flex-col sm:flex-row gap-2">
+                <button
+                  type="button"
+                  onClick={() => navigate('/')}
+                  className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs transition-all shadow-md shadow-indigo-600/20 cursor-pointer"
+                >
+                  Return to Home
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigate('/merchant')}
+                  className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold rounded-xl text-xs transition-all cursor-pointer"
+                >
+                  Merchant Portal
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </main>
 

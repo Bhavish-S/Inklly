@@ -57,27 +57,6 @@ export function authenticate(req: Request, res: Response, next: NextFunction): v
     req.user = payload;
     next();
   } catch {
-    // If not base64 json, check for demo tokens
-    if (token === 'demo-merchant-token') {
-      req.user = {
-        userId: 'user-owner-1',
-        email: 'owner@campusprint.in',
-        role: 'MERCHANT_OWNER',
-        shopId: 'shop-campus-1',
-        organizationId: 'org-campus-network',
-        permissions: ['*'],
-      };
-      return next();
-    }
-    if (token === 'demo-admin-token') {
-      req.user = {
-        userId: 'user-admin-1',
-        email: 'admin@inklly.com',
-        role: 'PLATFORM_OWNER',
-        permissions: ['*'],
-      };
-      return next();
-    }
     res.status(401).json({ error: 'Invalid authentication token' });
   }
 }

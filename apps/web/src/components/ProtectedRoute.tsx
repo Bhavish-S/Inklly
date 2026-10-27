@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ShieldIcon, LockIcon } from './icons';
+import { api } from '../api/client';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -20,45 +21,75 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   const [isAuthorized, setIsAuthorized] = useState<boolean>(false);
 
   useEffect(() => {
-    try {
-      const token = localStorage.getItem('inklly_token');
-      const userJson = localStorage.getItem('inklly_user');
+    let isMounted = true;
 
-      if (!token || !userJson) {
-        setIsAuthorized(false);
-        setChecking(false);
-        return;
-      }
+    async function verifyAuth() {
+      try {
+        const token = localStorage.getItem('inklly_token');
+        if (!token) {
+          if (isMounted) {
+            setIsAuthorized(false);
+            setChecking(false);
+          }
+          return;
+        }
 
-      const user = JSON.parse(userJson);
-      if (!user || !user.role) {
-        setIsAuthorized(false);
-        setChecking(false);
-        return;
-      }
+        // Live verification with the backend
+        const res = await api.getMe();
+        if (!isMounted) return;
 
-      // PLATFORM_OWNER has global wildcard access
-      if (user.role === 'PLATFORM_OWNER' || user.role === 'PLATFORM_ADMIN') {
-        setIsAuthorized(true);
-        setChecking(false);
-        return;
-      }
-
-      // Check specific role requirements
-      if (allowedRoles && allowedRoles.length > 0) {
-        if (!allowedRoles.includes(user.role)) {
+        if (!res || !res.user) {
+          localStorage.removeItem('inklly_token');
+          localStorage.removeItem('inklly_user');
+          localStorage.removeItem('inklly_shop');
           setIsAuthorized(false);
           setChecking(false);
           return;
         }
-      }
 
-      setIsAuthorized(true);
-      setChecking(false);
-    } catch {
-      setIsAuthorized(false);
-      setChecking(false);
+        // Sync validated user and shop into localStorage
+        localStorage.setItem('inklly_user', JSON.stringify(res.user));
+        if (res.shop) {
+          localStorage.setItem('inklly_shop', JSON.stringify(res.shop));
+        }
+
+        const user = res.user;
+
+        // PLATFORM_OWNER has global wildcard access
+        if (user.role === 'PLATFORM_OWNER' || user.role === 'PLATFORM_ADMIN') {
+          setIsAuthorized(true);
+          setChecking(false);
+          return;
+        }
+
+        // Check specific role requirements
+        if (allowedRoles && allowedRoles.length > 0) {
+          if (!allowedRoles.includes(user.role)) {
+            setIsAuthorized(false);
+            setChecking(false);
+            return;
+          }
+        }
+
+        setIsAuthorized(true);
+        setChecking(false);
+      } catch {
+        if (isMounted) {
+          // Token is invalid, expired, or backend rejected it. Purge invalid session!
+          localStorage.removeItem('inklly_token');
+          localStorage.removeItem('inklly_user');
+          localStorage.removeItem('inklly_shop');
+          setIsAuthorized(false);
+          setChecking(false);
+        }
+      }
     }
+
+    verifyAuth();
+
+    return () => {
+      isMounted = false;
+    };
   }, [allowedRoles]);
 
   if (checking) {

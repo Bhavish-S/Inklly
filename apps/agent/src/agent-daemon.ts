@@ -254,6 +254,7 @@ export class AgentDaemon {
             shopId: raw.shopId || this.configManager.get().shopId,
             printerId: raw.printerId || 'Canon LBP2900',
             documentUrl: raw.documentUrl || '',
+            storageKey: raw.storageKey,
             fileName: raw.fileName || 'Customer_Print_Job.pdf',
             options: raw.options || { copies: 1, color: false, duplex: false },
             expiresAt: new Date(Date.now() + 60000).toISOString(),
