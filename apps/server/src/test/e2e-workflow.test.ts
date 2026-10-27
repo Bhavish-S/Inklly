@@ -4,13 +4,14 @@ import { createApp } from '../index';
 import { DatabaseService } from '@inklly/db';
 import * as http from 'node:http';
 
-describe('Inklly End-to-End Automated Printing & Multi-Plan Workflow Test Suite', () => {
+describe('Inklly End-to-End Automated Printing & Multi-Plan Workflow Test Suite', { concurrency: false }, () => {
   let server: http.Server;
   let baseUrl: string;
   let db: DatabaseService;
   let merchantToken: string;
   let adminToken: string;
   let createdOrderId: string;
+  let uploadedStorageKey: string;
 
   before(async () => {
     db = new DatabaseService(':memory:');
@@ -27,7 +28,7 @@ describe('Inklly End-to-End Automated Printing & Multi-Plan Workflow Test Suite'
     const loginRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'owner@campusprint.in', password: 'owner123' }),
+      body: JSON.stringify({ email: 'owner@campusprint.in', password: 'DemoOwnerPassword123!' }),
     });
     const loginData = await loginRes.json();
     merchantToken = loginData.token;
@@ -36,7 +37,7 @@ describe('Inklly End-to-End Automated Printing & Multi-Plan Workflow Test Suite'
     const adminLoginRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'admin@inklly.com', password: 'admin123' }),
+      body: JSON.stringify({ email: 'admin@inklly.com', password: 'DemoPlatformPassword123!' }),
     });
     const adminLoginData = await adminLoginRes.json();
     adminToken = adminLoginData.token;
@@ -82,6 +83,13 @@ describe('Inklly End-to-End Automated Printing & Multi-Plan Workflow Test Suite'
     const shop = await shopRes.json();
     assert.equal(shop.shopCode, 'campus1');
 
+    const uploadRes = await fetch(`${baseUrl}/api/v1/portal/upload`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopId: 'shop-campus-1', fileName: 'Annual_Project_Dissertation.pdf', fileData: Buffer.from('%PDF-1.4\n%%EOF').toString('base64'), pageCount: 20 }),
+    });
+    assert.equal(uploadRes.status, 201);
+    uploadedStorageKey = (await uploadRes.json() as any).storageKey;
+
     // 2b. Deterministic Quote calculation
     // 20 pages B&W simplex, 2 copies
     const quoteRes = await fetch(`${baseUrl}/api/v1/portal/quote`, {
@@ -119,7 +127,7 @@ describe('Inklly End-to-End Automated Printing & Multi-Plan Workflow Test Suite'
   // ─────────────────────────────────────────────────────────────
   // STEP 3: CUSTOMER SUBMITS PRINT ORDER (AUTOMATIC WORKFLOW TRIGGER)
   // ─────────────────────────────────────────────────────────────
-  it('Step 3: Customer submits order with Online UPI payment', async () => {
+  it('Step 3: Customer submits an uploaded print order for cash on collection', async () => {
     const submitRes = await fetch(`${baseUrl}/api/v1/portal/orders`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -135,6 +143,7 @@ describe('Inklly End-to-End Automated Printing & Multi-Plan Workflow Test Suite'
         files: [
           {
             fileName: 'Annual_Project_Dissertation.pdf',
+            storageKey: uploadedStorageKey,
             pageCount: 20,
             options: {
               colorMode: 'bw',
@@ -185,25 +194,29 @@ describe('Inklly End-to-End Automated Printing & Multi-Plan Workflow Test Suite'
   // STEP 5: EDGE PRINT AGENT QUEUE POLLING & LIFECYCLE
   // ─────────────────────────────────────────────────────────────
   it('Step 5: Edge Print Agent polls queue and updates order to READY_FOR_COLLECTION and COLLECTED', async () => {
-    // 5a. Agent polls pending tickets
-    const pollRes = await fetch(`${baseUrl}/api/v1/agent/poll-commands?shopId=shop-campus-1`);
+    // Pair a real agent and authenticate its queue poll.
+    const pairingRes = await fetch(`${baseUrl}/api/v1/merchant/agents/pairing-code`, { method: 'POST', headers: { Authorization: `Bearer ${merchantToken}` } });
+    assert.equal(pairingRes.status, 201);
+    const pairing = await pairingRes.json() as any;
+    const enrollRes = await fetch(`${baseUrl}/api/v1/agent/enroll`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shopId: 'shop-campus-1', pairingCode: pairing.pairingCode, hostname: 'E2E-AGENT' }) });
+    assert.equal(enrollRes.status, 201);
+    const agent = await enrollRes.json() as any;
+    const agentHeaders = { 'Content-Type': 'application/json', 'X-Agent-Id': agent.agentId, Authorization: `Bearer ${agent.agentSecret}` };
+
+    // 5a. Authenticated agent polls pending tickets
+    const pollRes = await fetch(`${baseUrl}/api/v1/agent/poll-commands`, { headers: agentHeaders });
     assert.equal(pollRes.status, 200);
+    const tickets = await pollRes.json() as any[];
+    const ticket = tickets.find((item) => item.correlationId === `corr-${createdOrderId}`);
+    assert.ok(ticket, 'Agent should receive the submitted order ticket');
+    const resultRes = await fetch(`${baseUrl}/api/v1/agent/command-result`, { method: 'POST', headers: agentHeaders, body: JSON.stringify({ jobId: ticket.jobId, attemptId: ticket.attemptId, status: 'PRINT_CONFIRMED', timestamp: new Date().toISOString() }) });
+    assert.equal(resultRes.status, 200);
 
-    // 5b. Update order status to READY_FOR_COLLECTION (Printed successfully)
-    const printReadyRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${createdOrderId}/status`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${merchantToken}`,
-      },
-      body: JSON.stringify({
-        status: 'READY_FOR_COLLECTION',
-      }),
-    });
-
-    assert.equal(printReadyRes.status, 200);
-    const printReadyBody = await printReadyRes.json();
-    assert.equal(printReadyBody.order.status, 'READY_FOR_COLLECTION');
+    // Successful agent confirmation moves the order to READY_FOR_COLLECTION.
+    const readyRes = await fetch(`${baseUrl}/api/v1/portal/orders/${createdOrderId}`);
+    assert.equal(readyRes.status, 200);
+    const readyOrder = await readyRes.json();
+    assert.equal(readyOrder.status, 'READY_FOR_COLLECTION');
 
     // 5c. Customer collects printed job: transition to COLLECTED
     const collectedRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${createdOrderId}/status`, {

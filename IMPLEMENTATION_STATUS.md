@@ -1,9 +1,13 @@
 # Inklly Implementation Status Ledger
 
-**Project Root:** `D:\Inkly\Source Code\`  
-**Authoritative Documentation:** `D:\Inklly\Inklly_Build_Kit\Inklly_Build_Package\`  
+**Project Root:** `/Users/bhavishs/Documents/Education/Projects Source_Code/Inkly/Source Code/`
+**Authoritative Documentation:** `../printproject1/PrintCatalyst_Master_Codex_Package/reference/`
 **Started:** 2026-10-25 (Asia/Kolkata)  
-**Current Phase:** Phase 10 — Verification & Parity Complete  
+**Current Phase:** Phase 10 — Verification in progress (not release-ready)
+
+> **Current evidence (2026-10-27):** Database, shared, server, and web production builds pass. The fresh server suite now reports 118 passing and 0 failing. The detailed output is in `/tmp/inklly-server-current4.log` for this local run. Historical phase checklists below describe intended/previously reported scope and are not proof of current production readiness.
+
+**Latest implemented work:** merchant file paths are no longer included in order responses. Merchant document access now goes through an authenticated, shop-scoped endpoint with private cache headers; the dashboard opens the returned file through an authenticated Blob request. The installer's download metadata fails closed until a verified installer artifact exists.
 
 ---
 

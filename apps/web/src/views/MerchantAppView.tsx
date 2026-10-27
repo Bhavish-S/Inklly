@@ -900,8 +900,8 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       paymentStatus: o.paymentStatus,
       paymentMode: o.paymentMethod === 'ONLINE_UPI' ? 'Online UPI' : 'Cash on Counter',
       paymentMethod: o.paymentMethod,
-      storageKey: file?.storageKey,
-      fileUrl: file?.storageKey,
+      storageKey: undefined,
+      fileUrl: file?.fileUrl,
       notes: o.notes,
       rawOrder: o,
     };

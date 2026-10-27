@@ -294,7 +294,7 @@ export function seedDatabase(db: DatabaseService, forceDemoSeed: boolean = false
         createdAt: now,
         updatedAt: now,
       },
-      '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9' // sha256 of admin123
+      hashPassword('DemoPlatformPassword123!')
     );
   }
 
@@ -311,7 +311,7 @@ export function seedDatabase(db: DatabaseService, forceDemoSeed: boolean = false
         createdAt: now,
         updatedAt: now,
       },
-      '87274af01876341455b32d805946f272871bb42effa6604dccf28bb027afa82b' // sha256 of dev123
+      hashPassword('DemoDeveloperPassword123!')
     );
   }
 
@@ -328,7 +328,7 @@ export function seedDatabase(db: DatabaseService, forceDemoSeed: boolean = false
         createdAt: now,
         updatedAt: now,
       },
-      'hash_owner_123'
+      hashPassword('DemoOwnerPassword123!')
     );
 
     userRepo.createMembership({
@@ -337,6 +337,19 @@ export function seedDatabase(db: DatabaseService, forceDemoSeed: boolean = false
       organizationId: orgId,
       shopId,
       role: 'MERCHANT_OWNER',
+      permissions: ['*'] as any,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  if (userRepo.getUserByEmail('dev@inklly.com') && !userRepo.getMembershipsByUser('user-dev-1').length) {
+    userRepo.createMembership({
+      id: 'mem-dev-1',
+      userId: 'user-dev-1',
+      organizationId: orgId,
+      shopId,
+      role: 'DEVELOPER',
       permissions: ['*'] as any,
       createdAt: now,
       updatedAt: now,
@@ -370,6 +383,7 @@ export function seedDatabase(db: DatabaseService, forceDemoSeed: boolean = false
       updatedAt: now,
     });
   }
+
 
   // 3. Printers
   const p1Id = 'printer-hp-laserjet';

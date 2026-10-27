@@ -103,11 +103,12 @@ export class AuthController {
 
     const effectiveShopName = shopName || businessName;
     const effectiveOwnerName = ownerName || fullName;
+    const normalizedEmail = typeof email === 'string' ? email.toLowerCase().trim() : '';
 
     if (typeof effectiveShopName !== 'string' || !effectiveShopName.trim() || typeof effectiveOwnerName !== 'string' || !effectiveOwnerName.trim() ||
-        typeof email !== 'string' || email.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
+        typeof email !== 'string' || normalizedEmail.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail) ||
         typeof password !== 'string' || password.length < 12 || password.length > 1024) {
-      return res.status(400).json({ error: 'Shop name, owner name, email, and a password of 12 to 1024 characters are required.' });
+      return res.status(400).json({ error: 'Missing required fields: shop name, owner name, valid email, and a password of 12 to 1024 characters.' });
     }
 
     let cleanCode = (shopCode || effectiveShopName)
@@ -128,7 +129,7 @@ export class AuthController {
     }
     cleanCode = candidateCode;
 
-    const existingUser = this.userRepo.getUserByEmail(email.toLowerCase().trim());
+    const existingUser = this.userRepo.getUserByEmail(normalizedEmail);
     if (existingUser) {
       return res.status(409).json({ error: 'An account with this email already exists' });
     }
@@ -142,7 +143,7 @@ export class AuthController {
     this.userRepo.createUser(
       {
         id: userId,
-        email: email.toLowerCase().trim(),
+        email: normalizedEmail,
         phone,
         fullName: effectiveOwnerName,
         role: 'MERCHANT_OWNER',
@@ -173,7 +174,7 @@ export class AuthController {
       name: effectiveShopName,
       tagline: 'Quality Document Printing & Copying',
       phone: phone || '+91 99999 99999',
-      email: email.toLowerCase().trim(),
+      email: normalizedEmail,
       address: address || 'Main Market Road',
       city: city || 'Pune',
       state: state || 'Maharashtra',
@@ -244,7 +245,7 @@ export class AuthController {
 
     const token = createSessionToken({
       userId,
-      email: email.toLowerCase().trim(),
+      email: normalizedEmail,
       role: 'MERCHANT_OWNER' as UserRole,
       organizationId: orgId,
       shopId,
@@ -256,7 +257,7 @@ export class AuthController {
       token,
       user: {
         id: userId,
-        email: email.toLowerCase().trim(),
+        email: normalizedEmail,
         fullName: effectiveOwnerName,
         role: 'MERCHANT_OWNER',
       },

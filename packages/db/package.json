@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc",
+    "build": "node scripts/embed-schema.mjs && tsc",
     "test": "node --test dist/test/*.test.js",
     "seed": "node dist/seed.js"
   },

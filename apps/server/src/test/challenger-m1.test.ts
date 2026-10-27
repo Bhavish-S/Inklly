@@ -4,7 +4,7 @@ import { createApp } from '../index';
 import { DatabaseService } from '@inklly/db';
 import * as http from 'node:http';
 
-describe('Milestone 1 Challenger Adversarial Stress Suite', () => {
+describe('Milestone 1 Challenger Adversarial Stress Suite', { concurrency: false }, () => {
   let server: http.Server;
   let baseUrl: string;
   let db: DatabaseService;
@@ -52,7 +52,20 @@ describe('Milestone 1 Challenger Adversarial Stress Suite', () => {
     tenant1Token = reg1Data.token;
     tenant1ShopId = reg1Data.shopId;
 
-    // Create an order belonging to Tenant 1
+    const uploadRes = await fetch(`${baseUrl}/api/v1/portal/upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopId: tenant1ShopId,
+        fileName: 'idor-check.pdf',
+        fileData: Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF').toString('base64'),
+        pageCount: 2,
+      }),
+    });
+    assert.equal(uploadRes.status, 201);
+    const uploadedFile = await uploadRes.json();
+
+    // Create an order belonging to Tenant 1 using an actual shop-scoped upload.
     const order1Res = await fetch(`${baseUrl}/api/v1/portal/orders`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -74,6 +87,7 @@ describe('Milestone 1 Challenger Adversarial Stress Suite', () => {
             fileId: 'file-1',
             fileName: 'sample.pdf',
             pageCount: 2,
+            storageKey: uploadedFile.storageKey,
             options: {
               paperSize: 'A4',
               colorMode: 'bw',
@@ -115,7 +129,7 @@ describe('Milestone 1 Challenger Adversarial Stress Suite', () => {
     const adminLoginRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'admin@inklly.com', password: 'admin123' }),
+      body: JSON.stringify({ email: 'admin@inklly.com', password: 'DemoPlatformPassword123!' }),
     });
     const adminLoginData = await adminLoginRes.json();
     platformAdminToken = adminLoginData.token;
@@ -129,7 +143,7 @@ describe('Milestone 1 Challenger Adversarial Stress Suite', () => {
   // =========================================================================
   // ATTACK VECTOR 1: Cross-Tenant IDOR & Tenancy Boundaries
   // =========================================================================
-  describe('Adversarial IDOR & Multi-Tenant Attack Scenarios', () => {
+  describe('Adversarial IDOR & Multi-Tenant Attack Scenarios', { concurrency: false }, () => {
     it('IDOR 1.1: Tenant 2 cannot read Tenant 1 order via GET /orders/:id (HTTP 403 Forbidden)', async () => {
       const res = await fetch(`${baseUrl}/api/v1/merchant/orders/${tenant1OrderId}`, {
         headers: { Authorization: `Bearer ${tenant2Token}` },
@@ -174,8 +188,7 @@ describe('Milestone 1 Challenger Adversarial Stress Suite', () => {
       });
       assert.equal(res.status, 403);
       const data = await res.json();
-      assert.ok(data.error.includes('Tenant isolation violation'));
-      assert.ok(data.error.includes('Cannot collect cash'));
+      assert.equal(data.error, 'Order is not available to this shop.');
     });
 
     it('IDOR 1.5: Tenant 2 cannot view Tenant 1 dashboard via query param ?shopId= (HTTP 403 Forbidden)', async () => {
@@ -227,8 +240,8 @@ describe('Milestone 1 Challenger Adversarial Stress Suite', () => {
   // =========================================================================
   // ATTACK VECTOR 2: Expired & Malformed JWT Tokens
   // =========================================================================
-  describe('Adversarial JWT Expiration & Tampering Scenarios', () => {
-    it('JWT 2.1: Rejects token expired 1 second ago with HTTP 401 Unauthorized', async () => {
+  describe('Adversarial JWT Expiration & Tampering Scenarios', { concurrency: false }, () => {
+    it('JWT 2.1: Rejects unsigned token with expired-looking payload', async () => {
       const payload = {
         userId: 'user-expired-1',
         email: 'exp1@test.in',
@@ -242,10 +255,10 @@ describe('Milestone 1 Challenger Adversarial Stress Suite', () => {
       });
       assert.equal(res.status, 401);
       const body = await res.json();
-      assert.equal(body.error, 'Token has expired');
+      assert.equal(body.error, 'Invalid authentication token');
     });
 
-    it('JWT 2.2: Rejects token expired 30 days ago with HTTP 401 Unauthorized', async () => {
+    it('JWT 2.2: Rejects unsigned token with long-expired-looking payload', async () => {
       const payload = {
         userId: 'user-expired-30d',
         email: 'exp30d@test.in',
@@ -259,22 +272,12 @@ describe('Milestone 1 Challenger Adversarial Stress Suite', () => {
       });
       assert.equal(res.status, 401);
       const body = await res.json();
-      assert.equal(body.error, 'Token has expired');
+      assert.equal(body.error, 'Invalid authentication token');
     });
 
-    it('JWT 2.3: Accepts token with valid future expiration', async () => {
-      const payload = {
-        userId: 'user-valid',
-        email: 'valid@test.in',
-        role: 'MERCHANT_OWNER',
-        shopId: tenant1ShopId,
-        organizationId: 'org-1',
-        permissions: ['*'],
-        exp: Math.floor(Date.now() / 1000) + 3600,
-      };
-      const token = Buffer.from(JSON.stringify(payload)).toString('base64');
+    it('JWT 2.3: Accepts a valid signed merchant session', async () => {
       const res = await fetch(`${baseUrl}/api/v1/merchant/dashboard`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${tenant1Token}` },
       });
       assert.equal(res.status, 200);
       const body = await res.json();
@@ -311,7 +314,7 @@ describe('Milestone 1 Challenger Adversarial Stress Suite', () => {
   // =========================================================================
   // ATTACK VECTOR 3: Slug Collision Stress
   // =========================================================================
-  describe('Adversarial Slug Collision & Sanitization Stress', () => {
+  describe('Adversarial Slug Collision & Sanitization Stress', { concurrency: false }, () => {
     it('SLUG 3.1: Successfully provisions first shop with slug "campus-print"', async () => {
       const res = await fetch(`${baseUrl}/api/v1/auth/register`, {
         method: 'POST',
@@ -424,7 +427,7 @@ describe('Milestone 1 Challenger Adversarial Stress Suite', () => {
   // =========================================================================
   // ATTACK VECTOR 4: Duplicate Email Registration Handling
   // =========================================================================
-  describe('Adversarial Duplicate Email Signup Scenarios', () => {
+  describe('Adversarial Duplicate Email Signup Scenarios', { concurrency: false }, () => {
     it('EMAIL 4.1: Registers base user with unique email', async () => {
       const res = await fetch(`${baseUrl}/api/v1/auth/register`, {
         method: 'POST',

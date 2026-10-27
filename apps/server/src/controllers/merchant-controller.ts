@@ -1,5 +1,8 @@
 import { Request, Response } from 'express';
 import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { DatabaseService } from '@inklly/db';
 import {
   ShopRepository,
   OrderRepository,
@@ -21,8 +24,34 @@ export class MerchantController {
     private userRepo: UserRepository,
     private ledgerRepo: LedgerRepository,
     private paymentCredentials: ShopPaymentCredentialsService,
-    private agentRepo: AgentRepository
+    private agentRepo: AgentRepository,
+    private db: DatabaseService
   ) {}
+
+  private presentOrder(order: any) {
+    return { ...order, files: (order.files || []).map((file: any) => {
+      const { storageKey: _storageKey, ...safeFile } = file;
+      return { ...safeFile, fileUrl: `/api/v1/merchant/orders/${encodeURIComponent(order.id)}/files/${encodeURIComponent(file.id)}` };
+    }) };
+  }
+
+  public downloadOrderFile = (req: Request, res: Response) => {
+    const shopId = req.user?.shopId;
+    if (!shopId) return res.status(403).json({ error: 'Shop account required' });
+    const row = this.db.queryOne<any>(
+      `SELECT f.storage_key, f.file_name, f.mime_type FROM order_files f JOIN orders o ON o.id = f.order_id WHERE f.id = ? AND o.id = ? AND o.shop_id = ?`,
+      [String(req.params.fileId), String(req.params.id), shopId]
+    );
+    if (!row || String(row.storage_key).startsWith('expired:')) return res.status(404).json({ error: 'Print file is unavailable.' });
+    const uploadsRoot = path.resolve(process.cwd(), 'uploads');
+    const filePath = path.resolve(process.cwd(), String(row.storage_key));
+    if (!filePath.startsWith(`${uploadsRoot}${path.sep}`) || !fs.existsSync(filePath)) return res.status(404).json({ error: 'Print file is unavailable.' });
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${path.basename(String(row.file_name)).replace(/[\r\n"\\]/g, '_')}"`);
+    return res.sendFile(filePath);
+  };
 
   private getShopId(req: Request): string {
     return req.user?.shopId || (req.query.shopId as string) || (req.headers['x-shop-id'] as string) || '';
@@ -75,7 +104,7 @@ export class MerchantController {
         activePrinters: onlinePrinters,
         totalPrinters: printers.length,
       },
-      recentOrders: orders.slice(0, 5),
+      recentOrders: orders.slice(0, 5).map((order) => this.presentOrder(order)),
     });
   };
 
@@ -83,7 +112,7 @@ export class MerchantController {
     const shopId = this.getShopId(req);
     const status = req.query.status as OrderStatus | 'ALL' | undefined;
     const orders = this.orderRepo.getOrdersByShop(shopId, status || 'ALL');
-    res.json(orders);
+    res.json(orders.map((order) => this.presentOrder(order)));
   };
 
   public getOrderById = (req: Request, res: Response) => {
@@ -107,7 +136,7 @@ export class MerchantController {
       });
     }
 
-    res.json(order);
+    res.json(this.presentOrder(order));
   };
 
   public updateOrderStatus = (req: Request, res: Response) => {

@@ -467,6 +467,9 @@ export const MerchantDashboardView: React.FC = () => {
                   <div style={{ color: '#667085', marginTop: '0.25rem' }}>
                     {f.printOptions.paperSize} • {f.printOptions.colorMode.toUpperCase()} • {f.printOptions.duplexMode} • {f.printOptions.copies} copy(ies)
                   </div>
+                  <button className="btn btn-secondary" style={{ marginTop: '0.5rem' }} onClick={() => api.previewOrderFile(selectedOrder.id, f.id).catch((error) => alert(error.message))}>
+                    Open private document preview
+                  </button>
                 </div>
               ))}
             </div>

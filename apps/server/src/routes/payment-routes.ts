@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { PaymentController } from '../controllers/payment-controller';
 import { DatabaseService, OrderRepository, LedgerRepository } from '@inklly/db';
-import { authenticate, requireRole } from '../middleware/auth';
+import { authenticate, requireRole, requirePermission } from '../middleware/auth';
 import { ShopPaymentCredentialsService } from '../services/shop-payment-credentials';
 
 export function createPaymentRoutes(db: DatabaseService): Router {
@@ -18,6 +18,7 @@ export function createPaymentRoutes(db: DatabaseService): Router {
     '/orders/:id/collect-cash',
     authenticate,
     requireRole('MERCHANT_OWNER', 'SHOP_MANAGER', 'SHOP_STAFF', 'PLATFORM_OWNER', 'PLATFORM_ADMIN'),
+    requirePermission('finance:manage'),
     controller.collectCashAtCounter
   );
 

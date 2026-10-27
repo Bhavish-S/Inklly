@@ -4,7 +4,7 @@ import { createApp } from '../index';
 import { DatabaseService } from '@inklly/db';
 import * as http from 'node:http';
 
-describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
+describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: false }, () => {
   let server: http.Server;
   let baseUrl: string;
   let db: DatabaseService;
@@ -13,6 +13,31 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
   let newMerchantToken: string;
   let newShopId: string;
   let newShopCode: string;
+
+  const uploadCustomerFile = async (shopId: string, fileName: string, pageCount = 1) => {
+    const response = await fetch(`${baseUrl}/api/v1/portal/upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopId,
+        fileName,
+        fileData: Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF').toString('base64'),
+        pageCount,
+      }),
+    });
+    assert.equal(response.status, 201);
+    return await response.json() as any;
+  };
+
+  const pairTestAgent = async (hostname: string) => {
+    const pairingRes = await fetch(`${baseUrl}/api/v1/merchant/agents/pairing-code`, { method: 'POST', headers: { Authorization: `Bearer ${merchantToken}` } });
+    assert.equal(pairingRes.status, 201);
+    const pairing = await pairingRes.json() as any;
+    const enrollRes = await fetch(`${baseUrl}/api/v1/agent/enroll`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shopId: 'shop-campus-1', pairingCode: pairing.pairingCode, hostname }) });
+    assert.equal(enrollRes.status, 201);
+    const agent = await enrollRes.json() as any;
+    return { 'Content-Type': 'application/json', 'X-Agent-Id': agent.agentId, Authorization: `Bearer ${agent.agentSecret}` };
+  };
 
   before(async () => {
     db = new DatabaseService(':memory:');
@@ -29,7 +54,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
     const loginRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'owner@campusprint.in', password: 'owner123' }),
+      body: JSON.stringify({ email: 'owner@campusprint.in', password: 'DemoOwnerPassword123!' }),
     });
     const loginData = (await loginRes.json()) as any;
     merchantToken = loginData.token;
@@ -38,7 +63,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
     const adminLoginRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'admin@inklly.com', password: 'admin123' }),
+      body: JSON.stringify({ email: 'admin@inklly.com', password: 'DemoPlatformPassword123!' }),
     });
     const adminLoginData = (await adminLoginRes.json()) as any;
     adminToken = adminLoginData.token;
@@ -53,7 +78,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
   // TIER 1: FEATURE COVERAGE (>=5 tests per feature R1–R5)
   // =========================================================================
 
-  describe('Tier 1: Feature Coverage (R1 - Merchant Onboarding & Tenancy)', () => {
+  describe('Tier 1: Feature Coverage (R1 - Merchant Onboarding & Tenancy)', { concurrency: false }, () => {
     it('T1.1: Registers a new print merchant and provisions user, organization, shop, and baseline rates', async () => {
       const uniqueSuffix = Date.now().toString(36);
       const res = await fetch(`${baseUrl}/api/v1/auth/register`, {
@@ -139,7 +164,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
     });
   });
 
-  describe('Tier 1: Feature Coverage (R2 - QR Standee & Customer Intake Portal)', () => {
+  describe('Tier 1: Feature Coverage (R2 - QR Standee & Customer Intake Portal)', { concurrency: false }, () => {
     it('T1.6: Retrieves public shop profile for customer intake portal using shopCode', async () => {
       const res = await fetch(`${baseUrl}/api/v1/portal/shop/campus1`);
       assert.equal(res.status, 200);
@@ -150,24 +175,16 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
       assert.ok(shop.enabledPaperFormats.includes('A4'));
     });
 
-    it('T1.7: Generates downloadable Windows counter standee setup script', async () => {
+    it('T1.7: Blocks public setup scripts when a signed installer is unavailable', async () => {
       const res = await fetch(`${baseUrl}/api/v1/agent/download?platform=win-x64&shopCode=campus1&format=script`);
-      assert.equal(res.status, 200);
-      const disposition = res.headers.get('content-disposition');
-      assert.ok(disposition?.includes('Inklly-Agent-Setup-win-x64.bat'));
-      const text = await res.text();
-      assert.ok(text.includes('INKLLY EDGE PRINT AGENT'));
-      assert.ok(text.includes('campus1'));
-      assert.ok(text.includes('OUTPUT_UNCERTAIN'));
+      assert.equal(res.status, 410);
     });
 
-    it('T1.8: Retrieves agent metadata JSON for Windows installer configuration', async () => {
+    it('T1.8: Reports the verified installer as unavailable until a build is configured', async () => {
       const res = await fetch(`${baseUrl}/api/v1/agent/download?platform=win-x64&shopCode=campus1&format=json`);
-      assert.equal(res.status, 200);
+      assert.equal(res.status, 503);
       const meta = (await res.json()) as any;
-      assert.equal(meta.success, true);
-      assert.equal(meta.spoolerPort, 8765);
-      assert.ok(meta.safetyGuarantees.length >= 3);
+      assert.equal(meta.installerAvailable, false);
     });
 
     it('T1.9: Returns driver compatibility matrix covering Canon, HP, Epson, and Brother', async () => {
@@ -188,7 +205,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
     });
   });
 
-  describe('Tier 1: Feature Coverage (R3 - Real Document Upload, Binary Page Count & Quoting)', () => {
+  describe('Tier 1: Feature Coverage (R3 - Real Document Upload, Binary Page Count & Quoting)', { concurrency: false }, () => {
     let uploadedKey: string;
 
     it('T1.11: Uploads document in Base64 format and returns storageKey and file size', async () => {
@@ -329,9 +346,10 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
     });
   });
 
-  describe('Tier 1: Feature Coverage (R4 - Local Hardware Loopback & Safety Invariant)', () => {
+  describe('Tier 1: Feature Coverage (R4 - Local Hardware Loopback & Safety Invariant)', { concurrency: false }, () => {
     let createdPrinterId: string;
     let enrolledAgentId: string;
+    let enrolledAgentSecret: string;
 
     it('T1.16: Registers hardware printer (Canon LBP2900) under merchant shop', async () => {
       const res = await fetch(`${baseUrl}/api/v1/merchant/printers`, {
@@ -356,12 +374,18 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
     });
 
     it('T1.17: Enrolls Desktop Edge Print Agent with shop credentials', async () => {
+      const pairingRes = await fetch(`${baseUrl}/api/v1/merchant/agents/pairing-code`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${merchantToken}` },
+      });
+      assert.equal(pairingRes.status, 201);
+      const pairing = (await pairingRes.json()) as any;
       const res = await fetch(`${baseUrl}/api/v1/agent/enroll`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           shopId: 'shop-campus-1',
-          secretKey: 'agent-secret-e2e',
+          pairingCode: pairing.pairingCode,
           hostname: 'COUNTER-PC-01',
           osPlatform: 'win32',
         }),
@@ -372,15 +396,20 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
       assert.equal(data.success, true);
       assert.ok(data.agentId);
       enrolledAgentId = data.agentId;
+      enrolledAgentSecret = data.agentSecret;
+    });
+
+    const agentHeaders = () => ({
+      'Content-Type': 'application/json',
+      'X-Agent-Id': enrolledAgentId,
+      Authorization: `Bearer ${enrolledAgentSecret}`,
     });
 
     it('T1.18: Receives edge agent periodic heartbeat and confirms status', async () => {
       const res = await fetch(`${baseUrl}/api/v1/agent/heartbeat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: agentHeaders(),
         body: JSON.stringify({
-          agentId: enrolledAgentId,
-          shopId: 'shop-campus-1',
           status: 'ONLINE',
           activePrintersCount: 1,
           localQueueDepth: 0,
@@ -393,7 +422,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
     });
 
     it('T1.19: Agent polls pending command queue for queued print tickets', async () => {
-      const res = await fetch(`${baseUrl}/api/v1/agent/poll-commands?shopId=shop-campus-1`);
+      const res = await fetch(`${baseUrl}/api/v1/agent/poll-commands`, { headers: agentHeaders() });
       assert.equal(res.status, 200);
       const tickets = (await res.json()) as any;
       assert.ok(Array.isArray(tickets));
@@ -402,7 +431,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
     it('T1.20: Enforces hardware safety invariant: records OUTPUT_UNCERTAIN on paper jam without retry', async () => {
       const res = await fetch(`${baseUrl}/api/v1/agent/command-result`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: agentHeaders(),
         body: JSON.stringify({
           jobId: 'job-jam-test',
           attemptId: 'att-jam-test',
@@ -412,13 +441,12 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
         }),
       });
 
-      assert.equal(res.status, 200);
-      const data = (await res.json()) as any;
-      assert.equal(data.recordedStatus, 'OUTPUT_UNCERTAIN');
+      // A fabricated attempt must not be allowed to mutate a print job.
+      assert.equal(res.status, 409);
     });
   });
 
-  describe('Tier 1: Feature Coverage (R5 - Dedicated Platform Owner & Developer Portals)', () => {
+  describe('Tier 1: Feature Coverage (R5 - Dedicated Platform Owner & Developer Portals)', { concurrency: false }, () => {
     let createdKeyId: string;
 
     it('T1.21: Retrieves platform owner fleet overview metrics and financial totals', async () => {
@@ -518,7 +546,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
   // TIER 2: BOUNDARIES, CORNER CASES & DEFENSIVE ERROR HANDLING (>=5 per R1–R5)
   // =========================================================================
 
-  describe('Tier 2: Boundary & Corner Cases (R1 Boundaries)', () => {
+  describe('Tier 2: Boundary & Corner Cases (R1 Boundaries)', { concurrency: false }, () => {
     it('T2.1: Rejects merchant registration when duplicate email is submitted (409 Conflict)', async () => {
       const res = await fetch(`${baseUrl}/api/v1/auth/register`, {
         method: 'POST',
@@ -616,7 +644,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
     });
   });
 
-  describe('Tier 2: Boundary & Corner Cases (R2 Boundaries)', () => {
+  describe('Tier 2: Boundary & Corner Cases (R2 Boundaries)', { concurrency: false }, () => {
     it('T2.6: Returns 404 for non-existent shopCode in customer portal intake', async () => {
       const res = await fetch(`${baseUrl}/api/v1/portal/shop/this-shop-does-not-exist-at-all`);
       assert.equal(res.status, 404);
@@ -646,24 +674,18 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
       assert.equal(data.shop.shopCode, 'special-slug-123');
     });
 
-    it('T2.9: Standee setup download handles unknown shopCode with fallback defaults', async () => {
+    it('T2.9: Rejects installer requests for unknown shop codes', async () => {
       const res = await fetch(`${baseUrl}/api/v1/agent/download?platform=win-legacy-x86&shopCode=unknown-shop&format=json`);
-      assert.equal(res.status, 200);
-      const meta = (await res.json()) as any;
-      assert.equal(meta.targetArch, 'x86 (32-bit)');
-      assert.equal(meta.shopConfig.shopCode, 'unknown-shop');
+      assert.equal(res.status, 404);
     });
 
-    it('T2.10: Standee setup script generation escapes special characters safely', async () => {
+    it('T2.10: Does not generate setup scripts from public query parameters', async () => {
       const res = await fetch(`${baseUrl}/api/v1/agent/download?platform=win-x64&shopCode=test&format=script`);
-      assert.equal(res.status, 200);
-      const script = await res.text();
-      assert.ok(script.includes('@echo off'));
-      assert.ok(script.includes('INKLLY_PORT=8765'));
+      assert.equal(res.status, 404);
     });
   });
 
-  describe('Tier 2: Boundary & Corner Cases (R3 Boundaries)', () => {
+  describe('Tier 2: Boundary & Corner Cases (R3 Boundaries)', { concurrency: false }, () => {
     it('T2.11: Rejects quote request with empty files array (400 Bad Request)', async () => {
       const res = await fetch(`${baseUrl}/api/v1/portal/quote`, {
         method: 'POST',
@@ -699,18 +721,23 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
       assert.equal(res.status, 400);
     });
 
-    it('T2.14: Rejects order submission with missing quote (400 Bad Request)', async () => {
+    it('T2.14: Prices a valid uploaded order server-side when client quote is omitted', async () => {
+      const upload = await uploadCustomerFile('shop-campus-1', 'test.pdf', 1);
       const res = await fetch(`${baseUrl}/api/v1/portal/orders`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           shopId: 'shop-campus-1',
           customerName: 'No Quote Customer',
-          files: [{ fileName: 'test.pdf', pageCount: 1 }],
-          // Missing quote object
+          files: [{ fileName: 'test.pdf', pageCount: 1, storageKey: upload.storageKey, options: {
+            paperSize: 'A4', colorMode: 'bw', duplexMode: 'simplex', copies: 1,
+          } }],
+          // Server computes the authoritative quote; customer totals are not required.
         }),
       });
-      assert.equal(res.status, 400);
+      assert.equal(res.status, 201);
+      const order = await res.json() as any;
+      assert.ok(order.totalAmountPaise > 0);
     });
 
     it('T2.15: Applies high-volume bulk order discount when order value meets threshold', async () => {
@@ -745,7 +772,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
     });
   });
 
-  describe('Tier 2: Boundary & Corner Cases (R4 Boundaries)', () => {
+  describe('Tier 2: Boundary & Corner Cases (R4 Boundaries)', { concurrency: false }, () => {
     it('T2.16: Rejects agent enrollment when shopId is missing (400 Bad Request)', async () => {
       const res = await fetch(`${baseUrl}/api/v1/agent/enroll`, {
         method: 'POST',
@@ -757,7 +784,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
       assert.equal(res.status, 400);
     });
 
-    it('T2.17: Rejects agent heartbeat when agentId or shopId is missing (400 Bad Request)', async () => {
+    it('T2.17: Rejects unauthenticated agent heartbeats before reading identity fields', async () => {
       const res = await fetch(`${baseUrl}/api/v1/agent/heartbeat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -765,10 +792,10 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
           status: 'ONLINE',
         }),
       });
-      assert.equal(res.status, 400);
+      assert.equal(res.status, 401);
     });
 
-    it('T2.18: Rejects command-result report when attemptId or jobId is missing (400 Bad Request)', async () => {
+    it('T2.18: Rejects unauthenticated command-result reports before reading payload fields', async () => {
       const res = await fetch(`${baseUrl}/api/v1/agent/command-result`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -777,7 +804,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
           // Missing jobId and attemptId
         }),
       });
-      assert.equal(res.status, 400);
+      assert.equal(res.status, 401);
     });
 
     it('T2.19: Rejects printer addition without name or driver name (400 Bad Request)', async () => {
@@ -794,13 +821,13 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
       assert.equal(res.status, 400);
     });
 
-    it('T2.20: Rejects poll-commands when shopId query parameter is omitted (400 Bad Request)', async () => {
+    it('T2.20: Rejects unauthenticated agent polling when shopId query parameter is omitted', async () => {
       const res = await fetch(`${baseUrl}/api/v1/agent/poll-commands`);
-      assert.equal(res.status, 400);
+      assert.equal(res.status, 401);
     });
   });
 
-  describe('Tier 2: Boundary & Corner Cases (R5 Boundaries)', () => {
+  describe('Tier 2: Boundary & Corner Cases (R5 Boundaries)', { concurrency: false }, () => {
     it('T2.21: Rejects unauthenticated request to /platform/overview (401 Unauthorized)', async () => {
       const res = await fetch(`${baseUrl}/api/v1/platform/overview`);
       assert.equal(res.status, 401);
@@ -835,6 +862,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
     });
 
     it('T2.24: Enforces state machine order transition constraints (rejects illegal jumps)', async () => {
+      const upload = await uploadCustomerFile('shop-campus-1', 'state-machine.pdf');
       // Try to jump an order directly to COLLECTED from AWAITING_REVIEW
       const submitRes = await fetch(`${baseUrl}/api/v1/portal/orders`, {
         method: 'POST',
@@ -844,7 +872,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
           customerName: 'State Machine Test',
           paymentMethod: 'CASH_ON_COLLECTION',
           quote: { totalPaise: 200, quoteVersion: 'q-v1' },
-          files: [{ fileName: 'test.pdf', pageCount: 1, options: { paperSize: 'A4', colorMode: 'bw', duplexMode: 'simplex' }, subtotalPaise: 200 }],
+          files: [{ fileName: 'state-machine.pdf', storageKey: upload.storageKey, pageCount: 1, options: { paperSize: 'A4', colorMode: 'bw', duplexMode: 'simplex', copies: 1 }, subtotalPaise: 200 }],
         }),
       });
       assert.equal(submitRes.status, 201);
@@ -884,7 +912,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
   // TIER 3: CROSS-FEATURE & PAIRWISE COMBINATIONS
   // =========================================================================
 
-  describe('Tier 3: Cross-Feature & Pairwise Integration Scenarios', () => {
+  describe('Tier 3: Cross-Feature & Pairwise Integration Scenarios', { concurrency: false }, () => {
     it('T3.1: Pairwise: Merchant Registration -> Custom Rates -> Customer Intake Portal Reflects Custom Rates', async () => {
       const suffix = Date.now().toString(36);
       // 1. Register merchant
@@ -929,6 +957,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
     });
 
     it('T3.2: Pairwise: Customer Order -> Counter Cash Collection -> Financial Ledger Entry Created', async () => {
+      const upload = await uploadCustomerFile('shop-campus-1', 'ledger-doc.pdf', 6);
       // 1. Submit order
       const orderRes = await fetch(`${baseUrl}/api/v1/portal/orders`, {
         method: 'POST',
@@ -939,7 +968,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
           customerPhone: '+91 91111 22222',
           paymentMethod: 'CASH_ON_COLLECTION',
           quote: { totalPaise: 1200, quoteVersion: 'q-v1' },
-          files: [{ fileName: 'doc.pdf', pageCount: 6, options: { paperSize: 'A4', colorMode: 'bw', duplexMode: 'simplex' }, subtotalPaise: 1200 }],
+          files: [{ fileName: 'ledger-doc.pdf', storageKey: upload.storageKey, pageCount: 6, options: { paperSize: 'A4', colorMode: 'bw', duplexMode: 'simplex', copies: 1 }, subtotalPaise: 1200 }],
         }),
       });
       assert.equal(orderRes.status, 201);
@@ -967,6 +996,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
     });
 
     it('T3.3: Pairwise: Customer Order -> Dispatch Print -> Agent Polling -> Command Result Printed Confirmation', async () => {
+      const upload = await uploadCustomerFile('shop-campus-1', 'handout.pdf', 3);
       // 1. Submit order
       const submitRes = await fetch(`${baseUrl}/api/v1/portal/orders`, {
         method: 'POST',
@@ -976,7 +1006,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
           customerName: 'Agent Loopback Test',
           paymentMethod: 'CASH_ON_COLLECTION',
           quote: { totalPaise: 600, quoteVersion: 'q-v1' },
-          files: [{ fileName: 'handout.pdf', pageCount: 3, options: { paperSize: 'A4', colorMode: 'bw', duplexMode: 'simplex' }, subtotalPaise: 600 }],
+          files: [{ fileName: 'handout.pdf', storageKey: upload.storageKey, pageCount: 3, options: { paperSize: 'A4', colorMode: 'bw', duplexMode: 'simplex', copies: 1 }, subtotalPaise: 600 }],
         }),
       });
       assert.equal(submitRes.status, 201);
@@ -995,16 +1025,20 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
       assert.equal(printRes.status, 200);
 
       // 3. Agent polls command queue
-      const pollRes = await fetch(`${baseUrl}/api/v1/agent/poll-commands?shopId=shop-campus-1`);
+      const agentHeaders = await pairTestAgent('PAIRWISE-TEST-AGENT');
+      const pollRes = await fetch(`${baseUrl}/api/v1/agent/poll-commands`, { headers: agentHeaders });
       assert.equal(pollRes.status, 200);
+      const tickets = await pollRes.json() as any[];
+      const ticket = tickets.find((item) => item.correlationId === `corr-${orderId}`);
+      assert.ok(ticket);
 
       // 4. Agent reports PRINT_CONFIRMED
       const confirmRes = await fetch(`${baseUrl}/api/v1/agent/command-result`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: agentHeaders,
         body: JSON.stringify({
-          jobId: `job-${orderId}`,
-          attemptId: `att-${orderId}`,
+          jobId: ticket.jobId,
+          attemptId: ticket.attemptId,
           status: 'PRINT_CONFIRMED',
           timestamp: new Date().toISOString(),
         }),
@@ -1012,62 +1046,22 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
       assert.equal(confirmRes.status, 200);
     });
 
-    it('T3.4: Pairwise: High-Volume Order -> Online Payment Intent -> Webhook Verification -> Ledger Credit', async () => {
-      // 1. Submit order
+    it('T3.4: Rejects online payment orders until shop Razorpay credentials are configured', async () => {
+      const upload = await uploadCustomerFile('shop-campus-1', 'thesis.pdf', 25);
+      // Online payment must stay unavailable without shop-owned live credentials.
       const submitRes = await fetch(`${baseUrl}/api/v1/portal/orders`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           shopId: 'shop-campus-1',
           customerName: 'UPI Webhook Customer',
-          paymentMethod: 'UPI_ONLINE',
+          paymentMethod: 'ONLINE_RAZORPAY',
           quote: { totalPaise: 5000, quoteVersion: 'q-v1' },
-          files: [{ fileName: 'thesis.pdf', pageCount: 25, options: { paperSize: 'A4', colorMode: 'bw', duplexMode: 'simplex' }, subtotalPaise: 5000 }],
+          files: [{ fileName: 'thesis.pdf', storageKey: upload.storageKey, pageCount: 25, options: { paperSize: 'A4', colorMode: 'bw', duplexMode: 'simplex', copies: 1 }, subtotalPaise: 5000 }],
         }),
       });
-      assert.equal(submitRes.status, 201);
-      const submitData = (await submitRes.json()) as any;
-      const orderId = submitData.orderId;
-
-      // 2. Create payment intent
-      const intentRes = await fetch(`${baseUrl}/api/v1/payments/create-intent`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId, provider: 'RAZORPAY' }),
-      });
-      assert.equal(intentRes.status, 200);
-      const intentData = (await intentRes.json()) as any;
-      assert.equal(intentData.amountPaise, 5000);
-
-      // 3. Trigger provider payment webhook
-      const webhookRes = await fetch(`${baseUrl}/api/v1/payments/webhook/razorpay`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-razorpay-signature': 'sig_test_razorpay_mock',
-        },
-        body: JSON.stringify({
-          id: `evt_rzp_${Date.now()}`,
-          event: 'payment.captured',
-          payload: {
-            payment: {
-              entity: {
-                id: 'pay_test_12345',
-                amount: 5000,
-                currency: 'INR',
-                notes: { order_id: orderId },
-              },
-            },
-          },
-        }),
-      });
-      assert.equal(webhookRes.status, 200);
-
-      // 4. Verify order payment status is now VERIFIED
-      const statusRes = await fetch(`${baseUrl}/api/v1/portal/orders/${orderId}`);
-      assert.equal(statusRes.status, 200);
-      const order = (await statusRes.json()) as any;
-      assert.equal(order.paymentStatus, 'VERIFIED');
+      assert.equal(submitRes.status, 422);
+      assert.match((await submitRes.json() as any).error, /not configured/i);
     });
 
     it('T3.5: Pairwise: Developer Key Management -> Creation -> Scoped Listing -> Revocation Lifecycle', async () => {
@@ -1118,11 +1112,11 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
   // TIER 4: REAL-WORLD APPLICATION SCENARIOS (>=5 Scenarios)
   // =========================================================================
 
-  describe('Tier 4: Real-World End-to-End Application Scenarios', () => {
+  describe('Tier 4: Real-World End-to-End Application Scenarios', { concurrency: false }, () => {
     // -----------------------------------------------------------------------
     // SCENARIO 1: University Student Thesis Batch Printing
     // -----------------------------------------------------------------------
-    it('Scenario 1: University Student Thesis Printing (Multipage Mixed B&W + Color, Auto Duplex, 3 Copies, Bulk Discount, Online Payment)', async () => {
+    it('Scenario 1: University Student Thesis Printing (Multipage Mixed B&W + Color, Auto Duplex, 3 Copies, Bulk Discount, Cash on Collection)', async () => {
       // Step 1: Student scans QR standee and fetches campus print shop
       const shopRes = await fetch(`${baseUrl}/api/v1/portal/shop/campus1`);
       assert.equal(shopRes.status, 200);
@@ -1158,7 +1152,9 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
       assert.ok(quote.totalPaise > 0);
       assert.ok(quote.bulkDiscountPaise >= 0);
 
-      // Step 3: Student submits order with UPI payment
+      const upload = await uploadCustomerFile(shop.id, 'Final_Year_Dissertation.pdf', 24);
+
+      // Step 3: Student submits order with cash on collection; this seed shop has no Razorpay credentials.
       const orderRes = await fetch(`${baseUrl}/api/v1/portal/orders`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1167,11 +1163,12 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
           customerName: 'Aarav Mehta',
           customerPhone: '+91 98230 45678',
           customerEmail: 'aarav.mehta@univ.edu.in',
-          paymentMethod: 'UPI_ONLINE',
+          paymentMethod: 'CASH_ON_COLLECTION',
           quote,
           files: [
             {
               fileName: 'Final_Year_Dissertation.pdf',
+              storageKey: upload.storageKey,
               pageCount: 24,
               options: { paperSize: 'A4', colorMode: 'bw', duplexMode: 'duplex_auto', copies: 3 },
               subtotalPaise: quote.totalPaise,
@@ -1182,18 +1179,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
       assert.equal(orderRes.status, 201);
       const orderData = (await orderRes.json()) as any;
       const orderId = orderData.orderId;
-      assert.equal(orderData.status, 'AWAITING_PAYMENT');
-
-      // Step 4: Webhook verifies online payment
-      const verifyRes = await fetch(`${baseUrl}/api/v1/payments/verify`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          orderId,
-          providerTransactionId: 'txn_rzp_aarav_9988',
-        }),
-      });
-      assert.equal(verifyRes.status, 200);
+      assert.equal(orderData.status, 'AWAITING_REVIEW');
 
       // Step 5: Merchant reviews and transitions to READY_FOR_PRINT -> IN_PROGRESS
       await fetch(`${baseUrl}/api/v1/merchant/orders/${orderId}/status`, {
@@ -1336,6 +1322,8 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
     // SCENARIO 3: Multi-Document Portfolio with Mixed Formats
     // -----------------------------------------------------------------------
     it('Scenario 3: Multi-Document Portfolio with Mixed Paper Formats (Resume + Presentation + Color Flyer)', async () => {
+      const resumeUpload = await uploadCustomerFile('shop-campus-1', 'Resume_Engineering.pdf', 2);
+      const flyerUpload = await uploadCustomerFile('shop-campus-1', 'Portfolio_Cover_Color.pdf', 1);
       // Customer orders 2 files in one job
       const quoteRes = await fetch(`${baseUrl}/api/v1/portal/quote`, {
         method: 'POST',
@@ -1376,8 +1364,9 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
           quote,
           files: quote.lineItems.map((item: any, i: number) => ({
             fileName: i === 0 ? 'Resume_Engineering.pdf' : 'Portfolio_Cover_Color.pdf',
+            storageKey: i === 0 ? resumeUpload.storageKey : flyerUpload.storageKey,
             pageCount: i === 0 ? 2 : 1,
-            options: { paperSize: 'A4', colorMode: i === 0 ? 'bw' : 'color', duplexMode: 'simplex' },
+            options: { paperSize: 'A4', colorMode: i === 0 ? 'bw' : 'color', duplexMode: 'simplex', copies: i === 0 ? 5 : 1 },
             subtotalPaise: item.subtotalPaise,
           })),
         }),
@@ -1392,6 +1381,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
     // SCENARIO 4: Hardware Paper Jam Incident & Operator Recovery
     // -----------------------------------------------------------------------
     it('Scenario 4: Hardware Paper Jam Incident & Operator Recovery (OUTPUT_UNCERTAIN Safety Invariant)', async () => {
+      const upload = await uploadCustomerFile('shop-campus-1', 'lab_manual_50p.pdf', 50);
       // 1. Submit high-volume print order (50 pages)
       const submitRes = await fetch(`${baseUrl}/api/v1/portal/orders`, {
         method: 'POST',
@@ -1401,7 +1391,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
           customerName: 'Hardware Test Dept',
           paymentMethod: 'CASH_ON_COLLECTION',
           quote: { totalPaise: 10000, quoteVersion: 'q-v1' },
-          files: [{ fileName: 'lab_manual_50p.pdf', pageCount: 50, options: { paperSize: 'A4', colorMode: 'bw', duplexMode: 'simplex' }, subtotalPaise: 10000 }],
+          files: [{ fileName: 'lab_manual_50p.pdf', storageKey: upload.storageKey, pageCount: 50, options: { paperSize: 'A4', colorMode: 'bw', duplexMode: 'simplex', copies: 1 }, subtotalPaise: 10000 }],
         }),
       });
       assert.equal(submitRes.status, 201);
@@ -1409,20 +1399,28 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
       const orderId = submitData.orderId;
 
       // 2. Dispatch to Canon printer
-      await fetch(`${baseUrl}/api/v1/merchant/orders/${orderId}/print`, {
+      const printRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${orderId}/print`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
         body: JSON.stringify({ printerName: 'Canon LBP2900' }),
       });
+      assert.equal(printRes.status, 200);
+
+      const agentHeaders = await pairTestAgent('PAPER-JAM-TEST-AGENT');
+      const pollRes = await fetch(`${baseUrl}/api/v1/agent/poll-commands`, { headers: agentHeaders });
+      assert.equal(pollRes.status, 200);
+      const tickets = await pollRes.json() as any[];
+      const ticket = tickets.find((item) => item.correlationId === `corr-${orderId}`);
+      assert.ok(ticket);
 
       // 3. Printer experiences mechanical paper jam on page 14
       // Agent reports OUTPUT_UNCERTAIN
       const jamReport = await fetch(`${baseUrl}/api/v1/agent/command-result`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: agentHeaders,
         body: JSON.stringify({
-          jobId: `job-${orderId}`,
-          attemptId: `att-${orderId}-1`,
+          jobId: ticket.jobId,
+          attemptId: ticket.attemptId,
           status: 'OUTPUT_UNCERTAIN',
           errorMessage: 'Mechanical paper jam detected at roller sensor. Printed pages unknown.',
           timestamp: new Date().toISOString(),
@@ -1448,7 +1446,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
     // -----------------------------------------------------------------------
     // SCENARIO 5: Multi-Tenant Merchant Lifecycle & Platform Audit
     // -----------------------------------------------------------------------
-    it('Scenario 5: Multi-Tenant Merchant Onboarding, Standee Generation, Agent Pairing & Platform Audit', async () => {
+    it('Scenario 5: Merchant onboarding succeeds while agent download fails closed without a verified installer', async () => {
       const suffix = Date.now().toString(36);
       // 1. New print shop registers
       const regRes = await fetch(`${baseUrl}/api/v1/auth/register`, {
@@ -1466,42 +1464,14 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', () => {
       });
       assert.equal(regRes.status, 201);
       const newShop = (await regRes.json()) as any;
-      const shopId = newShop.shop.id;
       const shopCode = newShop.shop.shopCode;
 
       // 2. Fetch standee download metadata for this merchant
       const standeeRes = await fetch(`${baseUrl}/api/v1/agent/download?platform=win-x64&shopCode=${shopCode}&format=json`);
-      assert.equal(standeeRes.status, 200);
-      const standee = (await standeeRes.json()) as any;
-      assert.equal(standee.shopConfig.shopCode, shopCode);
-
-      // 3. Pair desktop agent
-      const agentRes = await fetch(`${baseUrl}/api/v1/agent/enroll`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          shopId,
-          secretKey: standee.shopConfig.pairingKey,
-          hostname: `POS-MUMBAI-${suffix}`,
-        }),
-      });
-      assert.equal(agentRes.status, 201);
-      const agentData = (await agentRes.json()) as any;
-
-      // 4. Send heartbeat
-      const hbRes = await fetch(`${baseUrl}/api/v1/agent/heartbeat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          agentId: agentData.agentId,
-          shopId,
-          status: 'ONLINE',
-          activePrintersCount: 1,
-        }),
-      });
-      assert.equal(hbRes.status, 200);
-
-      // 5. Platform Owner views updated overview reflecting the new merchant
+      assert.equal(standeeRes.status, 503);
+      const unavailable = await standeeRes.json() as any;
+      assert.equal(unavailable.installerAvailable, false);
+      // Platform owner can still view the newly onboarded merchant.
       const overviewRes = await fetch(`${baseUrl}/api/v1/platform/overview`, {
         headers: { Authorization: `Bearer ${adminToken}` },
       });

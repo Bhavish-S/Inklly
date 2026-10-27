@@ -119,6 +119,16 @@ export const api = {
     return res.json();
   },
 
+  async previewOrderFile(orderId: string, fileId: string) {
+    const preview = window.open('', '_blank');
+    if (!preview) throw new Error('Allow pop-ups to preview this document');
+    const res = await fetch(`${API_BASE}/merchant/orders/${encodeURIComponent(orderId)}/files/${encodeURIComponent(fileId)}`, { headers: getHeaders({ 'Content-Type': '' }) });
+    if (!res.ok) { preview.close(); throw new Error('Could not open this document'); }
+    const blobUrl = URL.createObjectURL(await res.blob());
+    preview.location.href = blobUrl;
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+  },
+
   async updateOrderStatus(orderId: string, status: string) {
     const res = await fetch(`${API_BASE}/merchant/orders/${orderId}/status`, {
       method: 'PATCH',

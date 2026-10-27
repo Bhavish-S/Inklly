@@ -289,32 +289,19 @@ export class PaymentController {
     if (!order) {
       return res.status(404).json({ error: 'Order not found' });
     }
+
+    const effectiveShopId = req.user?.shopId;
+    if (
+      req.user?.role !== 'PLATFORM_OWNER' && req.user?.role !== 'PLATFORM_ADMIN' &&
+      (!effectiveShopId || order.shopId !== effectiveShopId)
+    ) {
+      return res.status(403).json({ error: 'Order is not available to this shop.' });
+    }
     if (order.paymentMethod !== 'CASH_ON_COLLECTION') {
       return res.status(409).json({ error: 'Cash collection is only available for cash-on-collection orders.' });
     }
     if (order.paymentStatus === 'VERIFIED') {
       return res.status(409).json({ error: 'Payment for this order has already been recorded.' });
-    }
-
-    const effectiveShopId = req.user?.shopId;
-    if (
-      req.user?.role !== 'PLATFORM_OWNER' &&
-      req.user?.role !== 'PLATFORM_ADMIN' &&
-      !effectiveShopId
-    ) {
-      return res.status(403).json({ error: 'Shop membership is required to collect cash for an order' });
-    }
-    if (
-      req.user?.role !== 'PLATFORM_OWNER' &&
-      req.user?.role !== 'PLATFORM_ADMIN' &&
-      effectiveShopId &&
-      order.shopId !== effectiveShopId
-    ) {
-      return res.status(403).json({
-        error: 'Tenant isolation violation: Cannot collect cash for an order belonging to another shop',
-        requestedShopId: order.shopId,
-        userShopId: effectiveShopId,
-      });
     }
 
     const now = new Date().toISOString();

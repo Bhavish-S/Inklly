@@ -57,6 +57,16 @@ export function requireRole(...allowedRoles: UserRole[]) {
   };
 }
 
+export function requirePermission(permission: string) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const user = req.user;
+    if (!user) return res.status(401).json({ error: 'Authentication required' });
+    if (user.role === 'PLATFORM_OWNER' || user.role === 'PLATFORM_ADMIN' || user.role === 'MERCHANT_OWNER') return next();
+    if (user.permissions.includes('*') || user.permissions.includes(permission)) return next();
+    return res.status(403).json({ error: `Permission required: ${permission}` });
+  };
+}
+
 export function enforceTenantIsolation(req: Request, res: Response, next: NextFunction) {
   if (!req.user) {
     return res.status(401).json({ error: 'Authentication required' });

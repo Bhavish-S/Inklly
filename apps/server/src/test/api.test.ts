@@ -4,12 +4,13 @@ import { createApp } from '../index';
 import { DatabaseService } from '@inklly/db';
 import * as http from 'node:http';
 
-describe('Inklly Backend API Integration Test Suite', () => {
+describe('Inklly Backend API Integration Test Suite', { concurrency: false }, () => {
   let server: http.Server;
   let baseUrl: string;
   let db: DatabaseService;
   let merchantToken: string;
   let adminToken: string;
+  let cashOrderId: string;
 
   before(async () => {
     db = new DatabaseService(':memory:');
@@ -81,6 +82,18 @@ describe('Inklly Backend API Integration Test Suite', () => {
   });
 
   it('Submits order and queries order status via public portal', async () => {
+    const uploadRes = await fetch(`${baseUrl}/api/v1/portal/upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopId: 'shop-campus-1',
+        fileName: 'notes.pdf',
+        fileData: Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF').toString('base64'),
+        pageCount: 10,
+      }),
+    });
+    assert.equal(uploadRes.status, 201);
+    const upload = await uploadRes.json();
     const submitReq = {
       shopId: 'shop-campus-1',
       customerName: 'Priya Patel',
@@ -94,6 +107,9 @@ describe('Inklly Backend API Integration Test Suite', () => {
         {
           fileName: 'notes.pdf',
           pageCount: 10,
+          storageKey: upload.storageKey,
+          fileSizeBytes: upload.fileSizeBytes,
+          mimeType: upload.mimeType,
           options: {
             colorMode: 'bw',
             duplexMode: 'simplex',
@@ -117,6 +133,7 @@ describe('Inklly Backend API Integration Test Suite', () => {
 
     assert.equal(res.status, 201);
     const orderData = await res.json();
+    cashOrderId = orderData.orderId;
     assert.ok(orderData.orderId);
     assert.equal(orderData.status, 'AWAITING_REVIEW');
 
@@ -132,10 +149,10 @@ describe('Inklly Backend API Integration Test Suite', () => {
     const loginRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'owner@campusprint.in', password: 'owner123' }),
+      body: JSON.stringify({ email: 'owner@campusprint.in', password: 'DemoOwnerPassword123!' }),
     });
 
-    assert.equal(loginRes.status, 200);
+    assert.equal(loginRes.status, 200, await loginRes.clone().text());
     const loginBody = await loginRes.json();
     assert.ok(loginBody.token);
     assert.equal(loginBody.user.role, 'MERCHANT_OWNER');
@@ -196,27 +213,36 @@ describe('Inklly Backend API Integration Test Suite', () => {
   });
 
   it('Desktop Print Agent pairs, receives heartbeat, and polls queued tickets', async () => {
-    // 1. Enroll
+    const pairingRes = await fetch(`${baseUrl}/api/v1/merchant/agents/pairing-code`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${merchantToken}` },
+    });
+    assert.equal(pairingRes.status, 201);
+    const pairing = await pairingRes.json();
+    // 1. Enroll using the short-lived, one-time pairing code.
     const enrollRes = await fetch(`${baseUrl}/api/v1/agent/enroll`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         shopId: 'shop-campus-1',
-        secretKey: 'agent-secret-key-123',
+        pairingCode: pairing.pairingCode,
         hostname: 'POS-DESK-WIN11',
       }),
     });
     assert.equal(enrollRes.status, 201);
     const enrollData = await enrollRes.json();
     assert.ok(enrollData.agentId);
+    const agentHeaders = {
+      'Content-Type': 'application/json',
+      'X-Agent-Id': enrollData.agentId,
+      Authorization: `Bearer ${enrollData.agentSecret}`,
+    };
 
     // 2. Heartbeat
     const hbRes = await fetch(`${baseUrl}/api/v1/agent/heartbeat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: agentHeaders,
       body: JSON.stringify({
-        agentId: enrollData.agentId,
-        shopId: 'shop-campus-1',
         status: 'ONLINE',
         activePrintersCount: 2,
         localQueueDepth: 0,
@@ -225,7 +251,7 @@ describe('Inklly Backend API Integration Test Suite', () => {
     assert.equal(hbRes.status, 200);
 
     // 3. Poll commands
-    const pollRes = await fetch(`${baseUrl}/api/v1/agent/poll-commands?shopId=shop-campus-1`);
+    const pollRes = await fetch(`${baseUrl}/api/v1/agent/poll-commands`, { headers: agentHeaders });
     assert.equal(pollRes.status, 200);
     const tickets = await pollRes.json();
     assert.ok(Array.isArray(tickets));
@@ -235,7 +261,7 @@ describe('Inklly Backend API Integration Test Suite', () => {
       // Report Uncertain Output - safety invariant verification!
       const resultRes = await fetch(`${baseUrl}/api/v1/agent/command-result`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: agentHeaders,
         body: JSON.stringify({
           attemptId: ticket.attemptId,
           jobId: ticket.jobId,
@@ -250,23 +276,15 @@ describe('Inklly Backend API Integration Test Suite', () => {
     }
   });
 
-  it('Agent download endpoint generates Windows setup script and metadata', async () => {
-    // 1. Script format (BAT download)
+  it('Agent download endpoint never claims an unconfigured installer exists', async () => {
     const scriptRes = await fetch(`${baseUrl}/api/v1/agent/download?platform=win-x64&shopCode=campus1&format=script`);
-    assert.equal(scriptRes.status, 200);
-    assert.ok(scriptRes.headers.get('content-disposition')?.includes('Inklly-Agent-Setup-win-x64.bat'));
-    const scriptText = await scriptRes.text();
-    assert.ok(scriptText.includes('INKLLY EDGE PRINT AGENT'));
-    assert.ok(scriptText.includes('campus1'));
-    assert.ok(scriptText.includes('OUTPUT_UNCERTAIN'));
+    assert.equal(scriptRes.status, 410);
 
-    // 2. Metadata format (JSON)
+    // Metadata must report the missing verified installer rather than a fabricated checksum.
     const metaRes = await fetch(`${baseUrl}/api/v1/agent/download?platform=win-legacy-x86&shopCode=campus1&format=json`);
-    assert.equal(metaRes.status, 200);
+    assert.equal(metaRes.status, 503);
     const metaJson = await metaRes.json();
-    assert.equal(metaJson.agentName, 'Inklly Edge Print Agent');
-    assert.equal(metaJson.targetArch, 'x86 (32-bit)');
-    assert.equal(metaJson.spoolerPort, 8765);
+    assert.equal(metaJson.installerAvailable, false);
 
     // 3. Driver matrix
     const matrixRes = await fetch(`${baseUrl}/api/v1/agent/driver-matrix`);
@@ -284,13 +302,7 @@ describe('Inklly Backend API Integration Test Suite', () => {
   });
 
   it('Collects cash at counter and credits ledger', async () => {
-    const ordersRes = await fetch(`${baseUrl}/api/v1/merchant/orders`, {
-      headers: { Authorization: `Bearer ${merchantToken}` },
-    });
-    const orders = await ordersRes.json();
-    const targetOrder = orders[0];
-
-    const cashRes = await fetch(`${baseUrl}/api/v1/payments/orders/${targetOrder.id}/collect-cash`, {
+    const cashRes = await fetch(`${baseUrl}/api/v1/payments/orders/${cashOrderId}/collect-cash`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${merchantToken}` },
     });
@@ -301,11 +313,14 @@ describe('Inklly Backend API Integration Test Suite', () => {
   });
 
   it('Platform Owner Console returns system metrics and ledger', async () => {
+    const login = await fetch(`${baseUrl}/api/v1/auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'admin@inklly.com', password: 'DemoPlatformPassword123!' }),
+    });
+    assert.equal(login.status, 200);
+    adminToken = (await login.json()).token;
     const res = await fetch(`${baseUrl}/api/v1/platform/overview`, {
-      headers: {
-        'x-user-role': 'PLATFORM_OWNER',
-        'x-user-id': 'user-admin-1',
-      },
+      headers: { Authorization: `Bearer ${adminToken}` },
     });
 
     assert.equal(res.status, 200);
@@ -350,7 +365,7 @@ describe('Inklly Backend API Integration Test Suite', () => {
       shopCode: 'om-sai-hub',
       ownerName: 'Vikas Patil',
       email: 'vikas@omsaixerox.in',
-      password: 'password123',
+      password: 'NewMerchantPassword123!',
       phone: '+91 98222 33445',
       address: 'Shop 4, University Road',
       city: 'Pune',
@@ -388,7 +403,7 @@ describe('Inklly Backend API Integration Test Suite', () => {
       shopName: 'Duplicate Xerox',
       ownerName: 'Vikas P',
       email: '  VIKAS@omsaixerox.in  ',
-      password: 'password123',
+      password: 'NewMerchantPassword123!',
     };
 
     const res = await fetch(`${baseUrl}/api/v1/auth/register`, {
@@ -412,7 +427,7 @@ describe('Inklly Backend API Integration Test Suite', () => {
         shopCode: 'campus1',
         ownerName: 'Owner 2',
         email: 'collision1@test.in',
-        password: 'password123',
+        password: 'NewMerchantPassword123!',
       }),
     });
     assert.equal(res1.status, 201);
@@ -428,7 +443,7 @@ describe('Inklly Backend API Integration Test Suite', () => {
         shopCode: 'campus1',
         ownerName: 'Owner 3',
         email: 'collision2@test.in',
-        password: 'password123',
+        password: 'NewMerchantPassword123!',
       }),
     });
     assert.equal(res2.status, 201);
@@ -444,7 +459,7 @@ describe('Inklly Backend API Integration Test Suite', () => {
         shopName: 'Shree Balaji & Sons Xerox @ Karve Nagar!!',
         ownerName: 'Sunil Joshi',
         email: 'sunil@balajixerox.in',
-        password: 'password123',
+        password: 'NewMerchantPassword123!',
       }),
     });
     assert.equal(res.status, 201);
@@ -554,7 +569,7 @@ describe('Inklly Backend API Integration Test Suite', () => {
         shopName: 'Tenant 2 Xerox',
         ownerName: 'Tenant Two',
         email: 'tenant2@test.in',
-        password: 'password123',
+        password: 'NewMerchantPassword123!',
       }),
     });
     const { token: tenant2Token } = await reg2.json();
@@ -595,8 +610,7 @@ describe('Inklly Backend API Integration Test Suite', () => {
   it('Allows Platform Owner to access tenant data without isolation error', async () => {
     const adminRes = await fetch(`${baseUrl}/api/v1/merchant/dashboard?shopId=shop-campus-1`, {
       headers: {
-        'x-user-role': 'PLATFORM_OWNER',
-        'x-user-id': 'user-admin-1',
+        Authorization: `Bearer ${adminToken}`,
       },
     });
     assert.equal(adminRes.status, 200);
