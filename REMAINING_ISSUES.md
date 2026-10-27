@@ -8,13 +8,13 @@
 - `packages/db`, `packages/shared`, `apps/server`, and `apps/web` production builds pass.
 - Full workspace test run after current portal changes: 148 passed, 0 failed (database 3, shared 12, agent 7, server 126). Supabase Storage behavior is tested with a mocked HTTP transport; it has not yet been verified against the connected project.
 - Web build emits a bundle-size warning (main JavaScript bundle is about 1.22 MB before gzip).
-- GitHub `main` contains commit `ad3da3a` with private storage and server-derived document metadata. The next local changes add a Render revision stamp, enforce the documented external API gate, and remove fabricated developer-portal statuses; their deployment is not verified.
-- Live Render returned HTTP 200 for `/health` and for unauthenticated `/api/v1/developer/keys`, contradicting current source authorization and indicating a stale or incorrect deployment. The pasted Render build log checked out older commit `33cd615` and failed startup for missing `JWT_SECRET`.
+- GitHub `main` contains commit `d0a19f0`, including private storage, server-derived document metadata, gated developer integrations, and a Render revision stamp.
+- After that push, live Render returned HTTP 200 for `/health` but did not include the new `revision` field; unauthenticated `/api/v1/developer/keys` still returned HTTP 200 with `[]`. Render is not confirmed to be running current source. The pasted Render build log checked out older commit `33cd615` and failed startup for missing `JWT_SECRET`.
 - A live Render probe during the latest turn timed out at `https://inklly.onrender.com/health`; current runtime health could not be confirmed.
 
 ## Release blockers and follow-up
 
-1. Deploy the current source to Render with a stable `JWT_SECRET`, `STORAGE_DRIVER=supabase`, Supabase URL, service-role key, bucket name, and production database URL. Verify `/health.revision` matches the intended Git SHA and unauthenticated `/api/v1/developer/keys` returns 401.
+1. Confirm Render deploys commit `d0a19f0`; configure a stable `JWT_SECRET`, `STORAGE_DRIVER=supabase`, Supabase URL, service-role key, bucket name, and production database URL. Verify `/health.revision` matches `d0a19f0` and unauthenticated `/api/v1/developer/keys` returns 401.
 2. Exercise upload, private preview, authenticated agent download, and 24-hour deletion against the real private Supabase bucket. Confirm saved files survive Render restarts and expired objects are physically removed.
    - Implemented locally: PDF page counts and file MIME are derived from stored bytes at upload and order submission; a regression test verifies a forged client page count cannot undercharge an order. Production rollout remains pending.
 3. Provide and verify a signed Windows agent installer, checksum, and owner-scoped delivery. The API reports installer availability as false (503) and does not fabricate a checksum.
