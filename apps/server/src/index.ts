@@ -14,10 +14,16 @@ import { assertSessionSecretConfigured } from './middleware/session-token';
 import { purgeExpiredPrintFiles } from './services/print-file-retention';
 import { PrivateFileStorage } from './services/private-file-storage';
 import { createPublicUploadConcurrencyGuard } from './middleware/public-upload-guard';
+import { EnquiryRepository } from '@inklly/db';
+import { EnquiryController } from './controllers/enquiry-controller';
+import { createEnquiryRateLimit } from './middleware/enquiry-rate-limit';
 
 export function createApp(db?: DatabaseService): express.Express {
   assertSessionSecretConfigured();
   const app = express();
+  // Render terminates TLS and forwards one proxy hop. Trust that hop so
+  // IP-based public form limits use the originating client address.
+  app.set('trust proxy', 1);
   const allowedOrigins = new Set((process.env.CORS_ORIGIN || 'http://localhost:3000,http://127.0.0.1:3000,https://inklly.vercel.app,https://inklly.in')
     .split(',').map((origin) => origin.trim()).filter(Boolean));
   app.use(cors({
@@ -66,15 +72,9 @@ export function createApp(db?: DatabaseService): express.Express {
     });
   });
 
-  // Website Enquiry Endpoint
-  app.post('/api/v1/enquiry', (req, res) => {
-    console.log('[Inklly Server] New Website Enquiry received:', req.body);
-    res.status(201).json({
-      success: true,
-      message: 'Enquiry received successfully. Our team will contact you shortly.',
-      data: req.body,
-    });
-  });
+  // Public marketing enquiries are validated and stored without logging PII.
+  const enquiryController = new EnquiryController(new EnquiryRepository(database));
+  app.post('/api/v1/enquiry', createEnquiryRateLimit(), enquiryController.submit);
 
   // Mount API routers
   app.use('/api/v1/portal', createPortalRoutes(database, fileStorage));

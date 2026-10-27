@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../api/client';
 import { ShieldIcon, SearchIcon, DownloadIcon, CheckCircleIcon, PrinterIcon, UsersIcon, FileTextIcon, SlidersIcon } from '../components/icons';
 
-type AdminTab = 'overview' | 'merchants' | 'builds' | 'plans' | 'ledger' | 'agents' | 'incidents' | 'retention' | 'audit' | 'config';
+type AdminTab = 'overview' | 'merchants' | 'enquiries' | 'builds' | 'plans' | 'ledger' | 'agents' | 'incidents' | 'retention' | 'audit' | 'config';
 
 export interface PlatformAdminProps {
   onNavigate?: (path: string) => void;
@@ -14,6 +14,7 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
   const [merchants, setMerchants] = useState<any[]>([]);
   const [ledgerEntries, setLedgerEntries] = useState<any[]>([]);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [enquiries, setEnquiries] = useState<any[]>([]);
   const [selectedDomain, setSelectedDomain] = useState<string>('ALL');
   const [merchantSearchQuery, setMerchantSearchQuery] = useState<string>('');
   const [merchantStatusFilter, setMerchantStatusFilter] = useState<string>('ALL');
@@ -163,16 +164,18 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
   const loadPlatformData = async () => {
     try {
       setLoading(true);
-      const [ovData, merData, ledData, audData] = await Promise.all([
+      const [ovData, merData, ledData, audData, enquiryData] = await Promise.all([
         api.getPlatformOverview(),
         api.getPlatformMerchants(),
         api.getPlatformLedger(selectedDomain === 'ALL' ? undefined : selectedDomain),
         api.getAuditLogs(),
+        api.getPlatformEnquiries(),
       ]);
       setOverview(ovData);
       setMerchants(merData);
       setLedgerEntries(ledData);
       setAuditLogs(audData);
+      setEnquiries(enquiryData);
     } catch (err: any) {
       console.error('Failed to load platform data:', err);
     } finally {
@@ -519,6 +522,7 @@ pause
         {[
           { id: 'overview', label: '📊 Fleet Overview' },
           { id: 'merchants', label: '🏪 Merchants Directory' },
+          { id: 'enquiries', label: '✉️ Website Enquiries' },
           { id: 'builds', label: '📦 Windows Agent Builds' },
           { id: 'plans', label: '💎 Plans & Quotas' },
           { id: 'ledger', label: '📒 Financial Ledger' },
@@ -790,6 +794,37 @@ pause
             </table>
           </div>
         </div>
+      )}
+
+      {activeTab === 'enquiries' && (
+        <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xs overflow-hidden">
+          <div className="p-5 border-b border-slate-100 dark:border-slate-800">
+            <h2 className="text-base font-extrabold text-slate-900 dark:text-white">Website enquiries</h2>
+            <p className="mt-1 text-xs text-slate-500">Public requests saved for platform follow-up. Access is limited to platform owners and admins.</p>
+          </div>
+          {enquiries.length === 0 ? (
+            <div className="p-10 text-center text-sm text-slate-500">No enquiries have been received yet.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead className="bg-slate-50 dark:bg-slate-800/60 uppercase text-[10px] font-extrabold text-slate-400">
+                  <tr><th className="p-3.5 pl-5">Received</th><th className="p-3.5">Contact</th><th className="p-3.5">Message</th><th className="p-3.5">Source</th><th className="p-3.5">Status</th></tr>
+                </thead>
+                <tbody>
+                  {enquiries.map((enquiry) => (
+                    <tr key={enquiry.id} className="border-t border-slate-100 dark:border-slate-800 align-top">
+                      <td className="p-3.5 pl-5 whitespace-nowrap">{new Date(enquiry.createdAt).toLocaleString()}</td>
+                      <td className="p-3.5 min-w-44"><div className="font-bold text-slate-900 dark:text-white">{enquiry.name}</div><div>{enquiry.phone}</div>{enquiry.email && <div>{enquiry.email}</div>}</td>
+                      <td className="p-3.5 min-w-64 max-w-xl whitespace-pre-wrap break-words">{enquiry.message}</td>
+                      <td className="p-3.5">{enquiry.source}{enquiry.city ? ` · ${enquiry.city}` : ''}{enquiry.state ? `, ${enquiry.state}` : ''}</td>
+                      <td className="p-3.5">{enquiry.status}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
       )}
 
       {/* ═══════════════════════════════════════════════════════════════

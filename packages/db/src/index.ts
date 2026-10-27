@@ -7,4 +7,5 @@ export * from './repositories/printer-repository';
 export * from './repositories/ledger-repository';
 export * from './repositories/user-repository';
 export * from './repositories/agent-repository';
+export * from './repositories/enquiry-repository';
 export * from './seed';

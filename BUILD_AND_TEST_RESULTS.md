@@ -7,6 +7,18 @@
 
 ---
 
+## Latest verification — 2026-10-27
+
+Executed after the public-enquiry persistence/inbox change:
+
+- `npm run build` — passed across all workspaces. Vite reported the existing large-bundle warning (about 1.22 MB main JS and 2.23 MB PDF worker before gzip).
+- `npm test` — passed: 3 database, 12 shared, 7 agent, and 131 server tests (153 total).
+- New coverage verifies enquiry validation, idempotent retry, platform-only inbox access, and rate-limit rejection.
+- `npm run lint` remains unavailable because no workspace defines a lint script.
+- No browser screenshots or real Render/Supabase/provider/hardware verification were performed in this change.
+
+---
+
 ## 1. Workspace Build Matrix
 
 | Workspace | Package / App Name | Output Target | Build Command | Status |

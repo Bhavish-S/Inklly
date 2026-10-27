@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
-import { DatabaseService, LedgerRepository, UserRepository } from '@inklly/db';
+import { DatabaseService, EnquiryRepository, LedgerRepository, UserRepository } from '@inklly/db';
 import { SubscriptionPlan, MoneyDomain } from '@inklly/shared';
+import * as crypto from 'node:crypto';
 
 export const SAAS_PLANS: SubscriptionPlan[] = [
   {
@@ -61,7 +62,8 @@ export class AdminController {
   constructor(
     private db: DatabaseService,
     private ledgerRepo: LedgerRepository,
-    private userRepo: UserRepository
+    private userRepo: UserRepository,
+    private enquiryRepo: EnquiryRepository
   ) {}
 
   public getOverview = (req: Request, res: Response) => {
@@ -158,5 +160,25 @@ export class AdminController {
     const limit = Number(req.query.limit || 50);
     const logs = this.userRepo.getAuditEvents(limit);
     res.json(logs);
+  };
+
+  public getEnquiries = (req: Request, res: Response) => {
+    const requestedLimit = Number(req.query.limit);
+    const requestedOffset = Number(req.query.offset);
+    const limit = Number.isFinite(requestedLimit) ? Math.min(100, Math.max(1, Math.floor(requestedLimit))) : 50;
+    const offset = Number.isFinite(requestedOffset) ? Math.min(100_000, Math.max(0, Math.floor(requestedOffset))) : 0;
+    this.userRepo.logAuditEvent({
+      id: crypto.randomUUID(),
+      actorUserId: req.user?.userId,
+      actorRole: req.user?.role,
+      action: 'VIEW_PUBLIC_ENQUIRIES',
+      targetType: 'PUBLIC_ENQUIRY_COLLECTION',
+      targetId: 'latest',
+      outcome: 'SUCCESS',
+      ipAddress: req.ip,
+      details: { reason: 'Platform website enquiry follow-up', limit, offset },
+      createdAt: new Date().toISOString(),
+    });
+    res.json(this.enquiryRepo.list(limit, offset));
   };
 }

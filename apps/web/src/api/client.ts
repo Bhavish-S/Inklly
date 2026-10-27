@@ -14,6 +14,17 @@ function getHeaders(customHeaders: Record<string, string> = {}): Record<string, 
 }
 
 export const api = {
+  async submitEnquiry(payload: { source: 'HOME' | 'CONTACT'; name: string; phone: string; email?: string; message: string; city?: string; state?: string; website?: string }, idempotencyKey: string) {
+    const res = await fetch(`${API_BASE}/enquiry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(payload),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not send your enquiry. Please try again.');
+    return body as { id: string; status: string; message: string };
+  },
+
   // Public Customer QR Portal
   async getShop(shopCode: string) {
     const res = await fetch(`${API_BASE}/portal/shop/${shopCode}`);
@@ -314,6 +325,13 @@ export const api = {
   async getAuditLogs() {
     const res = await fetch(`${API_BASE}/platform/audit-logs`, { headers: getHeaders() });
     return res.json();
+  },
+
+  async getPlatformEnquiries() {
+    const res = await fetch(`${API_BASE}/platform/enquiries?limit=100`, { headers: getHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to load enquiries');
+    return body;
   },
 
   // Developer Portal

@@ -63,6 +63,22 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 
+CREATE TABLE IF NOT EXISTS public_enquiries (
+    id TEXT PRIMARY KEY,
+    idempotency_key TEXT UNIQUE,
+    source TEXT NOT NULL,
+    name TEXT NOT NULL,
+    phone TEXT NOT NULL,
+    email TEXT,
+    message TEXT NOT NULL,
+    city TEXT,
+    state TEXT,
+    status TEXT NOT NULL DEFAULT 'OPEN',
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_public_enquiries_status_created ON public_enquiries(status, created_at);
+
 CREATE TABLE IF NOT EXISTS memberships (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,

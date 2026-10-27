@@ -3,6 +3,7 @@ import * as assert from 'node:assert/strict';
 import { createApp } from '../index';
 import { DatabaseService } from '@inklly/db';
 import * as http from 'node:http';
+import * as crypto from 'node:crypto';
 import { makeTestPdf } from './test-pdf';
 import { createSessionToken } from '../middleware/session-token';
 
@@ -43,11 +44,45 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.ok(Object.hasOwn(body, 'revision'));
   });
 
+  it('stores valid website enquiries once and rejects malformed submissions', async () => {
+    const idempotencyKey = `enquiry-${crypto.randomUUID()}`;
+    const payload = {
+      source: 'CONTACT',
+      name: 'Amit Sharma',
+      phone: '+91 98765 43210',
+      email: 'amit@example.com',
+      message: 'I run a print shop and would like to learn about Inklly.',
+    };
+    const headers = { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey };
+    const first = await fetch(`${baseUrl}/api/v1/enquiry`, { method: 'POST', headers, body: JSON.stringify(payload) });
+    const firstBody = await first.json() as any;
+    assert.equal(first.status, 201);
+    assert.equal(firstBody.status, 'OPEN');
+    assert.ok(firstBody.id);
+
+    const retry = await fetch(`${baseUrl}/api/v1/enquiry`, { method: 'POST', headers, body: JSON.stringify(payload) });
+    const retryBody = await retry.json() as any;
+    assert.equal(retry.status, 201);
+    assert.equal(retryBody.id, firstBody.id);
+
+    const malformed = await fetch(`${baseUrl}/api/v1/enquiry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...payload, phone: 'not-a-phone' }),
+    });
+    assert.equal(malformed.status, 422);
+  });
+
   it('keeps developer credentials and webhook configuration behind authentication', async () => {
     for (const path of ['/api/v1/developer/keys', '/api/v1/developer/webhooks']) {
       const res = await fetch(`${baseUrl}${path}`);
       assert.equal(res.status, 401, `${path} must reject anonymous requests`);
     }
+  });
+
+  it('keeps personal website enquiries behind platform authentication', async () => {
+    const res = await fetch(`${baseUrl}/api/v1/platform/enquiries`);
+    assert.equal(res.status, 401);
   });
 
   it('keeps merchant self-service API credentials disabled until governance approval', async () => {
@@ -405,6 +440,19 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.ok(overview.metrics.totalOrganizations >= 1);
     assert.ok(overview.metrics.totalShops >= 1);
     assert.equal(overview.health.apiStatus, 'HEALTHY');
+
+    const enquiriesRes = await fetch(`${baseUrl}/api/v1/platform/enquiries`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    assert.equal(enquiriesRes.status, 200);
+    const enquiries = await enquiriesRes.json() as any[];
+    assert.equal(enquiries.length, 1);
+    assert.equal(enquiries[0].email, 'amit@example.com');
+    const auditRes = await fetch(`${baseUrl}/api/v1/platform/audit-logs?limit=100`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    const audit = await auditRes.json() as any[];
+    assert.ok(audit.some((entry) => entry.action === 'VIEW_PUBLIC_ENQUIRIES'));
   });
 
   it('Developer Portal generates OpenAPI spec and creates scoped API keys', async () => {

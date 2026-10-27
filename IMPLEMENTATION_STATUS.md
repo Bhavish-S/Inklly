@@ -5,11 +5,11 @@
 **Started:** 2026-10-25 (Asia/Kolkata)  
 **Current Phase:** Phase 10 — Verification in progress (not release-ready)
 
-> **Current evidence (2026-10-27):** `npm run build` passes across all workspaces (Vite reports a 1.22 MB main bundle warning). Latest `npm test` run passes: database 3, shared 12, agent 7, server 128 (150 total). `npm run lint` has no configured workspace lint scripts. Supabase Storage transport tests are mocked; production storage remains unverified. Historical phase checklists below describe intended/previously reported scope and are not proof of current production readiness.
+> **Current evidence (2026-10-27):** `npm run build` passes across all workspaces (Vite reports a 1.22 MB main bundle warning). Latest `npm test` run passes: database 3, shared 12, agent 7, server 131 (153 total). `npm run lint` has no configured workspace lint scripts. Supabase Storage transport tests are mocked; production storage remains unverified. Historical phase checklists below describe intended/previously reported scope and are not proof of current production readiness.
 
 **Latest implemented work:** health responses expose Render's deployed Git revision. Developer credential and webhook configuration require authentication; key/webhook management stays disabled unless explicitly enabled. Public upload concurrency is capped before JSON parsing. The developer portal no longer seeds fake keys, provider health, delivery history, or printer status, and no longer fabricates keys or successful explorer responses. Production file handling requires Supabase Storage and refuses local-disk fallback; document page counts and MIME types are derived from bytes. Render has not yet reported the revision stamp, and live Supabase verification is still required. The installer endpoint remains unavailable until a verified installer artifact exists.
 
-Merchant API key and webhook management remains gated unless product governance is approved. The server/web changes pass the full test and build commands recorded below; Razorpay, WhatsApp, production storage, Render and physical printing remain externally unverified.
+Merchant API key and webhook management remains gated unless product governance is approved. Public website enquiries now validate input, use an idempotency key, rate-limit by client address, persist in the database, and appear in an authenticated platform-owner/admin inbox; submitted personal data is no longer written to logs. The server/web changes pass the full test and build commands recorded below; Razorpay, WhatsApp, production storage, Render and physical printing remain externally unverified. Enquiry email delivery and an approved retention period are still outstanding.
 
 ---
 
