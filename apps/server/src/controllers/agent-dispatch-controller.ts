@@ -4,13 +4,15 @@ import * as fs from 'node:fs';
 import * as crypto from 'node:crypto';
 import { AgentRepository, ShopRepository, PrinterRepository, DatabaseService } from '@inklly/db';
 import { SpoolerResult } from '@inklly/shared';
+import { PrivateFileStorage } from '../services/private-file-storage';
 
 export class AgentDispatchController {
   constructor(
     private agentRepo: AgentRepository,
     private shopRepo: ShopRepository,
     private printerRepo: PrinterRepository,
-    private db: DatabaseService
+    private db: DatabaseService,
+    private fileStorage: PrivateFileStorage
   ) {}
 
   public enroll = (req: Request, res: Response) => {
@@ -94,7 +96,7 @@ export class AgentDispatchController {
     });
   };
 
-  public downloadPrintFile = (req: Request, res: Response) => {
+  public downloadPrintFile = async (req: Request, res: Response) => {
     const identity = (req as any).agent as { agentId: string; shopId: string };
     const file = this.db.queryOne<any>(
       `SELECT of.storage_key, of.file_name, of.mime_type, o.status
@@ -105,14 +107,15 @@ export class AgentDispatchController {
     if (!file || file.status === 'CANCELLED' || String(file.storage_key).startsWith('expired:')) {
       return res.status(404).json({ error: 'Print file is unavailable.' });
     }
-    const root = path.resolve(process.cwd(), 'uploads');
-    const filePath = path.resolve(process.cwd(), String(file.storage_key));
-    if (!filePath.startsWith(`${root}${path.sep}`) || !fs.existsSync(filePath)) {
-      return res.status(404).json({ error: 'Print file is unavailable.' });
-    }
+    let content: Buffer | null;
+    try { content = await this.fileStorage.read(String(file.storage_key), identity.shopId); }
+    catch { return res.status(503).json({ error: 'Private file storage is temporarily unavailable.' }); }
+    if (!content) return res.status(404).json({ error: 'Print file is unavailable.' });
     res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
-    return res.download(filePath, path.basename(String(file.file_name)));
+    res.setHeader('Content-Length', content.length);
+    res.setHeader('Content-Disposition', `attachment; filename="${path.basename(String(file.file_name)).replace(/[\r\n"\\]/g, '_')}"`);
+    return res.send(content);
   };
 
   public downloadAgent = (req: Request, res: Response) => {

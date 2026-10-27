@@ -12,6 +12,7 @@ import { createAdminRoutes } from './routes/admin-routes';
 import { createDeveloperRoutes } from './routes/developer-routes';
 import { assertSessionSecretConfigured } from './middleware/session-token';
 import { purgeExpiredPrintFiles } from './services/print-file-retention';
+import { PrivateFileStorage } from './services/private-file-storage';
 
 export function createApp(db?: DatabaseService): express.Express {
   assertSessionSecretConfigured();
@@ -30,11 +31,7 @@ export function createApp(db?: DatabaseService): express.Express {
     },
   }));
 
-  // Customer documents must never be exposed as guessable public static files.
-  const uploadsDir = path.join(process.cwd(), 'uploads');
-  if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir, { recursive: true });
-  }
+  // Customer files use private storage; production refuses ephemeral local-disk fallback.
   const downloadsDir = path.join(process.cwd(), 'downloads');
   if (!fs.existsSync(downloadsDir)) {
     fs.mkdirSync(downloadsDir, { recursive: true });
@@ -42,12 +39,14 @@ export function createApp(db?: DatabaseService): express.Express {
   // Public downloads are deliberately disabled. Agent installers need an owner-scoped flow.
 
   const database = db || DatabaseService.getInstance(process.env.DATABASE_URL || process.env.DB_PATH || path.join(process.cwd(), 'data', 'inklly.db'));
+  const fileStorage = new PrivateFileStorage();
+  app.locals.privateFileStorage = fileStorage;
   seedDatabase(database);
   const retentionTimer = setInterval(() => {
-    try { purgeExpiredPrintFiles(database); } catch (error) { console.error('[File retention] Cleanup pass failed', error); }
+    void purgeExpiredPrintFiles(database, fileStorage).catch((error) => console.error('[File retention] Cleanup pass failed', error));
   }, 15 * 60 * 1000);
   retentionTimer.unref();
-  try { purgeExpiredPrintFiles(database); } catch (error) { console.error('[File retention] Initial cleanup pass failed', error); }
+  void purgeExpiredPrintFiles(database, fileStorage).catch((error) => console.error('[File retention] Initial cleanup pass failed', error));
 
   app.get(['/health', '/api/v1/health'], (_req, res) => {
     res.json({
@@ -69,11 +68,11 @@ export function createApp(db?: DatabaseService): express.Express {
   });
 
   // Mount API routers
-  app.use('/api/v1/portal', createPortalRoutes(database));
+  app.use('/api/v1/portal', createPortalRoutes(database, fileStorage));
   app.use('/api/v1/auth', createAuthRoutes(database));
-  app.use('/api/v1/merchant', createMerchantRoutes(database));
+  app.use('/api/v1/merchant', createMerchantRoutes(database, fileStorage));
   app.use('/api/v1/payments', createPaymentRoutes(database));
-  app.use('/api/v1/agent', createAgentRoutes(database));
+  app.use('/api/v1/agent', createAgentRoutes(database, fileStorage));
   app.use('/api/v1/platform', createAdminRoutes(database));
   app.use('/api/v1/developer', createDeveloperRoutes(database));
 
@@ -89,10 +88,15 @@ export function createApp(db?: DatabaseService): express.Express {
 if (require.main === module) {
   const PORT = process.env.PORT || 4000;
   const app = createApp();
-  app.listen(PORT, () => {
-    console.log(`🚀 [Inklly Server] listening on http://localhost:${PORT}`);
-    console.log(`📄 [QR Portal] http://localhost:${PORT}/api/v1/portal/shop/campus1`);
-    console.log(`⚙️  [Merchant API] http://localhost:${PORT}/api/v1/merchant/dashboard`);
-    console.log(`🔌 [Agent Poll] http://localhost:${PORT}/api/v1/agent/poll-commands?shopId=shop-campus-1`);
+  void app.locals.privateFileStorage.verifyReady().then(() => {
+    app.listen(PORT, () => {
+      console.log(`🚀 [Inklly Server] listening on port ${PORT}`);
+      console.log(`📄 [QR Portal] /api/v1/portal/shop/:shop_code`);
+      console.log(`⚙️  [Merchant API] /api/v1/merchant/dashboard`);
+      console.log(`🔌 [Agent Poll] /api/v1/agent/poll-commands`);
+    });
+  }).catch((error: any) => {
+    console.error('[Inklly Startup] Private file storage is not ready:', error.message || error);
+    process.exitCode = 1;
   });
 }

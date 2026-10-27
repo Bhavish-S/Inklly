@@ -244,6 +244,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
             const localBlobUrl = URL.createObjectURL(f);
             let storageKey = '';
             let serverFileUrl = '';
+            let serverPageCount = detectedPages;
 
             try {
               const uploadRes = await api.uploadDocument({
@@ -253,6 +254,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                 shopId: shop.id || 'shop-campus-1',
                 pageCount: detectedPages,
               });
+              if (Number.isInteger(uploadRes?.pageCount) && uploadRes.pageCount > 0) serverPageCount = uploadRes.pageCount;
               if (uploadRes?.storageKey) {
                 storageKey = uploadRes.storageKey;
               }
@@ -275,7 +277,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
               file: f,
               fileName: f.name,
               fileSizeText: `${(f.size / (1024 * 1024)).toFixed(1)} MB`,
-              pageCount: detectedPages,
+              pageCount: serverPageCount,
               previewUrl: localBlobUrl,
               storageKey,
               fileUrl: localBlobUrl,

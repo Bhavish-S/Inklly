@@ -12,8 +12,9 @@ import {
 } from '@inklly/db';
 import { authenticate, requireRole, requirePermission, enforceTenantIsolation } from '../middleware/auth';
 import { ShopPaymentCredentialsService } from '../services/shop-payment-credentials';
+import { PrivateFileStorage } from '../services/private-file-storage';
 
-export function createMerchantRoutes(db: DatabaseService): Router {
+export function createMerchantRoutes(db: DatabaseService, fileStorage: PrivateFileStorage): Router {
   const router = Router();
 
   const shopRepo = new ShopRepository(db);
@@ -32,7 +33,8 @@ export function createMerchantRoutes(db: DatabaseService): Router {
     ledgerRepo,
     new ShopPaymentCredentialsService(db),
     new AgentRepository(db),
-    db
+    db,
+    fileStorage
   );
 
   // Apply authentication and tenant isolation

@@ -1,5 +1,6 @@
 import { describe, it, before, after } from 'node:test';
 import * as assert from 'node:assert/strict';
+import { makeTestPdf } from './test-pdf';
 import { createApp } from '../index';
 import { DatabaseService } from '@inklly/db';
 import * as http from 'node:http';
@@ -58,7 +59,7 @@ describe('Milestone 1 Challenger Adversarial Stress Suite', { concurrency: false
       body: JSON.stringify({
         shopId: tenant1ShopId,
         fileName: 'idor-check.pdf',
-        fileData: Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF').toString('base64'),
+        fileData: makeTestPdf(2).toString('base64'),
         pageCount: 2,
       }),
     });

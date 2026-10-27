@@ -3,6 +3,7 @@ import * as assert from 'node:assert/strict';
 import { createApp } from '../index';
 import { DatabaseService } from '@inklly/db';
 import * as http from 'node:http';
+import { makeTestPdf } from './test-pdf';
 
 describe('Inklly Backend API Integration Test Suite', { concurrency: false }, () => {
   let server: http.Server;
@@ -88,7 +89,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       body: JSON.stringify({
         shopId: 'shop-campus-1',
         fileName: 'notes.pdf',
-        fileData: Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF').toString('base64'),
+        fileData: makeTestPdf(10).toString('base64'),
         pageCount: 10,
       }),
     });
@@ -143,6 +144,33 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     const statusBody = await statusRes.json();
     assert.equal(statusBody.customerName, 'Priya Patel');
     assert.equal(statusBody.totalAmountPaise, 2000);
+  });
+
+  it('prices PDFs from stored page structure instead of client-supplied page counts', async () => {
+    const uploadRes = await fetch(`${baseUrl}/api/v1/portal/upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopId: 'shop-campus-1', fileName: 'one-page.pdf', fileData: makeTestPdf(1).toString('base64'), pageCount: 500 }),
+    });
+    assert.equal(uploadRes.status, 201);
+    const upload = await uploadRes.json() as any;
+    assert.equal(upload.pageCount, 1);
+
+    const orderRes = await fetch(`${baseUrl}/api/v1/portal/orders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopId: 'shop-campus-1',
+        paymentMethod: 'CASH_ON_COLLECTION',
+        files: [{
+          fileName: 'one-page.pdf', storageKey: upload.storageKey, pageCount: 500,
+          options: { colorMode: 'bw', duplexMode: 'simplex', paperSize: 'A4', copies: 1 },
+        }],
+      }),
+    });
+    assert.equal(orderRes.status, 201);
+    const order = await orderRes.json() as any;
+    assert.equal(order.totalAmountPaise, 200);
   });
 
   it('Authenticates merchant owner and returns JWT session payload', async () => {

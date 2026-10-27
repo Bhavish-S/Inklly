@@ -1,5 +1,6 @@
 import { describe, it, before, after } from 'node:test';
 import * as assert from 'node:assert/strict';
+import { makeTestPdf } from './test-pdf';
 import { createApp } from '../index';
 import { DatabaseService } from '@inklly/db';
 import * as http from 'node:http';
@@ -21,7 +22,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       body: JSON.stringify({
         shopId,
         fileName,
-        fileData: Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF').toString('base64'),
+        fileData: makeTestPdf(pageCount).toString('base64'),
         pageCount,
       }),
     });
@@ -209,7 +210,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
     let uploadedKey: string;
 
     it('T1.11: Uploads document in Base64 format and returns storageKey and file size', async () => {
-      const dummyPdfContent = Buffer.from('%PDF-1.4 demo test document stream').toString('base64');
+      const dummyPdfContent = makeTestPdf(5).toString('base64');
       const res = await fetch(`${baseUrl}/api/v1/portal/upload`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1236,7 +1237,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           fileName: 'Aadhaar_Card_Scan.pdf',
-          fileData: Buffer.from('%PDF-1.4 ID Scan Document').toString('base64'),
+          fileData: makeTestPdf(2).toString('base64'),
           mimeType: 'application/pdf',
           shopId: 'shop-campus-1',
           pageCount: 2,

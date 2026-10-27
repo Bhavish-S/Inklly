@@ -1,6 +1,5 @@
 import { Request, Response } from 'express';
 import * as crypto from 'node:crypto';
-import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { DatabaseService } from '@inklly/db';
 import {
@@ -14,6 +13,7 @@ import {
 } from '@inklly/db';
 import { OrderStatus, ROLE_PRESETS } from '@inklly/shared';
 import { ShopPaymentCredentialsService } from '../services/shop-payment-credentials';
+import { PrivateFileStorage } from '../services/private-file-storage';
 
 export class MerchantController {
   constructor(
@@ -25,7 +25,8 @@ export class MerchantController {
     private ledgerRepo: LedgerRepository,
     private paymentCredentials: ShopPaymentCredentialsService,
     private agentRepo: AgentRepository,
-    private db: DatabaseService
+    private db: DatabaseService,
+    private fileStorage: PrivateFileStorage
   ) {}
 
   private presentOrder(order: any) {
@@ -35,7 +36,7 @@ export class MerchantController {
     }) };
   }
 
-  public downloadOrderFile = (req: Request, res: Response) => {
+  public downloadOrderFile = async (req: Request, res: Response) => {
     const shopId = req.user?.shopId;
     if (!shopId) return res.status(403).json({ error: 'Shop account required' });
     const row = this.db.queryOne<any>(
@@ -43,14 +44,16 @@ export class MerchantController {
       [String(req.params.fileId), String(req.params.id), shopId]
     );
     if (!row || String(row.storage_key).startsWith('expired:')) return res.status(404).json({ error: 'Print file is unavailable.' });
-    const uploadsRoot = path.resolve(process.cwd(), 'uploads');
-    const filePath = path.resolve(process.cwd(), String(row.storage_key));
-    if (!filePath.startsWith(`${uploadsRoot}${path.sep}`) || !fs.existsSync(filePath)) return res.status(404).json({ error: 'Print file is unavailable.' });
+    let content: Buffer | null;
+    try { content = await this.fileStorage.read(String(row.storage_key), shopId); }
+    catch { return res.status(503).json({ error: 'Private file storage is temporarily unavailable.' }); }
+    if (!content) return res.status(404).json({ error: 'Print file is unavailable.' });
     res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
     res.setHeader('Content-Disposition', `inline; filename="${path.basename(String(row.file_name)).replace(/[\r\n"\\]/g, '_')}"`);
-    return res.sendFile(filePath);
+    res.setHeader('Content-Length', content.length);
+    return res.send(content);
   };
 
   private getShopId(req: Request): string {

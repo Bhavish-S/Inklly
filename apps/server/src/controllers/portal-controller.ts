@@ -1,17 +1,18 @@
 import { Request, Response } from 'express';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import { DatabaseService, OrderRepository, PricingRepository, ShopRepository } from '@inklly/db';
 import { calculateQuote, PriceQuoteRequest, OrderStatus, PaymentStatus } from '@inklly/shared';
 import { ShopPaymentCredentialsService } from '../services/shop-payment-credentials';
+import { PrivateFileStorage } from '../services/private-file-storage';
+import { inspectDocument } from '../services/document-page-count';
 
 export class PortalController {
   constructor(
     private shopRepo: ShopRepository,
     private pricingRepo: PricingRepository,
     private orderRepo: OrderRepository,
-    private paymentCredentials: ShopPaymentCredentialsService
+    private paymentCredentials: ShopPaymentCredentialsService,
+    private fileStorage: PrivateFileStorage
   ) {}
 
   public getShopByCode = (req: Request, res: Response) => {
@@ -80,7 +81,7 @@ export class PortalController {
     }
   };
 
-  public submitOrder = (req: Request, res: Response) => {
+  public submitOrder = async (req: Request, res: Response) => {
     const {
       shopId: rawShopId,
       shopCode,
@@ -116,29 +117,36 @@ export class PortalController {
     const rateRules = this.pricingRepo.getRateRules(shopId);
     if (rateRules.length === 0) return res.status(422).json({ error: 'This shop has no print rates configured.' });
 
-    let safeFiles: any[];
+    const safeFiles: any[] = [];
     try {
-      safeFiles = files.map((file: any) => {
+      for (const file of files) {
         const storageKey = typeof file.storageKey === 'string' ? file.storageKey : '';
-        const expectedPrefix = `uploads/${shopId}/`;
-        if (!storageKey.startsWith(expectedPrefix) || storageKey.includes('..') || storageKey.includes('\\') || /^https?:/i.test(storageKey)) {
+        if (!this.fileStorage.isValidShopKey(storageKey, shopId)) {
           throw new Error('A file upload is missing or does not belong to this shop. Please upload it again.');
         }
-        const fullPath = path.resolve(process.cwd(), storageKey);
-        const uploadRoot = path.resolve(process.cwd(), expectedPrefix);
-        if (!fullPath.startsWith(`${uploadRoot}${path.sep}`) || !fs.existsSync(fullPath)) {
+        let content: Buffer | null;
+        try { content = await this.fileStorage.read(storageKey, shopId); }
+        catch { return res.status(503).json({ error: 'Private file storage is temporarily unavailable.' }); }
+        if (!content) {
           throw new Error('A file upload could not be found. Please upload it again.');
         }
+        let inspected;
+        try { inspected = await inspectDocument(content); }
+        catch (error: any) { return res.status(422).json({ error: error.message || 'The uploaded document could not be inspected.' }); }
         if (typeof file.fileName !== 'string' || !file.fileName.trim() || file.fileName.length > 180 ||
             !Number.isInteger(Number(file.pageCount)) || Number(file.pageCount) < 1 || Number(file.pageCount) > 50000 ||
             !file.options || typeof file.options !== 'object' || !Number.isInteger(Number(file.options.copies)) ||
             Number(file.options.copies) < 1 || Number(file.options.copies) > 500) {
           throw new Error('A file has invalid print settings. Please review the order and try again.');
         }
-        return file;
-      });
+        // The client may display a page count, but server-derived metadata is the
+        // sole input used for quotes, persisted order files, and payment amounts.
+        safeFiles.push({ ...file, pageCount: inspected.pageCount, mimeType: inspected.mimeType, fileSizeBytes: content.length });
+      }
     } catch (error: any) {
-      return res.status(422).json({ error: error.message || 'A file upload could not be used.' });
+      const message = error.message || 'A file upload could not be used.';
+      const storageUnavailable = message.startsWith('Private storage');
+      return res.status(storageUnavailable ? 503 : 422).json({ error: storageUnavailable ? 'Private file storage is temporarily unavailable.' : message });
     }
 
     let serverQuote;
@@ -209,9 +217,9 @@ export class PortalController {
     });
   };
 
-  public uploadDocument = (req: Request, res: Response) => {
+  public uploadDocument = async (req: Request, res: Response) => {
     try {
-      const { fileName, fileData, shopId, pageCount } = req.body;
+      const { fileName, fileData, shopId } = req.body;
       if (typeof fileName !== 'string' || !fileName.trim() || fileName.length > 180 || typeof fileData !== 'string') {
         return res.status(400).json({ error: 'fileName and fileData (Base64) are required' });
       }
@@ -220,14 +228,8 @@ export class PortalController {
       if (!shop || !shop.isActive) return res.status(404).json({ error: 'Shop not found or currently offline.' });
       const safeShopId = shop.id.replace(/[^a-zA-Z0-9_-]/g, '_');
       const sanitizedName = fileName.replace(/[^a-zA-Z0-9_.-]/g, '_');
-      const uploadDir = path.join(process.cwd(), 'uploads', safeShopId);
-      if (!fs.existsSync(uploadDir)) {
-        fs.mkdirSync(uploadDir, { recursive: true });
-      }
-
       const uniquePrefix = crypto.randomUUID();
       const savedFileName = `${uniquePrefix}-${sanitizedName}`;
-      const filePath = path.join(uploadDir, savedFileName);
 
       // Strip Base64 header if present (e.g. "data:application/pdf;base64,")
       const base64Content = fileData.includes('base64,') ? fileData.split('base64,')[1] : fileData;
@@ -237,28 +239,24 @@ export class PortalController {
       }
       const buffer = Buffer.from(base64Content, 'base64');
       if (buffer.length === 0 || buffer.length > maxFileBytes) return res.status(413).json({ error: 'File exceeds the upload size limit.' });
-      const isPdf = buffer.subarray(0, 5).toString('ascii') === '%PDF-';
-      const isJpeg = buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
-      const isPng = buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
-      if (!isPdf && !isJpeg && !isPng) return res.status(415).json({ error: 'Upload a PDF, JPEG, or PNG file.' });
-      fs.writeFileSync(filePath, buffer);
-
-      const fileUrl = `/uploads/${safeShopId}/${savedFileName}`;
-      const detectedPages = pageCount || 1;
+      let inspected;
+      try { inspected = await inspectDocument(buffer); }
+      catch (error: any) { return res.status(415).json({ error: error.message || 'Upload a valid PDF, JPEG, or PNG file.' }); }
+      const detectedMimeType = inspected.mimeType;
+      const storageKey = await this.fileStorage.store(safeShopId, savedFileName, detectedMimeType, buffer);
 
       res.status(201).json({
         success: true,
         fileName,
         savedFileName,
-        fileUrl,
-        storageKey: `uploads/${safeShopId}/${savedFileName}`,
+        storageKey,
         fileSizeBytes: buffer.length,
-        mimeType: isPdf ? 'application/pdf' : isJpeg ? 'image/jpeg' : 'image/png',
-        pageCount: detectedPages,
+        mimeType: detectedMimeType,
+        pageCount: inspected.pageCount,
       });
     } catch (err: any) {
-      console.error('[Upload Error]', err);
-      res.status(500).json({ error: 'Failed to process document upload', message: err.message });
+      console.error('[Upload Error]', err.message || err);
+      res.status(err.message?.startsWith('Private storage') ? 503 : 500).json({ error: 'Failed to securely store document.' });
     }
   };
 

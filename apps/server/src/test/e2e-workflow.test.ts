@@ -3,6 +3,7 @@ import * as assert from 'node:assert/strict';
 import { createApp } from '../index';
 import { DatabaseService } from '@inklly/db';
 import * as http from 'node:http';
+import { makeTestPdf } from './test-pdf';
 
 describe('Inklly End-to-End Automated Printing & Multi-Plan Workflow Test Suite', { concurrency: false }, () => {
   let server: http.Server;
@@ -85,7 +86,7 @@ describe('Inklly End-to-End Automated Printing & Multi-Plan Workflow Test Suite'
 
     const uploadRes = await fetch(`${baseUrl}/api/v1/portal/upload`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shopId: 'shop-campus-1', fileName: 'Annual_Project_Dissertation.pdf', fileData: Buffer.from('%PDF-1.4\n%%EOF').toString('base64'), pageCount: 20 }),
+      body: JSON.stringify({ shopId: 'shop-campus-1', fileName: 'Annual_Project_Dissertation.pdf', fileData: makeTestPdf(20).toString('base64'), pageCount: 20 }),
     });
     assert.equal(uploadRes.status, 201);
     uploadedStorageKey = (await uploadRes.json() as any).storageKey;

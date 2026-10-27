@@ -17,6 +17,10 @@ Set these values in Render's Environment settings. Never commit their values to 
 | `DATABASE_URL` | Supabase PostgreSQL connection string for the production database. Use the connection method supported by the deployed network and keep the password private. |
 | `CORS_ORIGIN` | Comma-separated exact frontend origins, such as `https://inklly.vercel.app`. |
 | `RAZORPAY_CREDENTIALS_ENCRYPTION_KEY` | Required before shops can save Razorpay credentials. Generate a base64-encoded 32-byte key with `openssl rand -base64 32`; preserve it because rotating it makes saved credentials unreadable. |
+| `STORAGE_DRIVER` | Set to `supabase` in production. The server refuses to fall back to ephemeral local disk. |
+| `SUPABASE_URL` | HTTPS URL of the Supabase project that owns the private Storage bucket. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server-only Supabase service role key. Never expose it to the browser or commit it. |
+| `SUPABASE_STORAGE_BUCKET` | Existing bucket name, default `customer-print-files`. The bucket must be private; startup checks that `public` is false. |
 
 Render supplies `PORT`. If the database has no active platform owner, set `PLATFORM_OWNER_EMAIL` and a unique `PLATFORM_OWNER_PASSWORD` for bootstrap, then remove the password after provisioning. Payment provider credentials are entered per shop; do not set a shared platform Razorpay secret for customer checkout.
 
@@ -32,6 +36,8 @@ If the log says `Production requires a JWT_SECRET of at least 32 bytes`, the bui
 4. Check `GET /api/v1/developer/keys` without an Authorization header returns HTTP 401. A 200 response indicates Render is running stale or incorrect code; do not use it with live customer data.
 5. Log in with an authorized account, then verify the protected API and shop data persist across a service restart.
 
-## Current storage limitation
+## File storage setup
 
-Customer uploads currently use the server's local `uploads/` directory. This is not durable private object storage on an ephemeral Render instance. Do not use real or sensitive customer documents in production until private persistent storage and the configured 24-hour post-completion deletion workflow have been deployed and verified. The `UPLOAD_DIR` and `STORAGE_DRIVER` sample variables do not currently enable an object-storage provider.
+Create the configured bucket in Supabase Storage as **private** before deploying. The service uploads and reads through Supabase's authenticated Storage API; neither the browser nor the agent receives a public object URL. Completed or cancelled order files are deleted after 24 hours, and unclaimed uploads are purged after 48 hours. Verify these behaviors against the production bucket before using real customer documents. Local disk remains available only for development/test runs.
+
+If migrating an existing deployment from local disk, migrate any files that must be retained to the same shop-scoped object paths in the new bucket before switching `STORAGE_DRIVER`; database file keys are not rewritten during that switch.

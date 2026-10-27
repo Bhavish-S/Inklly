@@ -5,9 +5,9 @@
 **Started:** 2026-10-25 (Asia/Kolkata)  
 **Current Phase:** Phase 10 — Verification in progress (not release-ready)
 
-> **Current evidence (2026-10-27):** Database, shared, server, and web production builds pass. The fresh server suite now reports 118 passing and 0 failing. The detailed output is in `/tmp/inklly-server-current4.log` for this local run. Historical phase checklists below describe intended/previously reported scope and are not proof of current production readiness.
+> **Current evidence (2026-10-27):** `npm run build` passes across all workspaces (Vite reports a 1.22 MB main bundle warning). `npm test` passes: database 3, shared 12, agent 7, server 123 (145 total). Supabase Storage transport tests are mocked; production storage remains unverified. Historical phase checklists below describe intended/previously reported scope and are not proof of current production readiness.
 
-**Latest implemented work:** merchant file paths are no longer included in order responses. Merchant document access now goes through an authenticated, shop-scoped endpoint with private cache headers; the dashboard opens the returned file through an authenticated Blob request. The installer's download metadata fails closed until a verified installer artifact exists.
+**Latest implemented work:** production file handling now requires Supabase Storage configuration and refuses local-disk fallback. The service checks that the configured bucket exists and is private; customer uploads, shop-scoped merchant previews, authenticated agent downloads, and retention cleanup share that storage layer. Object existence checks use Supabase's object-info endpoint. PDF page counts and MIME types are derived from stored document bytes at upload and order submission; client-supplied page counts no longer determine the order charge or persisted file metadata. Local development continues to use disk. Merchant order responses omit raw storage keys. Live Supabase/Render verification is still required. The installer endpoint remains unavailable until a verified installer artifact exists.
 
 ---
 

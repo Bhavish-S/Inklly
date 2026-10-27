@@ -1,14 +1,15 @@
 import { Router } from 'express';
 import { AgentDispatchController } from '../controllers/agent-dispatch-controller';
 import { DatabaseService, AgentRepository, ShopRepository, PrinterRepository } from '@inklly/db';
+import { PrivateFileStorage } from '../services/private-file-storage';
 
-export function createAgentRoutes(db: DatabaseService): Router {
+export function createAgentRoutes(db: DatabaseService, fileStorage: PrivateFileStorage): Router {
   const router = Router();
   const agentRepo = new AgentRepository(db);
   const shopRepo = new ShopRepository(db);
   const printerRepo = new PrinterRepository(db);
 
-  const controller = new AgentDispatchController(agentRepo, shopRepo, printerRepo, db);
+  const controller = new AgentDispatchController(agentRepo, shopRepo, printerRepo, db, fileStorage);
 
   const authenticateAgent = (req: any, res: any, next: any) => {
     const agentId = req.header('x-agent-id');
