@@ -54,6 +54,10 @@ export function createApp(db?: DatabaseService): express.Express {
       service: 'Inklly Backend Server',
       timestamp: new Date().toISOString(),
       version: '1.0.0',
+      // Render provides this SHA for each deployed service revision. Returning
+      // it makes runtime/deployment verification possible without exposing
+      // configuration or secret values.
+      revision: process.env.RENDER_GIT_COMMIT || null,
     });
   });
 

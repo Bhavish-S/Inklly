@@ -4,6 +4,7 @@ import { createApp } from '../index';
 import { DatabaseService } from '@inklly/db';
 import * as http from 'node:http';
 import { makeTestPdf } from './test-pdf';
+import { createSessionToken } from '../middleware/session-token';
 
 describe('Inklly Backend API Integration Test Suite', { concurrency: false }, () => {
   let server: http.Server;
@@ -12,8 +13,10 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
   let merchantToken: string;
   let adminToken: string;
   let cashOrderId: string;
+  const originalExternalApiSetting = process.env.ENABLE_EXTERNAL_API_ACCESS;
 
   before(async () => {
+    process.env.ENABLE_EXTERNAL_API_ACCESS = 'true';
     db = new DatabaseService(':memory:');
     const app = createApp(db);
     await new Promise<void>((resolve) => {
@@ -28,6 +31,8 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
   after(() => {
     server.close();
     db.close();
+    if (originalExternalApiSetting === undefined) delete process.env.ENABLE_EXTERNAL_API_ACCESS;
+    else process.env.ENABLE_EXTERNAL_API_ACCESS = originalExternalApiSetting;
   });
 
   it('Health Check responds with HEALTHY status', async () => {
@@ -35,6 +40,50 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.status, 'HEALTHY');
+    assert.ok(Object.hasOwn(body, 'revision'));
+  });
+
+  it('keeps developer credentials and webhook configuration behind authentication', async () => {
+    for (const path of ['/api/v1/developer/keys', '/api/v1/developer/webhooks']) {
+      const res = await fetch(`${baseUrl}${path}`);
+      assert.equal(res.status, 401, `${path} must reject anonymous requests`);
+    }
+  });
+
+  it('keeps merchant self-service API credentials disabled until governance approval', async () => {
+    const loginRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'owner@campusprint.in', password: 'DemoOwnerPassword123!' }),
+    });
+    assert.equal(loginRes.status, 200);
+    merchantToken = (await loginRes.json()).token;
+    process.env.ENABLE_EXTERNAL_API_ACCESS = 'false';
+    try {
+      for (const path of ['/api/v1/developer/keys', '/api/v1/developer/webhooks']) {
+        const res = await fetch(`${baseUrl}${path}`, { headers: { Authorization: `Bearer ${merchantToken}` } });
+        assert.equal(res.status, 403, `${path} must remain unavailable to merchants by default`);
+        assert.equal((await res.json()).code, 'EXTERNAL_API_ACCESS_DISABLED');
+      }
+    } finally {
+      process.env.ENABLE_EXTERNAL_API_ACCESS = 'true';
+    }
+  });
+
+  it('does not create developer webhook configuration without an organization membership', async () => {
+    const developerToken = createSessionToken({
+      userId: 'developer-without-org',
+      email: 'developer@example.invalid',
+      role: 'DEVELOPER',
+      permissions: [],
+    });
+    const res = await fetch(`${baseUrl}/api/v1/developer/webhooks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${developerToken}` },
+      body: JSON.stringify({ targetUrl: 'https://example.invalid/hook' }),
+    });
+    assert.equal(res.status, 403);
+    assert.match((await res.json()).error, /organization membership/i);
   });
 
   it('QR Portal retrieves shop information by shop_code', async () => {

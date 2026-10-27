@@ -15,6 +15,10 @@ export class DeveloperController {
   }
 
   public getOpenApiSpec = (req: Request, res: Response) => {
+    const configuredPublicBase = (process.env.API_PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '');
+    const servers = configuredPublicBase
+      ? [{ url: `${configuredPublicBase}/api/v1`, description: 'Configured Inklly API' }]
+      : [{ url: 'http://localhost:4000/api/v1', description: 'Local Development API' }];
     res.json({
       openapi: '3.0.3',
       info: {
@@ -23,16 +27,7 @@ export class DeveloperController {
         description:
           'Authoritative REST API specification for Inklly Print OS, customer ordering, edge agent dispatch, and automated ledgers.',
       },
-      servers: [
-        {
-          url: 'http://localhost:4000/api/v1',
-          description: 'Local Development Server',
-        },
-        {
-          url: 'https://api.inklly.com/api/v1',
-          description: 'Production Cloud Gateway',
-        },
-      ],
+      servers,
       paths: {
         '/portal/shop/{shop_code}': {
           get: {
@@ -143,7 +138,8 @@ export class DeveloperController {
   };
 
   public createWebhook = (req: Request, res: Response) => {
-    const orgId = req.user?.organizationId || 'org-campus-network';
+    const orgId = this.organizationId(req, res);
+    if (!orgId) return;
     const { targetUrl, eventTypes } = req.body;
 
     if (!targetUrl) {
@@ -167,27 +163,25 @@ export class DeveloperController {
   };
 
   public testWebhook = (req: Request, res: Response) => {
-    const { targetUrl } = req.body;
-
-    // Simulate webhook dispatch payload
+    const supportedEvents = ['order.created', 'order.status_changed', 'payment.succeeded', 'print_job.jammed', 'spooler.offline'];
+    const requestedEvent = String(req.body?.eventType || 'order.status_changed');
+    const eventType = supportedEvents.includes(requestedEvent) ? requestedEvent : 'order.status_changed';
     const testPayload = {
-      eventId: `evt_test_${Date.now()}`,
-      eventType: 'order.status_changed',
+      eventId: 'evt_preview_synthetic',
+      eventType,
       timestamp: new Date().toISOString(),
       data: {
-        orderId: 'ord-test-sample',
-        orderNumber: 'INK-20261025-0042',
+        orderId: 'ord_example',
+        orderNumber: 'INK-EXAMPLE-0001',
         status: 'READY_FOR_COLLECTION',
-        totalAmountPaise: 2500,
       },
     };
 
     res.json({
-      success: true,
-      simulatedTargetUrl: targetUrl || 'https://webhook.site/demo',
-      dispatchedPayload: testPayload,
-      statusCode: 200,
-      message: 'Simulated webhook event dispatched successfully',
+      mode: 'PREVIEW_ONLY',
+      delivered: false,
+      payload: testPayload,
+      message: 'Synthetic payload preview generated. No webhook request was sent or signed.',
     });
   };
 }

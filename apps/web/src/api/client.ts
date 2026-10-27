@@ -1,5 +1,5 @@
 const isProduction = typeof window !== 'undefined' && !['localhost', '127.0.0.1'].includes(window.location.hostname);
-const API_BASE = (import.meta.env.VITE_API_BASE as string) || (isProduction ? 'https://inklly.onrender.com/api/v1' : 'http://localhost:4000/api/v1');
+export const API_BASE = (import.meta.env.VITE_API_BASE as string) || (isProduction ? 'https://inklly.onrender.com/api/v1' : 'http://localhost:4000/api/v1');
 
 function getHeaders(customHeaders: Record<string, string> = {}): Record<string, string> {
   const token = localStorage.getItem('inklly_token');
@@ -324,11 +324,13 @@ export const api = {
 
   async getApiKeys() {
     const res = await fetch(`${API_BASE}/developer/keys`, { headers: getHeaders() });
+    if (!res.ok) throw new Error((await res.json()).error || 'Could not load API keys');
     return res.json();
   },
 
   async getWebhooks() {
     const res = await fetch(`${API_BASE}/developer/webhooks`, { headers: getHeaders() });
+    if (!res.ok) throw new Error((await res.json()).error || 'Could not load webhooks');
     return res.json();
   },
 
@@ -338,6 +340,7 @@ export const api = {
       headers: getHeaders(),
       body: JSON.stringify(keyData),
     });
+    if (!res.ok) throw new Error((await res.json()).error || 'Could not create API key');
     return res.json();
   },
 
@@ -346,15 +349,17 @@ export const api = {
       method: 'DELETE',
       headers: getHeaders(),
     });
+    if (!res.ok) throw new Error((await res.json()).error || 'Could not revoke API key');
     return res.json();
   },
 
-  async testWebhook(targetUrl: string) {
+  async testWebhook(eventType: string) {
     const res = await fetch(`${API_BASE}/developer/test-webhook`, {
       method: 'POST',
       headers: getHeaders(),
-      body: JSON.stringify({ targetUrl }),
+      body: JSON.stringify({ eventType }),
     });
+    if (!res.ok) throw new Error((await res.json()).error || 'Could not generate webhook preview');
     return res.json();
   },
 };

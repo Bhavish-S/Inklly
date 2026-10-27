@@ -21,6 +21,7 @@ Set these values in Render's Environment settings. Never commit their values to 
 | `SUPABASE_URL` | HTTPS URL of the Supabase project that owns the private Storage bucket. |
 | `SUPABASE_SERVICE_ROLE_KEY` | Server-only Supabase service role key. Never expose it to the browser or commit it. |
 | `SUPABASE_STORAGE_BUCKET` | Existing bucket name, default `customer-print-files`. The bucket must be private; startup checks that `public` is false. |
+| `ENABLE_EXTERNAL_API_ACCESS` | Leave unset or `false` until API product governance/security approval. Setting `true` enables developer key and webhook management on the server; set the matching public Vercel build variable `VITE_ENABLE_EXTERNAL_API_ACCESS=true` only after that approval. |
 
 Render supplies `PORT`. If the database has no active platform owner, set `PLATFORM_OWNER_EMAIL` and a unique `PLATFORM_OWNER_PASSWORD` for bootstrap, then remove the password after provisioning. Payment provider credentials are entered per shop; do not set a shared platform Razorpay secret for customer checkout.
 
@@ -32,7 +33,7 @@ If the log says `Production requires a JWT_SECRET of at least 32 bytes`, the bui
 
 1. Confirm Render is deploying the current `main` commit, not an older revision.
 2. Wait for the build and service health check to succeed. The build succeeding does not prove the server started correctly.
-3. Check `GET /health` returns HTTP 200.
+3. Check `GET /health` returns HTTP 200 and its `revision` equals the Git SHA Render is expected to run. Render supplies `RENDER_GIT_COMMIT`; the endpoint returns only this public revision, never runtime secrets.
 4. Check `GET /api/v1/developer/keys` without an Authorization header returns HTTP 401. A 200 response indicates Render is running stale or incorrect code; do not use it with live customer data.
 5. Log in with an authorized account, then verify the protected API and shop data persist across a service restart.
 

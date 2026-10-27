@@ -14,6 +14,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
   let newMerchantToken: string;
   let newShopId: string;
   let newShopCode: string;
+  const originalExternalApiSetting = process.env.ENABLE_EXTERNAL_API_ACCESS;
 
   const uploadCustomerFile = async (shopId: string, fileName: string, pageCount = 1) => {
     const response = await fetch(`${baseUrl}/api/v1/portal/upload`, {
@@ -41,6 +42,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
   };
 
   before(async () => {
+    process.env.ENABLE_EXTERNAL_API_ACCESS = 'true';
     db = new DatabaseService(':memory:');
     const app = createApp(db);
     await new Promise<void>((resolve) => {
@@ -73,6 +75,8 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
   after(() => {
     server.close();
     db.close();
+    if (originalExternalApiSetting === undefined) delete process.env.ENABLE_EXTERNAL_API_ACCESS;
+    else process.env.ENABLE_EXTERNAL_API_ACCESS = originalExternalApiSetting;
   });
 
   // =========================================================================
@@ -513,7 +517,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       createdKeyId = data.key.id;
     });
 
-    it('T1.26: Simulates developer webhook event dispatch with payload integrity', async () => {
+    it('T1.26: Returns a clearly marked synthetic webhook preview without claiming delivery', async () => {
       const res = await fetch(`${baseUrl}/api/v1/developer/test-webhook`, {
         method: 'POST',
         headers: {
@@ -521,15 +525,17 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
           Authorization: `Bearer ${merchantToken}`,
         },
         body: JSON.stringify({
-          targetUrl: 'https://webhook.site/test-receiver',
+          eventType: 'order.created',
         }),
       });
 
       assert.equal(res.status, 200);
       const body = (await res.json()) as any;
-      assert.equal(body.success, true);
-      assert.equal(body.statusCode, 200);
-      assert.ok(body.dispatchedPayload.eventId);
+      assert.equal(body.mode, 'PREVIEW_ONLY');
+      assert.equal(body.delivered, false);
+      assert.equal(body.payload.eventType, 'order.created');
+      assert.equal(body.payload.eventId, 'evt_preview_synthetic');
+      assert.match(body.message, /No webhook request was sent or signed/);
     });
 
     it('T1.27: Revokes developer API key and removes active credentials', async () => {

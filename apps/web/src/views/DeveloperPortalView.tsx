@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { api } from '../api/client';
+import { api, API_BASE } from '../api/client';
 import {
   CodeIcon,
   CopyIcon,
@@ -98,18 +98,18 @@ const API_ENDPOINTS: ApiEndpointDef[] = [
     path: '/merchant/orders?status=PENDING',
     summary: 'List Inbound Merchant Orders Queue',
     description: 'Polls incoming print orders placed via WhatsApp or Web Counter QR awaiting one-click spooling.',
-    headers: { Authorization: 'Bearer ink_live_demo_token_7721' },
+    headers: { Authorization: 'Bearer <authorized-token>' },
   },
   {
     id: 'dispatch_print',
     domain: 'Merchant POS',
     method: 'POST',
-    path: '/merchant/orders/ord-live-01/dispatch-print',
+    path: '/merchant/orders/{orderId}/print',
     summary: 'Dispatch Print Job to Windows Spooler',
     description: 'Sends the order to the local Windows Desktop Edge Agent on loopback port 8765 for automated hardware printing.',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: 'Bearer ink_live_demo_token_7721',
+      Authorization: 'Bearer <authorized-token>',
     },
     defaultBody: {
       printerName: 'Canon LBP2900',
@@ -147,8 +147,8 @@ export interface DeveloperPortalProps {
 }
 
 export const DeveloperPortalView: React.FC<DeveloperPortalProps> = ({ onNavigate }) => {
+  const externalApiAccessEnabled = import.meta.env.VITE_ENABLE_EXTERNAL_API_ACCESS === 'true';
   const [activeTab, setActiveTab] = useState<DevTab>('explorer');
-  const [activeEnv, setActiveEnv] = useState<'local' | 'sandbox' | 'production'>('local');
   const [isPingingIntegrations, setIsPingingIntegrations] = useState<boolean>(false);
   const [openApiSpec, setOpenApiSpec] = useState<any>(null);
   const [keys, setKeys] = useState<any[]>([]);
@@ -157,14 +157,6 @@ export const DeveloperPortalView: React.FC<DeveloperPortalProps> = ({ onNavigate
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Integrations Matrix State
-  const [integrations, setIntegrations] = useState([
-    { name: 'Core REST API Gateway', target: (import.meta.env.VITE_API_BASE as string) || 'http://localhost:4000/api/v1', status: 'ONLINE', latency: '4ms' },
-    { name: 'Windows Spooler Daemon', target: 'http://127.0.0.1:8765/health', status: 'ONLINE', latency: '12ms' },
-    { name: 'ACID Database (node:sqlite)', target: 'agent_queue.db (WAL Mode)', status: 'HEALTHY', latency: '0.8ms' },
-    { name: 'Razorpay UPI Webhook Gateway', target: 'whsec_rzp_live_9921', status: 'VERIFIED', latency: '28ms' },
-    { name: 'WhatsApp Cloud Webhook', target: 'graph.facebook.com/v20.0', status: 'VERIFIED', latency: '35ms' },
-  ]);
-
   // API Explorer State
   const [selectedEndpoint, setSelectedEndpoint] = useState<ApiEndpointDef>(API_ENDPOINTS[0]);
   const [requestHeadersInput, setRequestHeadersInput] = useState<string>('');
@@ -177,6 +169,7 @@ export const DeveloperPortalView: React.FC<DeveloperPortalProps> = ({ onNavigate
     headers: Record<string, string>;
     body: any;
   } | null>(null);
+  const canExecuteSelectedEndpoint = ['quote', 'get_shop', 'merchant_orders', 'test_webhook'].includes(selectedEndpoint.id);
 
   // Key Generation State
   const [newKeyName, setNewKeyName] = useState('');
@@ -190,9 +183,7 @@ export const DeveloperPortalView: React.FC<DeveloperPortalProps> = ({ onNavigate
   const [showKeyModal, setShowKeyModal] = useState<boolean>(false);
 
   // Webhook Simulator State
-  const [webhookTargetUrl, setWebhookTargetUrl] = useState('https://webhook.site/inklly-test');
   const [selectedWebhookEvent, setSelectedWebhookEvent] = useState('order.created');
-  const [webhookSecretKey, setWebhookSecretKey] = useState('whsec_d47a89e02c914bf8a3');
   const [webhookPayloadJson, setWebhookPayloadJson] = useState(
     JSON.stringify(
       {
@@ -200,10 +191,10 @@ export const DeveloperPortalView: React.FC<DeveloperPortalProps> = ({ onNavigate
         eventType: 'order.created',
         timestamp: new Date().toISOString(),
         data: {
-          orderId: 'ord-live-01',
-          shopCode: 'campus1',
-          customerName: 'Aarav Sharma',
-          totalAmountPaise: 2400,
+          orderId: 'ord_example',
+          shopCode: 'example-shop',
+          customerName: 'Example Customer',
+          totalAmountPaise: 0,
           documentCount: 1,
           status: 'PENDING',
         },
@@ -212,24 +203,7 @@ export const DeveloperPortalView: React.FC<DeveloperPortalProps> = ({ onNavigate
       2
     )
   );
-  const [webhookHistory, setWebhookHistory] = useState<any[]>([
-    {
-      id: 'evt_wh_781',
-      eventType: 'order.created',
-      targetUrl: 'https://webhook.site/inklly-test',
-      status: 200,
-      timestamp: '2 mins ago',
-      signature: 'sha256=9b7f8c12a0d9e7c34b65f1a8c90de1234567890abcdef...',
-    },
-    {
-      id: 'evt_wh_780',
-      eventType: 'payment.succeeded',
-      targetUrl: 'https://webhook.site/inklly-test',
-      status: 200,
-      timestamp: '14 mins ago',
-      signature: 'sha256=1289ab749c8120e7df65012a9bc412398457234abc098...',
-    },
-  ]);
+  const [webhookHistory, setWebhookHistory] = useState<any[]>([]);
 
   // Code Snippets State
   const [snippetLanguage, setSnippetLanguage] = useState<'curl' | 'node' | 'python' | 'dotnet'>('curl');
@@ -242,15 +216,8 @@ export const DeveloperPortalView: React.FC<DeveloperPortalProps> = ({ onNavigate
     version: string;
     latencyMs: number;
     printers: string[];
-    localQueueDepth: number;
-  } | null>({
-    status: 'ONLINE',
-    port: 8765,
-    version: 'v1.0.0 (Native Inklly Daemon)',
-    latencyMs: 14,
-    printers: ['Canon LBP2900 (Primary Laser · USB001)', 'Microsoft Print to PDF', 'Solid Edge PS Printer 3.0'],
-    localQueueDepth: 0,
-  });
+    localQueueDepth: number | null;
+  } | null>(null);
 
   useEffect(() => {
     loadDevData();
@@ -282,30 +249,7 @@ export const DeveloperPortalView: React.FC<DeveloperPortalProps> = ({ onNavigate
         api.getWebhooks().catch(() => []),
       ]);
       setOpenApiSpec(spec);
-      setKeys(
-        kList && kList.length > 0
-          ? kList
-          : [
-              {
-                id: 'key-sample-test-01',
-                keyName: 'Local Pos Simulator',
-                keyPrefix: 'ink_test_88f9',
-                environment: 'TEST',
-                scopes: ['orders:read', 'orders:write', 'printers:read'],
-                createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-                isActive: true,
-              },
-              {
-                id: 'key-sample-live-02',
-                keyName: 'Campus ERP Billing Bridge',
-                keyPrefix: 'ink_live_90ab',
-                environment: 'LIVE',
-                scopes: ['orders:read', 'ledger:read'],
-                createdAt: new Date(Date.now() - 86400000 * 5).toISOString(),
-                isActive: true,
-              },
-            ]
-      );
+      setKeys(Array.isArray(kList) ? kList : []);
       setWebhooks(wList || []);
     } catch (err: any) {
       console.warn('Developer Portal data fallback:', err);
@@ -371,35 +315,17 @@ export const DeveloperPortalView: React.FC<DeveloperPortalProps> = ({ onNavigate
           body: res,
         });
       } else if (selectedEndpoint.id === 'test_webhook') {
-        const res = await api.testWebhook(parsedBody?.targetUrl || 'https://webhook.site/inklly-test');
+        const res = await api.testWebhook(parsedBody?.eventType || 'order.status_changed');
         const timeMs = Math.round(performance.now() - start);
         setExecutionResult({
           status: 200,
-          statusText: 'OK',
+          statusText: 'Preview only',
           timeMs,
-          headers: { 'Content-Type': 'application/json', 'X-Inklly-Signature-256': 'sha256=9b7f8c12a0d9...' },
+          headers: { 'Content-Type': 'application/json' },
           body: res,
         });
       } else {
-        // Simulated execution for edge spooler / dispatch
-        await new Promise((r) => setTimeout(r, 120));
-        const timeMs = Math.round(performance.now() - start);
-        setExecutionResult({
-          status: 200,
-          statusText: 'OK',
-          timeMs,
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Inklly-Edge-Port': '8765',
-            'X-Spooler-Driver': 'Windows Print Spooler (winspool.drv)',
-          },
-          body: {
-            success: true,
-            message: 'Command executed successfully by Inklly core engine',
-            timestamp: new Date().toISOString(),
-            data: parsedBody || { status: 'acknowledged' },
-          },
-        });
+        throw new Error('This endpoint is documented but is not executable from this explorer.');
       }
       triggerToast(`Request completed in ${Math.round(performance.now() - start)}ms (HTTP 200)`);
     } catch (err: any) {
@@ -432,23 +358,16 @@ export const DeveloperPortalView: React.FC<DeveloperPortalProps> = ({ onNavigate
         scopes: selectedScopes,
       });
 
-      const newSecret =
-        res.apiKeySecret ||
-        `${newKeyEnv === 'LIVE' ? 'ink_live_' : 'ink_test_'}${Math.random().toString(36).substring(2, 12)}${Math.random().toString(36).substring(2, 12)}`;
+      if (typeof res.apiKeySecret !== 'string' || !res.apiKeySecret) {
+        throw new Error(res.error || 'The server did not issue an API key.');
+      }
+      const newSecret = res.apiKeySecret;
+
+      if (!res.key) throw new Error('The server issued a secret without returning its key record. Refresh and inspect the key list.');
+      const newKeyItem = res.key;
 
       setGeneratedSecret(newSecret);
       setShowKeyModal(true);
-
-      const newKeyItem = res.key || {
-        id: `key-${Date.now()}`,
-        keyName: newKeyName,
-        keyPrefix: newKeyEnv === 'LIVE' ? 'ink_live_9f8a' : 'ink_test_7a1b',
-        environment: newKeyEnv,
-        scopes: selectedScopes,
-        createdAt: new Date().toISOString(),
-        isActive: true,
-      };
-
       setKeys((prev) => [newKeyItem, ...prev]);
       setNewKeyName('');
       triggerToast('API Key generated successfully! Store your token safely.');
@@ -459,7 +378,7 @@ export const DeveloperPortalView: React.FC<DeveloperPortalProps> = ({ onNavigate
 
   const handleRevokeKey = async (keyId: string) => {
     try {
-      await api.revokeApiKey(keyId).catch(() => null);
+      await api.revokeApiKey(keyId);
       setKeys((prev) => prev.filter((k) => k.id !== keyId));
       triggerToast(`API Key ${keyId} revoked successfully`);
     } catch (err: any) {
@@ -469,27 +388,12 @@ export const DeveloperPortalView: React.FC<DeveloperPortalProps> = ({ onNavigate
 
   // Webhook Dispatch Simulator
   const handleDispatchWebhook = async () => {
-    if (!webhookTargetUrl) {
-      triggerToast('Please provide a valid webhook target URL');
-      return;
-    }
-
     try {
-      const signatureHex = `sha256=${Array.from(crypto.getRandomValues(new Uint8Array(24)))
-        .map((b) => b.toString(16).padStart(2, '0'))
-        .join('')}`;
-
-      const newEntry = {
-        id: `evt_wh_${Date.now().toString().slice(-4)}`,
-        eventType: selectedWebhookEvent,
-        targetUrl: webhookTargetUrl,
-        status: 200,
-        timestamp: 'Just now',
-        signature: signatureHex,
-      };
-
-      setWebhookHistory((prev) => [newEntry, ...prev]);
-      triggerToast(`Synthetic webhook ${selectedWebhookEvent} dispatched (HTTP 200 OK)`);
+      const result = await api.testWebhook(selectedWebhookEvent);
+      const payload = result.payload || result;
+      setWebhookPayloadJson(JSON.stringify(payload, null, 2));
+      setWebhookHistory((prev) => [{ id: payload.eventId || 'preview', eventType: selectedWebhookEvent, status: 'PREVIEW ONLY', timestamp: 'Not sent', signature: 'Unsigned synthetic payload preview' }, ...prev]);
+      triggerToast('Synthetic payload preview created. Nothing was sent or signed.');
     } catch (err: any) {
       triggerToast(`Dispatch failed: ${err.message}`);
     }
@@ -512,21 +416,20 @@ export const DeveloperPortalView: React.FC<DeveloperPortalProps> = ({ onNavigate
           port: 8765,
           version: probeRes.version || 'v1.0.0',
           latencyMs,
-          printers: probeRes.printers || ['Canon LBP2900 (Primary Laser · USB001)', 'Microsoft Print to PDF', 'Solid Edge PS Printer 3.0'],
-          localQueueDepth: probeRes.queueDepth || 0,
+          printers: Array.isArray(probeRes.printers) ? probeRes.printers : [],
+          localQueueDepth: Number.isInteger(probeRes.queueDepth) ? probeRes.queueDepth : null,
         });
         triggerToast(`Local Edge Spooler detected on Port 8765 (${latencyMs}ms latency)`);
       } else {
-        // Fallback simulated response with honest diagnostic notice
         setEdgeProbeResult({
-          status: 'ONLINE',
+          status: 'OFFLINE',
           port: 8765,
-          version: 'v1.0.0 (Native Inklly Daemon)',
-          latencyMs: 12,
-          printers: ['HP LaserJet Pro M401dne (Default)', 'Canon C3530i Color'],
+          version: 'Unavailable',
+          latencyMs,
+          printers: [],
           localQueueDepth: 0,
         });
-        triggerToast('Local Agent responded with 2 configured Windows OEM printers');
+        triggerToast('No print agent responded on this device.');
       }
     } finally {
       setIsProbingAgent(false);
@@ -535,42 +438,24 @@ export const DeveloperPortalView: React.FC<DeveloperPortalProps> = ({ onNavigate
 
   const handlePingAllIntegrations = async () => {
     setIsPingingIntegrations(true);
-    await new Promise((r) => setTimeout(r, 450));
-    setIntegrations([
-      { name: 'Core REST API Gateway', target: 'http://localhost:4000/api/v1', status: 'ONLINE', latency: `${Math.floor(Math.random() * 4 + 2)}ms` },
-      { name: 'Windows Spooler Daemon', target: 'http://127.0.0.1:8765/health', status: 'ONLINE', latency: `${Math.floor(Math.random() * 6 + 10)}ms` },
-      { name: 'ACID Database (node:sqlite)', target: 'agent_queue.db (WAL Mode)', status: 'HEALTHY', latency: '0.6ms' },
-      { name: 'Razorpay UPI Webhook Gateway', target: 'whsec_rzp_live_9921', status: 'VERIFIED', latency: `${Math.floor(Math.random() * 15 + 20)}ms` },
-      { name: 'WhatsApp Cloud Webhook', target: 'graph.facebook.com/v20.0', status: 'VERIFIED', latency: `${Math.floor(Math.random() * 20 + 25)}ms` },
-    ]);
-    setIsPingingIntegrations(false);
-    triggerToast('All 5 core provider integrations verified healthy (0 failures)');
+    const started = performance.now();
+    try {
+      await api.getOpenApiSpec();
+      triggerToast(`API catalogue reachable (${Math.round(performance.now() - started)} ms). Provider health was not checked.`);
+    } catch (err: any) {
+      triggerToast(`API catalogue check failed: ${err.message}`);
+    } finally {
+      setIsPingingIntegrations(false);
+    }
   };
 
   // Download OpenAPI Spec JSON
   const handleDownloadOpenApi = () => {
-    const spec = openApiSpec || {
-      openapi: '3.0.3',
-      info: {
-        title: 'Inklly Cloud & Countertop Print OS API',
-        version: '1.0.0',
-        description: 'Deterministic integer-Paise print ordering, loopback agent spooling, and merchant automation.',
-      },
-      servers: [
-        { url: 'http://localhost:4000/api/v1', description: 'Local Development Server' },
-        { url: 'https://api.inklly.com/api/v1', description: 'Production Gateway' },
-      ],
-      paths: API_ENDPOINTS.reduce((acc, ep) => {
-        acc[ep.path] = {
-          [ep.method.toLowerCase()]: {
-            summary: ep.summary,
-            description: ep.description,
-            responses: { 200: { description: 'Successful response' } },
-          },
-        };
-        return acc;
-      }, {} as any),
-    };
+    if (!openApiSpec) {
+      triggerToast('OpenAPI contract is unavailable. Check the API connection and retry.');
+      return;
+    }
+    const spec = openApiSpec;
 
     const blob = new Blob([JSON.stringify(spec, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -587,11 +472,12 @@ export const DeveloperPortalView: React.FC<DeveloperPortalProps> = ({ onNavigate
   // Code Snippet Generator
   const getCodeSnippet = () => {
     const endpoint = selectedEndpoint;
+    const baseUrl = API_BASE.replace(/\/$/, '');
     const bodyStr = endpoint.defaultBody ? JSON.stringify(endpoint.defaultBody, null, 2) : '';
 
     if (snippetLanguage === 'curl') {
       return `# Inklly cURL Command - ${endpoint.summary}
-curl -X ${endpoint.method} "http://localhost:4000/api/v1${endpoint.path}" \\
+curl -X ${endpoint.method} "${baseUrl}${endpoint.path}" \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer ink_live_your_api_key_here" ${
     bodyStr ? `\\\n  -d '${JSON.stringify(endpoint.defaultBody)}'` : ''
@@ -603,7 +489,7 @@ curl -X ${endpoint.method} "http://localhost:4000/api/v1${endpoint.path}" \\
 import fetch from 'node-fetch';
 
 async function executeInkllyRequest() {
-  const url = 'http://localhost:4000/api/v1${endpoint.path}';
+  const url = '${baseUrl}${endpoint.path}';
   const response = await fetch(url, {
     method: '${endpoint.method}',
     headers: {
@@ -625,7 +511,7 @@ executeInkllyRequest();`;
 import os
 import requests
 
-url = "http://localhost:4000/api/v1${endpoint.path}"
+url = "${baseUrl}${endpoint.path}"
 headers = {
     "Content-Type": "application/json",
     "Authorization": f"Bearer {os.getenv('INKLLY_API_KEY')}"
@@ -649,9 +535,9 @@ class Program
     static async Task Main()
     {
         using var client = new HttpClient();
-        client.DefaultRequestHeaders.Add("Authorization", "Bearer ink_live_your_key");
+        client.DefaultRequestHeaders.Add("Authorization", "Bearer " + Environment.GetEnvironmentVariable("INKLLY_API_KEY"));
 
-        var url = "http://localhost:4000/api/v1${endpoint.path}";
+        var url = "${baseUrl}${endpoint.path}";
         ${
           bodyStr
             ? `var json = @"${bodyStr.replace(/"/g, '""')}";
@@ -696,11 +582,11 @@ class Program
                 Developer & Integration Hub
               </h1>
               <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-50 dark:bg-indigo-950/60 text-[#4D64E6] border border-indigo-200 dark:border-indigo-800">
-                OpenAPI 3.0.3 · Port 4000
+                OpenAPI 3.0.3 · {API_BASE}
               </span>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              Programmatic API Explorer, Scoped Credentials, HMAC Webhook Simulators, and Edge Spooler loopback diagnostics.
+              Internal API catalogue, read-only local-agent diagnostics, and gated external integration tools.
             </p>
           </div>
         </div>
@@ -714,9 +600,9 @@ class Program
             <DownloadIcon size={15} />
             <span>OpenAPI Spec (JSON)</span>
           </button>
-          <div className="flex items-center gap-2 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 px-3 py-2 rounded-xl text-xs font-bold text-emerald-700 dark:text-emerald-400">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>Local Gateway Online</span>
+          <div className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold ${openApiSpec ? 'bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400' : 'bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600'}`}>
+            <span className={`w-2 h-2 rounded-full ${openApiSpec ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+            <span>{loading ? 'Checking API contract…' : openApiSpec ? 'API contract loaded' : 'API contract unavailable'}</span>
           </div>
         </div>
       </div>
@@ -724,53 +610,8 @@ class Program
       {/* Environment & Gateway Selector Controls */}
       <div className="bg-slate-100 dark:bg-slate-800/60 p-3 rounded-2xl border border-slate-200/80 dark:border-slate-800 flex flex-col md:flex-row items-center justify-between gap-3 text-xs">
         <div className="flex items-center gap-2">
-          <span className="font-extrabold uppercase text-[10px] tracking-wider text-slate-400">
-            Target Environment:
-          </span>
-          <div className="flex gap-1 bg-white dark:bg-slate-900 p-1 rounded-xl border border-slate-200 dark:border-slate-800 font-bold">
-            <button
-              type="button"
-              onClick={() => {
-                setActiveEnv('local');
-                triggerToast('Switched to Local Development Gateway (http://localhost:4000/api/v1)');
-              }}
-              className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
-                activeEnv === 'local'
-                  ? 'bg-emerald-600 text-white shadow-xs'
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              🟢 Local (:4000)
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setActiveEnv('sandbox');
-                triggerToast('Switched to Staging Sandbox (https://sandbox-api.inklly.com/api/v1)');
-              }}
-              className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
-                activeEnv === 'sandbox'
-                  ? 'bg-amber-600 text-white shadow-xs'
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              🟡 Sandbox Staging
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setActiveEnv('production');
-                triggerToast('Production Gateway (https://api.inklly.com/api/v1) is Read-Only for diagnostics');
-              }}
-              className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
-                activeEnv === 'production'
-                  ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              🔵 Production (Read-Only)
-            </button>
-          </div>
+          <span className="font-extrabold uppercase text-[10px] tracking-wider text-slate-400">Configured API target:</span>
+          <code className="font-mono text-slate-700 dark:text-slate-300">{API_BASE}</code>
         </div>
 
         <div className="flex items-center gap-3">
@@ -781,7 +622,7 @@ class Program
             className="flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 rounded-xl font-bold cursor-pointer transition-all shadow-xs"
           >
             <RotateCwIcon size={12} className={isPingingIntegrations ? 'animate-spin' : ''} />
-            <span>Ping All Integrations</span>
+            <span>Check API Catalogue</span>
           </button>
         </div>
       </div>
@@ -790,8 +631,8 @@ class Program
       <div className="flex border-b border-slate-200 dark:border-slate-800 overflow-x-auto scrollbar-none gap-2">
         {[
           { id: 'explorer', label: 'API Explorer & Try-It-Out', icon: <CodeIcon size={16} /> },
-          { id: 'keys', label: 'Scoped API Keys', icon: <LockIcon size={16} /> },
-          { id: 'webhooks', label: 'Webhook Simulator & HMAC', icon: <SlidersIcon size={16} /> },
+          { id: 'keys', label: externalApiAccessEnabled ? 'Scoped API Keys' : 'API Keys · approval required', icon: <LockIcon size={16} /> },
+          { id: 'webhooks', label: externalApiAccessEnabled ? 'Webhook Tools' : 'Webhooks · approval required', icon: <SlidersIcon size={16} /> },
           { id: 'snippets', label: 'SDK Code Snippets', icon: <CopyIcon size={16} /> },
           { id: 'edge_diagnostics', label: 'Edge Spooler Daemon (:8765)', icon: <PrinterIcon size={16} /> },
           { id: 'openapi', label: 'OpenAPI Contract Tree', icon: <ShieldIcon size={16} /> },
@@ -800,11 +641,12 @@ class Program
             key={tab.id}
             type="button"
             onClick={() => setActiveTab(tab.id as DevTab)}
+            disabled={!externalApiAccessEnabled && ['keys', 'webhooks'].includes(tab.id)}
             className={`flex items-center gap-2 px-4 py-3 font-bold text-xs whitespace-nowrap border-b-2 transition-all cursor-pointer ${
               activeTab === tab.id
                 ? 'border-[#4D64E6] text-[#4D64E6] bg-indigo-50/50 dark:bg-indigo-950/20'
                 : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-            }`}
+            } disabled:cursor-not-allowed disabled:opacity-50`}
           >
             {tab.icon}
             <span>{tab.label}</span>
@@ -825,7 +667,7 @@ class Program
               </h2>
               <div className="space-y-2">
                 {API_ENDPOINTS.map((ep) => {
-                  const isSelected = selectedEndpoint.id === ep.id;
+            const isSelected = selectedEndpoint.id === ep.id;
                   const methodColor =
                     ep.method === 'POST'
                       ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-400'
@@ -890,18 +732,23 @@ class Program
                 <button
                   type="button"
                   onClick={handleExecuteRequest}
-                  disabled={isExecuting}
+                  disabled={isExecuting || !canExecuteSelectedEndpoint}
                   className="flex items-center gap-2 px-5 py-2.5 bg-[#4D64E6] hover:bg-indigo-600 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-[#4D64E6]/25 cursor-pointer disabled:opacity-50"
                 >
                   {isExecuting ? <RotateCwIcon size={14} className="animate-spin" /> : <ArrowRightIcon size={14} />}
-                  <span>Execute Request</span>
+                  <span>{canExecuteSelectedEndpoint ? 'Execute Request' : 'Not executable here'}</span>
                 </button>
               </div>
+              {!canExecuteSelectedEndpoint && (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2" role="status">
+                  This endpoint is documentation only in the current portal. No request will be simulated or sent.
+                </p>
+              )}
 
               {/* Endpoint URL Bar */}
               <div className="flex items-center gap-2 bg-slate-50 dark:bg-slate-800/80 p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 font-mono text-xs">
                 <span className="font-bold text-[#4D64E6] shrink-0">{selectedEndpoint.method}</span>
-                <span className="text-slate-400 shrink-0">http://localhost:4000/api/v1</span>
+                <span className="text-slate-400 shrink-0">{API_BASE}</span>
                 <span className="font-bold text-slate-800 dark:text-slate-200">{selectedEndpoint.path}</span>
               </div>
 
@@ -1084,6 +931,9 @@ class Program
             </div>
 
             <div className="divide-y divide-slate-100 dark:divide-slate-800">
+              {keys.length === 0 && (
+                <p className="p-5 text-xs text-slate-500" role="status">No API key records are available in this environment.</p>
+              )}
               {keys.map((k) => (
                 <div key={k.id} className="p-4 flex items-center justify-between gap-4 hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
                   <div className="space-y-1">
@@ -1174,26 +1024,12 @@ class Program
                 Webhook Event Dispatch Simulator
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Test how your backend receives and validates HMAC-SHA256 signed events from Inklly.
+                Preview a synthetic event payload. This tool does not contact a destination or create a signature.
               </p>
             </div>
 
             <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Destination Webhook URL
-                </label>
-                <input
-                  type="url"
-                  value={webhookTargetUrl}
-                  onChange={(e) => setWebhookTargetUrl(e.target.value)}
-                  placeholder="https://your-domain.com/webhooks/inklly"
-                  className="w-full text-xs p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-mono"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
+              <div className="grid grid-cols-1 gap-3">
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
                     Event Type
                   </label>
@@ -1208,7 +1044,7 @@ class Program
                             eventType: e.target.value,
                             timestamp: new Date().toISOString(),
                             data: {
-                              orderId: 'ord-live-01',
+                              orderId: 'ord_example',
                               shopCode: 'campus1',
                               status: e.target.value === 'order.created' ? 'PENDING' : 'READY_FOR_PICKUP',
                             },
@@ -1226,19 +1062,6 @@ class Program
                     <option value="print_job.jammed">print_job.jammed</option>
                     <option value="spooler.offline">spooler.offline</option>
                   </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Shared Webhook Secret
-                  </label>
-                  <input
-                    type="text"
-                    value={webhookSecretKey}
-                    onChange={(e) => setWebhookSecretKey(e.target.value)}
-                    className="w-full text-xs p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-mono"
-                  />
-                </div>
               </div>
 
               <div>
@@ -1248,7 +1071,7 @@ class Program
                 <textarea
                   rows={6}
                   value={webhookPayloadJson}
-                  onChange={(e) => setWebhookPayloadJson(e.target.value)}
+                  readOnly
                   className="w-full font-mono text-xs p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200"
                 />
               </div>
@@ -1259,7 +1082,7 @@ class Program
                 className="w-full py-2.5 bg-[#4D64E6] hover:bg-indigo-600 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-[#4D64E6]/25 cursor-pointer flex items-center justify-center gap-2"
               >
                 <ArrowRightIcon size={14} />
-                <span>Dispatch Synthetic Webhook</span>
+                <span>Generate Synthetic Preview</span>
               </button>
             </div>
           </div>
@@ -1269,14 +1092,17 @@ class Program
             <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
               <div>
                 <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">
-                  Recent Webhook Deliveries
+                  Preview History
                 </h3>
-                <p className="text-xs text-slate-400">Signed with HMAC-SHA256 headers</p>
+                <p className="text-xs text-slate-400">No outbound deliveries are recorded here.</p>
               </div>
-              <span className="text-[10px] font-mono text-slate-400">X-Inklly-Signature-256</span>
+              <span className="text-[10px] font-mono text-slate-400">Preview only</span>
             </div>
 
             <div className="divide-y divide-slate-100 dark:divide-slate-800">
+              {webhookHistory.length === 0 && (
+                <p className="p-5 text-xs text-slate-500" role="status">No synthetic payload previews have been generated in this session.</p>
+              )}
               {webhookHistory.map((item) => (
                 <div key={item.id} className="p-4 space-y-2 hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
                   <div className="flex items-center justify-between">
@@ -1284,14 +1110,11 @@ class Program
                       <span className="font-mono text-xs font-bold text-slate-800 dark:text-slate-200">
                         {item.eventType}
                       </span>
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                        HTTP {item.status} OK
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">
+                        {item.status}
                       </span>
                     </div>
                     <span className="text-[10px] text-slate-400">{item.timestamp}</span>
-                  </div>
-                  <div className="text-[11px] font-mono text-slate-500 truncate">
-                    Target: {item.targetUrl}
                   </div>
                   <div className="text-[10px] font-mono text-slate-400 bg-slate-50 dark:bg-slate-800/80 p-2 rounded-lg truncate">
                     {item.signature}
@@ -1381,10 +1204,10 @@ class Program
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs">
               <span className="text-[10px] font-black uppercase text-slate-400">Driver Compatibility</span>
               <div className="text-base font-extrabold text-indigo-600 mt-1">
-                Universal OEM Drivers
+                Hardware support status
               </div>
               <p className="text-xs text-slate-500 mt-1">
-                Compatible with HP, Canon, Brother, Epson, and Ricoh USB/Network printers.
+                No hardware-tested printer compatibility matrix is available yet.
               </p>
             </div>
           </div>
@@ -1416,8 +1239,8 @@ class Program
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50 dark:bg-slate-800/40 p-4 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-mono">
                   <div>
                     <span className="text-slate-400 block text-[10px]">DAEMON STATUS</span>
-                    <span className="font-bold text-emerald-600 flex items-center gap-1.5 mt-0.5">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    <span className={`font-bold flex items-center gap-1.5 mt-0.5 ${edgeProbeResult.status === 'ONLINE' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      <span className={`w-2 h-2 rounded-full ${edgeProbeResult.status === 'ONLINE' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
                       {edgeProbeResult.status}
                     </span>
                   </div>
@@ -1434,7 +1257,7 @@ class Program
                   <div>
                     <span className="text-slate-400 block text-[10px]">LOCAL QUEUE DEPTH</span>
                     <span className="font-bold text-slate-800 dark:text-slate-200 mt-0.5 block">
-                      {edgeProbeResult.localQueueDepth} jobs
+                      {edgeProbeResult.localQueueDepth ?? 'Unknown'} jobs
                     </span>
                   </div>
                 </div>
@@ -1444,6 +1267,9 @@ class Program
                     Detected Hardware Print Queues:
                   </h4>
                   <div className="space-y-2">
+                    {edgeProbeResult.printers.length === 0 && (
+                      <p className="text-xs text-slate-500" role="status">This health response did not include printer inventory.</p>
+                    )}
                     {edgeProbeResult.printers.map((prn) => (
                       <div
                         key={prn}
@@ -1454,7 +1280,7 @@ class Program
                           <span className="font-bold text-slate-800 dark:text-slate-200">{prn}</span>
                         </div>
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700">
-                          Ready for Spooling
+                          Reported by the local agent
                         </span>
                       </div>
                     ))}
@@ -1517,33 +1343,7 @@ class Program
           </div>
 
           <pre className="p-5 bg-slate-950 text-slate-100 font-mono text-xs rounded-2xl max-h-[500px] overflow-y-auto overflow-x-auto leading-relaxed">
-            {JSON.stringify(
-              openApiSpec || {
-                openapi: '3.0.3',
-                info: {
-                  title: 'Inklly Cloud & Countertop Print OS API',
-                  version: '1.0.0',
-                  description:
-                    'Deterministic integer-Paise print ordering, loopback agent spooling, and merchant automation.',
-                },
-                servers: [
-                  { url: 'http://localhost:4000/api/v1', description: 'Local Development Server' },
-                  { url: 'https://api.inklly.com/api/v1', description: 'Production Gateway' },
-                ],
-                paths: API_ENDPOINTS.reduce((acc, ep) => {
-                  acc[ep.path] = {
-                    [ep.method.toLowerCase()]: {
-                      summary: ep.summary,
-                      description: ep.description,
-                      responses: { 200: { description: 'Successful response' } },
-                    },
-                  };
-                  return acc;
-                }, {} as any),
-              },
-              null,
-              2
-            )}
+            {openApiSpec ? JSON.stringify(openApiSpec, null, 2) : 'The live API contract is unavailable. Retry the API connection before downloading or using a generated schema.'}
           </pre>
         </div>
       )}
