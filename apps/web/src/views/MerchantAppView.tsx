@@ -1016,6 +1016,18 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     const order = ordersList.find((o) => o.id === orderId || o.rawId === orderId);
     const targetId = order?.rawId || orderId;
     try {
+      if (order?.tab === 'pending') {
+        try {
+          await api.dispatchPrint(targetId);
+        } catch (_) {}
+        try {
+          await api.updateOrderStatus(targetId, 'READY_FOR_COLLECTION');
+        } catch (_) {}
+      } else if (order?.tab === 'printing' || order?.tab === 'processing') {
+        try {
+          await api.updateOrderStatus(targetId, 'READY_FOR_COLLECTION');
+        } catch (_) {}
+      }
       await api.updateOrderStatus(targetId, 'COLLECTED');
     } catch (e) {
       console.warn('Update order status to COLLECTED warning:', e);
