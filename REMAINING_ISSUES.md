@@ -11,12 +11,12 @@
 - Before this turn, GitHub `main` contained commit `a27b0a4`; the current enquiry implementation is being prepared for push and deployment verification.
 - After that push, live Render returned HTTP 200 for `/health` but did not include the new `revision` field; unauthenticated `/api/v1/developer/keys` still returned HTTP 200 with `[]`. Render is not confirmed to be running current source. The pasted Render build log checked out older commit `33cd615` and failed startup for missing `JWT_SECRET`.
 - Public upload now has a per-process concurrency cap before JSON parsing. Per-IP/distributed rate limiting and production-like load validation remain open.
-- A live Render probe during the latest turn timed out at `https://inklly.onrender.com/health`; current runtime health could not be confirmed.
+- After pushing `eaafb6c`, Vercel serves the current frontend asset (`index-CQNKJYaq.js`, matching the local production build), but Render still returns HTTP 200 from the previous health handler without a `revision` field. The backend deploy is not verified and is demonstrably behind source. No Render control/API or deploy hook is available in this workspace to trigger or inspect it directly.
 - Public enquiries are now durably stored and shown in the authenticated platform console. No email/WhatsApp notification is configured, and an approved retention period for enquiry contact details/message text is still required. Rate limiting is process-local; a shared edge/WAF limit is needed before horizontal scaling.
 
 ## Release blockers and follow-up
 
-1. Confirm Render deploys commit `025dbca`; configure a stable `JWT_SECRET`, `STORAGE_DRIVER=supabase`, Supabase URL, service-role key, bucket name, and production database URL. Verify `/health.revision` matches `025dbca` and unauthenticated `/api/v1/developer/keys` returns 401.
+1. Deploy the backend commit `eaafb6c` on Render; configure a stable `JWT_SECRET`, `STORAGE_DRIVER=supabase`, Supabase URL, service-role key, bucket name, and production database URL. Verify `/health.revision` matches `eaafb6c` and unauthenticated `/api/v1/developer/keys` returns 401. The provided Render log showed startup rejected a missing/weak/example `JWT_SECRET`; the latest service configuration/logs are not accessible here.
 2. Exercise upload, private preview, authenticated agent download, and 24-hour deletion against the real private Supabase bucket. Confirm saved files survive Render restarts and expired objects are physically removed.
    - Implemented locally: PDF page counts and file MIME are derived from stored bytes at upload and order submission; a regression test verifies a forged client page count cannot undercharge an order. Production rollout remains pending.
 3. Provide and verify a signed Windows agent installer, checksum, and owner-scoped delivery. The API reports installer availability as false (503) and does not fabricate a checksum.

@@ -15,7 +15,8 @@ Executed after the public-enquiry persistence/inbox change:
 - `npm test` — passed: 3 database, 12 shared, 7 agent, and 131 server tests (153 total).
 - New coverage verifies enquiry validation, idempotent retry, platform-only inbox access, and rate-limit rejection.
 - `npm run lint` remains unavailable because no workspace defines a lint script.
-- No browser screenshots or real Render/Supabase/provider/hardware verification were performed in this change.
+- Live Vercel serves `assets/index-CQNKJYaq.js`, matching this build. Render `/health` still returns the previous response without `revision`; backend deployment is pending.
+- No browser screenshots or live Supabase/provider/hardware verification were performed in this change.
 
 ---
 
