@@ -22,6 +22,9 @@ export const api = {
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || 'Could not send your enquiry. Please try again.');
+    if (typeof body.id !== 'string' || body.status !== 'OPEN') {
+      throw new Error('The enquiry service is updating. Please try again shortly.');
+    }
     return body as { id: string; status: string; message: string };
   },
 
