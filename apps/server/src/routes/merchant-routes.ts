@@ -70,5 +70,13 @@ export function createMerchantRoutes(db: DatabaseService, fileStorage: PrivateFi
   router.get('/bot-templates', requirePermission('bot:train'), controller.getBotTemplates);
   router.put('/bot-templates', requirePermission('bot:train'), controller.updateBotTemplate);
 
+  // Credits
+  router.get('/credits/balance', requirePermission('credits:view'), controller.getCreditBalance);
+  router.post('/credits/purchase', requirePermission('credits:manage'), controller.purchaseCredits);
+
+  // Payouts / Withdrawals
+  router.get('/payouts', requirePermission('finance:view'), controller.getPayouts);
+  router.post('/payouts', requirePermission('finance:manage'), controller.requestPayout);
+
   return router;
 }

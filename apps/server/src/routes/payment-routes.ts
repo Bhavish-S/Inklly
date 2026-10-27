@@ -22,5 +22,28 @@ export function createPaymentRoutes(db: DatabaseService): Router {
     controller.collectCashAtCounter
   );
 
+  // Refunds
+  router.post(
+    '/orders/:id/refunds',
+    authenticate,
+    requireRole('MERCHANT_OWNER', 'SHOP_MANAGER', 'PLATFORM_OWNER', 'PLATFORM_ADMIN'),
+    requirePermission('finance:manage'),
+    controller.createRefund
+  );
+  router.get(
+    '/refunds',
+    authenticate,
+    requireRole('MERCHANT_OWNER', 'SHOP_MANAGER', 'PLATFORM_OWNER', 'PLATFORM_ADMIN'),
+    requirePermission('finance:view'),
+    controller.listRefunds
+  );
+  router.post(
+    '/refunds/:id/process',
+    authenticate,
+    requireRole('MERCHANT_OWNER', 'PLATFORM_OWNER', 'PLATFORM_ADMIN'),
+    requirePermission('finance:manage'),
+    controller.processRefund
+  );
+
   return router;
 }

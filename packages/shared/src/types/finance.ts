@@ -14,7 +14,7 @@ export interface LedgerEntry {
   orderId?: string;
   amountPaise: number; // positive = credit/inflow, negative = debit/outflow
   currency: string;
-  provider: 'RAZORPAY' | 'STRIPE' | 'INTERNAL_CREDIT' | 'MANUAL_CASH';
+  provider: 'RAZORPAY' | 'STRIPE' | 'INTERNAL_CREDIT' | 'MANUAL_CASH' | 'PENDING_PROVIDER';
   providerTransactionId?: string;
   providerEventId?: string;
   description: string;

@@ -181,4 +181,32 @@ export class AdminController {
     });
     res.json(this.enquiryRepo.list(limit, offset));
   };
+
+  // Subscription management
+  public listSubscriptions = (req: Request, res: Response) => {
+    const rows = this.db.query<any>(`SELECT * FROM subscriptions ORDER BY created_at DESC`);
+    res.json(rows.map((r) => ({
+      id: r.id,
+      organizationId: r.organization_id,
+      planId: r.plan_id,
+      planTier: r.plan_tier,
+      status: r.status,
+      currentPeriodStart: r.current_period_start,
+      currentPeriodEnd: r.current_period_end,
+      cancelAtPeriodEnd: Boolean(r.cancel_at_period_end),
+      providerSubscriptionId: r.provider_subscription_id,
+      amountPaise: r.amount_paise,
+      currency: r.currency,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    })));
+  };
+
+  public createSubscription = (req: Request, res: Response) => {
+    return res.status(503).json({ error: 'Subscription billing is not configured. No subscription or charge was created.' });
+  };
+
+  public updateSubscription = (req: Request, res: Response) => {
+    return res.status(503).json({ error: 'Subscription billing is not configured. Subscription changes are unavailable.' });
+  };
 }

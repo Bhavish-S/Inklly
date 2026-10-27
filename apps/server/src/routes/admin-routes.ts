@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { AdminController } from '../controllers/admin-controller';
 import { DatabaseService, EnquiryRepository, LedgerRepository, UserRepository } from '@inklly/db';
-import { authenticate, requireRole } from '../middleware/auth';
+import { authenticate, requireRole, requirePermission } from '../middleware/auth';
 
 export function createAdminRoutes(db: DatabaseService): Router {
   const router = Router();
@@ -14,13 +14,18 @@ export function createAdminRoutes(db: DatabaseService): Router {
   router.use(authenticate);
   router.use(requireRole('PLATFORM_OWNER', 'PLATFORM_ADMIN'));
 
-  router.get('/overview', controller.getOverview);
-  router.get('/merchants', controller.getMerchants);
-  router.patch('/merchants/:id/status', controller.updateMerchantStatus);
-  router.get('/plans', controller.getPlans);
-  router.get('/ledger', controller.getPlatformLedger);
-  router.get('/audit-logs', controller.getAuditLogs);
-  router.get('/enquiries', controller.getEnquiries);
+  router.get('/overview', requirePermission('platform:view'), controller.getOverview);
+  router.get('/merchants', requirePermission('platform:view'), controller.getMerchants);
+  router.patch('/merchants/:id/status', requirePermission('platform:manage'), controller.updateMerchantStatus);
+  router.get('/plans', requirePermission('platform:view'), controller.getPlans);
+  router.get('/ledger', requirePermission('finance:view'), controller.getPlatformLedger);
+  router.get('/audit-logs', requirePermission('security:audit'), controller.getAuditLogs);
+  router.get('/enquiries', requirePermission('support:view'), controller.getEnquiries);
+
+  // Subscription management
+  router.get('/subscriptions', requirePermission('billing:view'), controller.listSubscriptions);
+  router.post('/subscriptions', requirePermission('billing:manage'), controller.createSubscription);
+  router.patch('/subscriptions/:id', requirePermission('billing:manage'), controller.updateSubscription);
 
   return router;
 }

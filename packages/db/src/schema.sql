@@ -349,3 +349,115 @@ CREATE TABLE IF NOT EXISTS bot_templates (
     FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE,
     UNIQUE(shop_id, template_key)
 );
+
+CREATE TABLE IF NOT EXISTS razorpay_checkout_claims (
+    id TEXT PRIMARY KEY,
+    order_id TEXT NOT NULL,
+    payment_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+    UNIQUE(order_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_razorpay_claims_order ON razorpay_checkout_claims(order_id);
+
+CREATE TABLE IF NOT EXISTS razorpay_webhook_events (
+    id TEXT PRIMARY KEY,
+    shop_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_razorpay_webhook_shop ON razorpay_webhook_events(shop_id);
+
+CREATE TABLE IF NOT EXISTS refunds (
+    id TEXT PRIMARY KEY,
+    order_id TEXT NOT NULL,
+    payment_id TEXT NOT NULL,
+    amount_paise INTEGER NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'INR',
+    status TEXT NOT NULL DEFAULT 'REQUESTED', -- REQUESTED, PROCESSING, COMPLETED, FAILED, REVERSED
+    provider_refund_id TEXT,
+    provider_event_id TEXT,
+    reason TEXT,
+    requested_by TEXT,
+    requested_at TEXT NOT NULL,
+    processed_at TEXT,
+    failure_reason TEXT,
+    FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+    FOREIGN KEY (payment_id) REFERENCES payments(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_refunds_order ON refunds(order_id);
+CREATE INDEX IF NOT EXISTS idx_refunds_status ON refunds(status);
+
+CREATE TABLE IF NOT EXISTS subscriptions (
+    id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL,
+    plan_id TEXT NOT NULL,
+    plan_tier TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'TRIALING', -- TRIALING, ACTIVE, PAST_DUE, GRACE, CANCELLED, EXPIRED, SUSPENDED
+    current_period_start TEXT NOT NULL,
+    current_period_end TEXT NOT NULL,
+    cancel_at_period_end INTEGER NOT NULL DEFAULT 0,
+    provider_subscription_id TEXT,
+    provider_customer_id TEXT,
+    amount_paise INTEGER NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'INR',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_subscriptions_org ON subscriptions(organization_id);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_status ON subscriptions(status);
+
+CREATE TABLE IF NOT EXISTS credit_accounts (
+    id TEXT PRIMARY KEY,
+    shop_id TEXT NOT NULL UNIQUE,
+    balance_paise INTEGER NOT NULL DEFAULT 0,
+    currency TEXT NOT NULL DEFAULT 'INR',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_credit_accounts_shop ON credit_accounts(shop_id);
+
+CREATE TABLE IF NOT EXISTS credit_ledger_entries (
+    id TEXT PRIMARY KEY,
+    shop_id TEXT NOT NULL,
+    type TEXT NOT NULL, -- PURCHASE, CONSUMPTION, EXPIRY, REVERSAL, MANUAL_ADJUSTMENT, PLAN_ALLOCATION
+    amount_paise INTEGER NOT NULL,
+    reference_type TEXT, -- ORDER, SUBSCRIPTION, TOPUP, MANUAL
+    reference_id TEXT,
+    balance_after_paise INTEGER NOT NULL,
+    expires_at TEXT,
+    description TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_credit_ledger_shop ON credit_ledger_entries(shop_id);
+
+CREATE TABLE IF NOT EXISTS payout_requests (
+    id TEXT PRIMARY KEY,
+    shop_id TEXT NOT NULL,
+    amount_paise INTEGER NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'INR',
+    status TEXT NOT NULL DEFAULT 'DRAFT', -- DRAFT, REQUESTED, ELIGIBILITY_CHECK, PENDING_APPROVAL, SUBMITTED_TO_PROVIDER, PROCESSING, PAID, FAILED, REVERSED, CANCELLED
+    provider_payout_id TEXT,
+    provider_status TEXT,
+    destination_account_masked TEXT,
+    requested_by TEXT,
+    requested_at TEXT NOT NULL,
+    approved_by TEXT,
+    approved_at TEXT,
+    processed_at TEXT,
+    failure_reason TEXT,
+    FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_payout_requests_shop ON payout_requests(shop_id);
+CREATE INDEX IF NOT EXISTS idx_payout_requests_status ON payout_requests(status);

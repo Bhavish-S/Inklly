@@ -177,6 +177,39 @@ export const api = {
     return res.json();
   },
 
+  // Refunds
+  async createRefund(orderId: string, amountPaise: number, reason: string) {
+    const res = await fetch(`${API_BASE}/payments/orders/${orderId}/refunds`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ amountPaise, reason }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Refund failed' }));
+      throw new Error(err.error || 'Refund failed');
+    }
+    return res.json();
+  },
+
+  async listRefunds() {
+    const res = await fetch(`${API_BASE}/payments/refunds`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Failed to load refunds');
+    return res.json();
+  },
+
+  async processRefund(refundId: string, action: 'APPROVE' | 'REJECT', reason?: string) {
+    const res = await fetch(`${API_BASE}/payments/refunds/${refundId}/process`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ action, reason }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Refund processing failed' }));
+      throw new Error(err.error || 'Refund processing failed');
+    }
+    return res.json();
+  },
+
   async getRates() {
     const res = await fetch(`${API_BASE}/merchant/rates`, { headers: getHeaders() });
     return res.json();
@@ -299,6 +332,46 @@ export const api = {
     return res.json();
   },
 
+  // Credits
+  async getCreditBalance() {
+    const res = await fetch(`${API_BASE}/merchant/credits/balance`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Failed to load credit balance');
+    return res.json();
+  },
+
+  async purchaseCredits(amountPaise: number, paymentMethod: 'ONLINE_RAZORPAY' | 'MANUAL_CASH' = 'ONLINE_RAZORPAY') {
+    const res = await fetch(`${API_BASE}/merchant/credits/purchase`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ amountPaise, paymentMethod }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Credit purchase failed' }));
+      throw new Error(err.error || 'Credit purchase failed');
+    }
+    return res.json();
+  },
+
+  // Payouts / Withdrawals
+  async getPayouts() {
+    const res = await fetch(`${API_BASE}/merchant/payouts`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Failed to load payouts');
+    return res.json();
+  },
+
+  async requestPayout(amountPaise: number, destinationAccountMasked: string) {
+    const res = await fetch(`${API_BASE}/merchant/payouts`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ amountPaise, destinationAccountMasked }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Payout request failed' }));
+      throw new Error(err.error || 'Payout request failed');
+    }
+    return res.json();
+  },
+
   // Platform Owner Console
   async getPlatformOverview() {
     const res = await fetch(`${API_BASE}/platform/overview`, { headers: getHeaders() });
@@ -335,6 +408,35 @@ export const api = {
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || 'Failed to load enquiries');
     return body;
+  },
+
+  // Subscriptions
+  async getSubscriptions() {
+    const res = await fetch(`${API_BASE}/platform/subscriptions`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Failed to load subscriptions');
+    return res.json();
+  },
+
+  async createSubscription(data: { organizationId: string; planId: string; planTier: string; amountPaise: number; currency?: string }) {
+    const res = await fetch(`${API_BASE}/platform/subscriptions`, {
+      method: 'POST', headers: getHeaders(), body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Subscription creation failed' }));
+      throw new Error(err.error || 'Subscription creation failed');
+    }
+    return res.json();
+  },
+
+  async updateSubscription(subId: string, data: { status?: string; cancelAtPeriodEnd?: boolean; planTier?: string }) {
+    const res = await fetch(`${API_BASE}/platform/subscriptions/${subId}`, {
+      method: 'PATCH', headers: getHeaders(), body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Subscription update failed' }));
+      throw new Error(err.error || 'Subscription update failed');
+    }
+    return res.json();
   },
 
   // Developer Portal

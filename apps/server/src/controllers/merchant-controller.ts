@@ -434,4 +434,57 @@ export class MerchantController {
     this.userRepo.upsertBotTemplate(shopId, templateKey, templateText, isEnabled ?? true);
     res.json({ success: true, templates: this.userRepo.getBotTemplates(shopId) });
   };
+
+  // Credits
+  public getCreditBalance = (req: Request, res: Response) => {
+    const shopId = this.getShopId(req);
+    const balance = this.ledgerRepo.calculateBalancePaise(shopId, 'CONVERSION_CREDIT');
+    const entries = this.ledgerRepo.getEntriesByShop(shopId, 'CONVERSION_CREDIT');
+
+    res.json({
+      shopId,
+      domain: 'CONVERSION_CREDIT',
+      balancePaise: balance,
+      currency: 'INR',
+      entries: entries.map((e) => ({
+        id: e.id,
+        type: e.metadata?.type || 'UNKNOWN',
+        amountPaise: e.amountPaise,
+        balanceAfterPaise: e.metadata?.balanceAfterPaise,
+        referenceType: e.metadata?.referenceType,
+        referenceId: e.metadata?.referenceId,
+        description: e.description,
+        expiresAt: e.metadata?.expiresAt,
+        createdAt: e.createdAt,
+      })),
+    });
+  };
+
+  public purchaseCredits = (req: Request, res: Response) => {
+    return res.status(503).json({ error: 'Credit top-ups are not configured. No payment was accepted and no credits were added.' });
+  };
+
+  // Payouts / Withdrawals
+  public getPayouts = (req: Request, res: Response) => {
+    const shopId = this.getShopId(req);
+    const rows = this.db.query<any>(
+      `SELECT * FROM payout_requests WHERE shop_id = ? ORDER BY requested_at DESC`,
+      [shopId]
+    );
+    res.json(rows.map((r) => ({
+      id: r.id,
+      amountPaise: r.amount_paise,
+      currency: r.currency,
+      status: r.status,
+      providerPayoutId: r.provider_payout_id,
+      destinationAccountMasked: r.destination_account_masked,
+      requestedAt: r.requested_at,
+      processedAt: r.processed_at,
+      failureReason: r.failure_reason,
+    })));
+  };
+
+  public requestPayout = (req: Request, res: Response) => {
+    return res.status(503).json({ error: 'Payouts are unavailable because customer payments settle directly to each shop.' });
+  };
 }

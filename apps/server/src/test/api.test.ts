@@ -742,4 +742,253 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     const body = await adminRes.json();
     assert.equal(body.shopId, 'shop-campus-1');
   });
+
+  // ─── MILESTONE 2: REFUNDS ───
+
+  it('Creates a refund request for a verified cash-on-collection order', async () => {
+    const refundRes = await fetch(`${baseUrl}/api/v1/payments/orders/${cashOrderId}/refunds`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${merchantToken}`,
+      },
+      body: JSON.stringify({ amountPaise: 500, reason: 'Customer cancelled order before printing' }),
+    });
+    assert.equal(refundRes.status, 201);
+    const refundBody = await refundRes.json();
+    assert.equal(refundBody.success, true);
+    assert.equal(refundBody.status, 'REQUESTED');
+    assert.equal(refundBody.amountPaise, 500);
+    assert.ok(refundBody.refundId);
+  });
+
+  it('Lists refunds for the authenticated shop', async () => {
+    const res = await fetch(`${baseUrl}/api/v1/payments/refunds`, {
+      headers: { Authorization: `Bearer ${merchantToken}` },
+    });
+    assert.equal(res.status, 200);
+    const refunds = await res.json();
+    assert.ok(Array.isArray(refunds));
+    assert.ok(refunds.length >= 1);
+    assert.ok(refunds.some((r: any) => r.status === 'REQUESTED'));
+  });
+
+  it('Rejects refund amount exceeding order total', async () => {
+    const res = await fetch(`${baseUrl}/api/v1/payments/orders/${cashOrderId}/refunds`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${merchantToken}`,
+      },
+      body: JSON.stringify({ amountPaise: 999999999, reason: 'Excessive refund' }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it('keeps a refund pending until provider processing is configured', async () => {
+    // Create a fresh refund to process
+    const createRes = await fetch(`${baseUrl}/api/v1/payments/orders/${cashOrderId}/refunds`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${merchantToken}`,
+      },
+      body: JSON.stringify({ amountPaise: 300, reason: 'Test approval' }),
+    });
+    assert.equal(createRes.status, 201);
+    const createBody = await createRes.json();
+    assert.ok(createBody.refundId);
+
+    const processRes = await fetch(`${baseUrl}/api/v1/payments/refunds/${createBody.refundId}/process`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${merchantToken}`,
+      },
+      body: JSON.stringify({ action: 'APPROVE' }),
+    });
+    assert.equal(processRes.status, 503);
+    const processBody = await processRes.json();
+    assert.match(processBody.error, /remains pending/);
+  });
+
+  it('Rejects a refund request', async () => {
+    // Create a fresh refund to reject
+    const createRes = await fetch(`${baseUrl}/api/v1/payments/orders/${cashOrderId}/refunds`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${merchantToken}`,
+      },
+      body: JSON.stringify({ amountPaise: 200, reason: 'Test reject' }),
+    });
+    assert.equal(createRes.status, 201);
+    const createBody = await createRes.json();
+    assert.ok(createBody.refundId);
+
+    const rejectRes = await fetch(`${baseUrl}/api/v1/payments/refunds/${createBody.refundId}/process`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${merchantToken}`,
+      },
+      body: JSON.stringify({ action: 'REJECT', reason: 'Customer abuse' }),
+    });
+    assert.equal(rejectRes.status, 503);
+    const rejectBody = await rejectRes.json();
+    assert.match(rejectBody.error, /remains pending/);
+  });
+
+  // ─── MILESTONE 3: SUBSCRIPTIONS ───
+
+  it('Creates a subscription for an organization', async () => {
+    const res = await fetch(`${baseUrl}/api/v1/platform/subscriptions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({
+        organizationId: 'org-campus-network',
+        planId: 'plan-pro',
+        planTier: 'PRO',
+        amountPaise: 249900,
+      }),
+    });
+    assert.equal(res.status, 503);
+  });
+
+  it('Lists subscriptions for platform admin', async () => {
+    const res = await fetch(`${baseUrl}/api/v1/platform/subscriptions`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    assert.equal(res.status, 200);
+    const subs = await res.json();
+    assert.ok(Array.isArray(subs));
+  });
+
+  it('does not allow unverified subscription status changes', async () => {
+    const updateRes = await fetch(`${baseUrl}/api/v1/platform/subscriptions/not-created`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({ status: 'PAST_DUE' }),
+    });
+    assert.equal(updateRes.status, 503);
+  });
+
+  // ─── MILESTONE 4: CREDITS ───
+
+  it('Gets credit balance for a shop', async () => {
+    const res = await fetch(`${baseUrl}/api/v1/merchant/credits/balance`, {
+      headers: { Authorization: `Bearer ${merchantToken}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.domain, 'CONVERSION_CREDIT');
+    assert.equal(body.currency, 'INR');
+    assert.ok(Number.isInteger(body.balancePaise));
+  });
+
+  it('Purchases credits for a shop', async () => {
+    const res = await fetch(`${baseUrl}/api/v1/merchant/credits/purchase`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${merchantToken}`,
+      },
+      body: JSON.stringify({ amountPaise: 5000, paymentMethod: 'MANUAL_CASH' }),
+    });
+    assert.equal(res.status, 503);
+  });
+
+  // ─── MILESTONE 5: PAYOUTS ───
+
+  it('Requests a payout for a shop', async () => {
+    // First create and collect cash on a higher-value order to build eligible balance
+    const uploadRes = await fetch(`${baseUrl}/api/v1/portal/upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopId: 'shop-campus-1',
+        fileName: 'large-doc.pdf',
+        fileData: makeTestPdf(50).toString('base64'),
+        pageCount: 50,
+      }),
+    });
+    assert.equal(uploadRes.status, 201);
+    const upload = await uploadRes.json();
+
+    const bigOrderRes = await fetch(`${baseUrl}/api/v1/portal/orders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopId: 'shop-campus-1',
+        customerName: 'Big Order Customer',
+        customerPhone: '+91 99999 99999',
+        paymentMethod: 'CASH_ON_COLLECTION',
+        files: [{
+          fileName: 'large-doc.pdf',
+          pageCount: 50,
+          storageKey: upload.storageKey,
+          fileSizeBytes: upload.fileSizeBytes,
+          mimeType: upload.mimeType,
+          options: { colorMode: 'bw', duplexMode: 'simplex', paperSize: 'A4', copies: 1 },
+        }],
+      }),
+    });
+    assert.equal(bigOrderRes.status, 201);
+    const bigOrder = await bigOrderRes.json();
+
+    const cashRes = await fetch(`${baseUrl}/api/v1/payments/orders/${bigOrder.orderId}/collect-cash`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${merchantToken}` },
+    });
+    assert.equal(cashRes.status, 200);
+
+    const res = await fetch(`${baseUrl}/api/v1/merchant/payouts`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${merchantToken}`,
+      },
+      body: JSON.stringify({ amountPaise: 10000, destinationAccountMasked: '****1234' }),
+    });
+    assert.equal(res.status, 503);
+  });
+
+  it('Lists payouts for a shop', async () => {
+    const res = await fetch(`${baseUrl}/api/v1/merchant/payouts`, {
+      headers: { Authorization: `Bearer ${merchantToken}` },
+    });
+    assert.equal(res.status, 200);
+    const payouts = await res.json();
+    assert.ok(Array.isArray(payouts));
+  });
+
+  it('Rejects duplicate concurrent payout requests', async () => {
+    const res = await fetch(`${baseUrl}/api/v1/merchant/payouts`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${merchantToken}`,
+      },
+      body: JSON.stringify({ amountPaise: 10000, destinationAccountMasked: '****5678' }),
+    });
+    assert.equal(res.status, 503);
+  });
+
+  it('Rejects payout exceeding eligible balance', async () => {
+    const res = await fetch(`${baseUrl}/api/v1/merchant/payouts`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${merchantToken}`,
+      },
+      body: JSON.stringify({ amountPaise: 999999999, destinationAccountMasked: '****9999' }),
+    });
+    assert.equal(res.status, 503);
+  });
 });

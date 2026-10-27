@@ -305,8 +305,14 @@ export class PaymentController {
     }
 
     const now = new Date().toISOString();
+    const paymentId = `pay-cash-${order.id}`;
 
     this.db.transaction(() => {
+      this.db.execute(
+        `INSERT INTO payments (id, order_id, provider, provider_transaction_id, provider_event_id, amount_paise, currency, status, created_at, updated_at)
+         VALUES (?, ?, 'MANUAL_CASH', ?, ?, ?, ?, 'VERIFIED', ?, ?)`,
+        [paymentId, order.id, paymentId, paymentId, order.totalAmountPaise, order.currency, now, now]
+      );
       this.orderRepo.updatePaymentStatus(order.id, 'VERIFIED');
       this.ledgerRepo.appendEntry({
         id: `led-cash-${crypto.randomUUID()}`,
@@ -316,6 +322,7 @@ export class PaymentController {
         amountPaise: order.totalAmountPaise,
         currency: order.currency,
         provider: 'MANUAL_CASH',
+        providerTransactionId: paymentId,
         description: `Cash collected at counter for Order ${order.orderNumber}`,
         createdAt: now,
       });
@@ -330,5 +337,143 @@ export class PaymentController {
       message: 'Cash payment recorded and order updated',
       order: updated,
     });
+  };
+
+  public createRefund = async (req: Request, res: Response) => {
+    const orderId = String(req.params.id);
+    const order = this.orderRepo.getOrderById(orderId);
+
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    const effectiveShopId = req.user?.shopId;
+    if (
+      req.user?.role !== 'PLATFORM_OWNER' && req.user?.role !== 'PLATFORM_ADMIN' &&
+      (!effectiveShopId || order.shopId !== effectiveShopId)
+    ) {
+      return res.status(403).json({ error: 'Order is not available to this shop.' });
+    }
+
+    if (order.paymentStatus !== 'VERIFIED') {
+      return res.status(409).json({ error: 'Only verified payments can be refunded.' });
+    }
+
+    const { amountPaise, reason } = req.body;
+    if (!Number.isInteger(amountPaise) || amountPaise < 1 || amountPaise > order.totalAmountPaise) {
+      return res.status(400).json({ error: 'Refund amount must be between 1 and the order total.' });
+    }
+    if (!reason || typeof reason !== 'string' || reason.length < 3 || reason.length > 500) {
+      return res.status(400).json({ error: 'Refund reason is required (3-500 characters).' });
+    }
+
+    const existingRefunds = this.db.query<any>(
+      `SELECT COALESCE(SUM(amount_paise), 0) as total FROM refunds WHERE order_id = ? AND status IN ('REQUESTED', 'PROCESSING', 'COMPLETED')`,
+      [orderId]
+    );
+    const alreadyRefunded = existingRefunds[0]?.total || 0;
+    if (amountPaise + alreadyRefunded > order.totalAmountPaise) {
+      return res.status(409).json({ error: 'Refund amount exceeds the remaining refundable balance.' });
+    }
+
+    const payment = this.db.queryOne<any>(
+      `SELECT id FROM payments WHERE order_id = ? AND status = 'VERIFIED' ORDER BY created_at DESC LIMIT 1`,
+      [orderId]
+    );
+    if (!payment) {
+      return res.status(409).json({ error: 'No verified payment record found for this order.' });
+    }
+
+    const refundId = `ref-${crypto.randomUUID()}`;
+    const now = new Date().toISOString();
+
+    this.db.transaction(() => {
+      this.db.execute(
+        `INSERT INTO refunds (id, order_id, payment_id, amount_paise, currency, status, reason, requested_by, requested_at)
+         VALUES (?, ?, ?, ?, ?, 'REQUESTED', ?, ?, ?)`,
+        [
+          refundId,
+          orderId,
+          payment.id,
+          amountPaise,
+          order.currency,
+          reason,
+          req.user?.userId || 'system',
+          now,
+        ]
+      );
+    });
+
+    res.status(201).json({
+      success: true,
+      refundId,
+      status: 'REQUESTED',
+      amountPaise,
+      currency: order.currency,
+      message: 'Refund request recorded. Processing is unavailable until a verified refund workflow is configured.',
+    });
+  };
+
+  public listRefunds = (req: Request, res: Response) => {
+    const effectiveShopId = req.user?.shopId;
+    const isPlatform = req.user?.role === 'PLATFORM_OWNER' || req.user?.role === 'PLATFORM_ADMIN';
+
+    let sql = `SELECT r.*, o.order_number, o.customer_name, o.total_amount_paise as order_total
+               FROM refunds r JOIN orders o ON o.id = r.order_id`;
+    const params: any[] = [];
+
+    if (!isPlatform && !effectiveShopId) {
+      return res.status(403).json({ error: 'A shop context is required to view refunds.' });
+    }
+    if (!isPlatform) {
+      sql += ` WHERE o.shop_id = ?`;
+      params.push(effectiveShopId);
+    }
+
+    sql += ` ORDER BY r.requested_at DESC`;
+
+    const rows = this.db.query<any>(sql, params);
+    res.json(rows.map((r) => ({
+      id: r.id,
+      orderId: r.order_id,
+      orderNumber: r.order_number,
+      customerName: r.customer_name,
+      amountPaise: r.amount_paise,
+      currency: r.currency,
+      status: r.status,
+      reason: r.reason,
+      providerRefundId: r.provider_refund_id,
+      requestedAt: r.requested_at,
+      processedAt: r.processed_at,
+      failureReason: r.failure_reason,
+    })));
+  };
+
+  public processRefund = async (req: Request, res: Response) => {
+    const refundId = String(req.params.id);
+    const { action, reason } = req.body; // action: 'APPROVE' | 'REJECT'
+
+    const refund = this.db.queryOne<any>(
+      `SELECT r.*, o.shop_id, o.order_number, o.total_amount_paise as order_total, o.currency, o.payment_method
+       FROM refunds r JOIN orders o ON o.id = r.order_id WHERE r.id = ?`,
+      [refundId]
+    );
+    if (!refund) {
+      return res.status(404).json({ error: 'Refund not found' });
+    }
+
+    const effectiveShopId = req.user?.shopId;
+    const isPlatform = req.user?.role === 'PLATFORM_OWNER' || req.user?.role === 'PLATFORM_ADMIN';
+    if (!isPlatform && (!effectiveShopId || refund.shop_id !== effectiveShopId)) {
+      return res.status(403).json({ error: 'Refund is not available to this shop.' });
+    }
+    if (refund.status !== 'REQUESTED') {
+      return res.status(409).json({ error: `Refund is already ${refund.status.toLowerCase()}.` });
+    }
+
+    if (action !== 'APPROVE' && action !== 'REJECT') {
+      return res.status(400).json({ error: "Action must be 'APPROVE' or 'REJECT'." });
+    }
+    return res.status(503).json({ error: 'Refund processing is not configured. The request remains pending and no ledger entry was created.' });
   };
 }
