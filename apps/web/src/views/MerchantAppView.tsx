@@ -846,6 +846,16 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       ? new Date(o.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       : 'Just now';
 
+    const colorModeLabel = printOpts.colorMode === 'color'
+      ? 'Colour Print'
+      : (printOpts.colorMode === 'mixed'
+          ? `Mixed (Color: p. ${printOpts.colorPages || 'custom'})`
+          : 'Black & White');
+
+    const pageRangeStr = printOpts.pageRange && printOpts.pageRange !== 'All'
+      ? `Pages ${printOpts.pageRange} (${file?.pageCount || 1}p)`
+      : `${file?.pageCount || 1} pages`;
+
     return {
       id: o.orderNumber || o.id,
       rawId: o.id,
@@ -853,9 +863,17 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       phone: o.customerPhone || 'Counter QR',
       document: file?.fileName || 'Customer_Document.pdf',
       pages: file?.pageCount || 1,
+      pageRange: printOpts.pageRange || 'All',
+      pageRangeDisplay: pageRangeStr,
       copies: printOpts.copies || 1,
-      colorMode: printOpts.colorMode === 'color' ? 'Colour Print' : 'Black & White',
+      colorMode: colorModeLabel,
+      rawColorMode: printOpts.colorMode,
+      colorPages: printOpts.colorPages,
       duplex: printOpts.duplexMode === 'duplex_auto' ? 'Back-to-Back' : 'Single Sided',
+      paperSize: printOpts.paperSize || 'A4',
+      orientation: printOpts.orientation || 'Portrait',
+      rotation: printOpts.rotation || 0,
+      customerNote: printOpts.note || o.notes || '',
       amount: `₹${((o.totalAmountPaise || 0) / 100).toFixed(2)}`,
       time: orderTime,
       tab,
@@ -994,14 +1012,24 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     }, 2500);
   };
 
-  const handleMarkCollected = (orderId: string) => {
+  const handleMarkCollected = async (orderId: string) => {
+    const order = ordersList.find((o) => o.id === orderId || o.rawId === orderId);
+    const targetId = order?.rawId || orderId;
+    try {
+      await api.updateOrderStatus(targetId, 'COLLECTED');
+    } catch (e) {
+      console.warn('Update order status to COLLECTED warning:', e);
+    }
     updateOrderInStorage(orderId, { tab: 'done', status: 'Cash Collected · Order Delivered' });
     setOrdersList((prev) =>
       prev.map((o) =>
-        o.id === orderId ? { ...o, tab: 'done', status: 'Cash Collected · Order Delivered' } : o
+        o.id === orderId || o.rawId === orderId
+          ? { ...o, tab: 'done', status: 'Cash Collected · Order Delivered' }
+          : o
       )
     );
-    setOrderActionToast(`Order #${orderId} cash collected and marked Done.`);
+    fetchLiveOrdersFromApi();
+    setOrderActionToast(`Order #${orderId} marked as Completed & Delivered.`);
     setTimeout(() => setOrderActionToast(null), 3000);
     setSelectedOrder(null);
   };
@@ -2498,42 +2526,65 @@ pause
                           <div className="text-green-600 dark:text-green-400">{ord.amount}</div>
                           <div className="text-[9px] text-gray-400 font-normal">{ord.paymentMode}</div>
                         </td>
-                        <td className="py-4 px-4 text-right space-x-2">
+                        <td className="py-4 px-4 text-right space-x-1.5">
                           {ord.tab === 'pending' && (
                             <>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedOrder(ord)}
+                                className="px-2.5 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition-all border border-indigo-200 cursor-pointer shadow-xs"
+                                title="Review Customer Order Specifications"
+                              >
+                                Review
+                              </button>
                               <button
                                 type="button"
                                 onClick={() => handleOneClickPrint(ord.id)}
                                 className="px-3 py-1.5 rounded-lg bg-[#4D64E6] hover:bg-[#3F54D1] text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
                               >
-                                One-Click Print
+                                Print
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleMarkCollected(ord.id)}
+                                className="px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-bold transition-all cursor-pointer"
+                                title="Mark Order as Completed & Delivered"
+                              >
+                                ✓ Complete
                               </button>
                               <button
                                 type="button"
                                 onClick={() => handleRejectOrder(ord.id)}
-                                className="px-2.5 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold transition-all cursor-pointer"
+                                className="px-2 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold transition-all cursor-pointer"
                               >
                                 Reject
                               </button>
                             </>
                           )}
-                          {ord.tab === 'processing' && (
-                            <button
-                              type="button"
-                              onClick={() => handleOneClickPrint(ord.id)}
-                              className="px-3 py-1.5 rounded-lg bg-[#4D64E6] hover:bg-[#3F54D1] text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
-                            >
-                              Send to Spooler
-                            </button>
-                          )}
-                          {ord.tab === 'printing' && (
-                            <button
-                              type="button"
-                              onClick={() => setActiveView('live_print')}
-                              className="px-3 py-1.5 rounded-lg border border-purple-500 text-purple-600 hover:bg-purple-50 text-xs font-bold transition-all cursor-pointer"
-                            >
-                              Live Monitor ↗
-                            </button>
+                          {(ord.tab === 'processing' || ord.tab === 'printing') && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedOrder(ord)}
+                                className="px-2.5 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition-all border border-indigo-200 cursor-pointer shadow-xs"
+                              >
+                                Review
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleMarkCollected(ord.id)}
+                                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
+                              >
+                                ✓ Complete Order
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleOneClickPrint(ord.id)}
+                                className="px-2.5 py-1.5 rounded-lg border border-indigo-200 text-indigo-600 hover:bg-indigo-50 text-xs font-bold transition-all cursor-pointer"
+                              >
+                                Re-Spool
+                              </button>
+                            </>
                           )}
                           {ord.tab === 'print_failed' && (
                             <button
@@ -2545,21 +2596,23 @@ pause
                             </button>
                           )}
                           {ord.tab === 'done' && (
-                            <button
-                              type="button"
-                              onClick={() => handleOneClickPrint(ord.id)}
-                              className="px-2.5 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-100 text-xs font-bold transition-all cursor-pointer"
-                            >
-                              Reprint
-                            </button>
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedOrder(ord)}
+                                className="px-2.5 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 text-gray-700 dark:text-gray-200 text-xs font-bold transition-all cursor-pointer"
+                              >
+                                Details
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleOneClickPrint(ord.id)}
+                                className="px-2 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-100 text-xs font-bold transition-all cursor-pointer"
+                              >
+                                Reprint
+                              </button>
+                            </>
                           )}
-                          <button
-                            type="button"
-                            onClick={() => setSelectedOrder(ord)}
-                            className="px-2.5 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-xs font-bold transition-all cursor-pointer"
-                          >
-                            View
-                          </button>
                         </td>
                       </tr>
                     ))}
@@ -2635,14 +2688,19 @@ pause
                       <span className="bg-red-100 text-red-600 font-bold px-1.5 py-0.5 rounded text-[9px]">PDF</span>
                       <span className="truncate">{selectedOrder.document || selectedOrder.name}</span>
                     </div>
-                    <div className="grid grid-cols-3 gap-2 pt-1 text-[11px] text-gray-600 dark:text-gray-300">
-                      <div><strong>Pages:</strong> {selectedOrder.pages}p</div>
-                      <div><strong>Copies:</strong> {selectedOrder.copies || 1}</div>
-                      <div><strong>Color:</strong> {selectedOrder.colorMode || 'B&W'}</div>
-                      <div><strong>Duplex:</strong> {selectedOrder.duplex || 'Duplex'}</div>
-                      <div><strong>Paper:</strong> A4 Standard</div>
-                      <div><strong>Status:</strong> {selectedOrder.status}</div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1 text-[11px] text-gray-600 dark:text-gray-300">
+                      <div><strong>Pages:</strong> {selectedOrder.pageRangeDisplay || `${selectedOrder.pages}p`}</div>
+                      <div><strong>Copies:</strong> {selectedOrder.copies || 1} set(s)</div>
+                      <div><strong>Color Mode:</strong> {selectedOrder.colorMode || 'Black & White'}</div>
+                      <div><strong>Duplex:</strong> {selectedOrder.duplex || 'Single Sided'}</div>
+                      <div><strong>Orientation:</strong> {selectedOrder.orientation || 'Portrait'} {selectedOrder.rotation ? `(${selectedOrder.rotation}°)` : ''}</div>
+                      <div><strong>Paper:</strong> {selectedOrder.paperSize || 'A4'}</div>
                     </div>
+                    {selectedOrder.customerNote && (
+                      <div className="p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-[11px] text-amber-800 dark:text-amber-200 mt-2">
+                        <strong>Customer Instructions:</strong> {selectedOrder.customerNote}
+                      </div>
+                    )}
                   </div>
 
                   <div className="pt-2 flex flex-wrap gap-2">
@@ -2652,9 +2710,18 @@ pause
                         handleOneClickPrint(selectedOrder.id);
                         setSelectedOrder(null);
                       }}
-                      className="flex-1 py-2.5 bg-[#4D64E6] hover:bg-[#3F54D1] text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer"
+                      className="flex-1 py-2.5 bg-[#4D64E6] hover:bg-[#3F54D1] text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer flex items-center justify-center gap-1.5"
                     >
-                      Dispatch Print Job
+                      <span>🖨️</span>
+                      <span>Let it Print (Dispatch)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleMarkCollected(selectedOrder.id)}
+                      className="flex-1 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      <span>✓</span>
+                      <span>Complete Order</span>
                     </button>
                     {selectedOrder.tab === 'pending' && (
                       <button
@@ -2663,18 +2730,11 @@ pause
                           handleRejectOrder(selectedOrder.id);
                           setSelectedOrder(null);
                         }}
-                        className="px-4 py-2.5 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded-xl text-xs font-bold cursor-pointer"
+                        className="px-3.5 py-2.5 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded-xl text-xs font-bold cursor-pointer"
                       >
                         Reject
                       </button>
                     )}
-                    <button
-                      type="button"
-                      onClick={() => handleMarkCollected(selectedOrder.id)}
-                      className="px-4 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer"
-                    >
-                      Mark Done
-                    </button>
                   </div>
                 </div>
               </div>

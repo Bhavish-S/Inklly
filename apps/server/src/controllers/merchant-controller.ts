@@ -115,8 +115,20 @@ export class MerchantController {
       });
     }
 
+    const targetStatus = (status === 'COMPLETED' ? 'COLLECTED' : status) as OrderStatus;
     try {
-      this.orderRepo.updateOrderStatus(id, status as OrderStatus);
+      if (targetStatus === 'COLLECTED') {
+        if (order.status === 'AWAITING_REVIEW' || order.status === 'SUBMITTED') {
+          this.orderRepo.updateOrderStatus(id, 'READY_FOR_PRINT');
+        }
+        if (order.status === 'AWAITING_REVIEW' || order.status === 'SUBMITTED' || order.status === 'READY_FOR_PRINT') {
+          this.orderRepo.updateOrderStatus(id, 'IN_PROGRESS');
+        }
+        if (order.status !== 'COLLECTED') {
+          this.orderRepo.updateOrderStatus(id, 'READY_FOR_COLLECTION');
+        }
+      }
+      this.orderRepo.updateOrderStatus(id, targetStatus);
       const updated = this.orderRepo.getOrderById(id);
       res.json({ success: true, order: updated });
     } catch (err: any) {

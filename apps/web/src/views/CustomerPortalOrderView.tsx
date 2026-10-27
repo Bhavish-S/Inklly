@@ -59,7 +59,8 @@ interface DocumentItem {
   cropBox: { x: number; y: number; width: number; height: number };
   note?: string;
   options: {
-    colorMode: 'bw' | 'color';
+    colorMode: 'bw' | 'color' | 'mixed';
+    colorPages?: string;
     duplexMode: 'simplex' | 'duplex_auto';
     paperSize: 'A4' | 'A3' | 'Legal';
     paperType?: 'standard_75' | 'bond_85' | 'executive_100' | 'glossy_180' | 'card_250';
@@ -324,8 +325,12 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
     );
   };
 
-  const parsePageRangeCount = (rangeStr: string, maxPages: number): number => {
-    if (!rangeStr || rangeStr.trim().toLowerCase() === 'all') return Math.max(1, maxPages);
+  const parsePageNumbers = (rangeStr: string, maxPages: number): number[] => {
+    if (!rangeStr || rangeStr.trim().toLowerCase() === 'all') {
+      const all: number[] = [];
+      for (let i = 1; i <= Math.max(1, maxPages); i++) all.push(i);
+      return all;
+    }
     const parts = rangeStr.split(',').map((p) => p.trim());
     const selected = new Set<number>();
     for (const part of parts) {
@@ -339,7 +344,12 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
         if (!isNaN(num) && num >= 1 && num <= maxPages) selected.add(num);
       }
     }
-    return selected.size > 0 ? selected.size : Math.max(1, maxPages);
+    return selected.size > 0 ? Array.from(selected).sort((a, b) => a - b) : [];
+  };
+
+  const parsePageRangeCount = (rangeStr: string, maxPages: number): number => {
+    const list = parsePageNumbers(rangeStr, maxPages);
+    return list.length > 0 ? list.length : Math.max(1, maxPages);
   };
 
   const updateActiveRotation = () => {
@@ -350,24 +360,49 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
     );
   };
 
-  // Price Calculation in Rupees & integer minor units
+  // Price Calculation in Rupees & integer minor units with exact Mixed Color support
   const calculateTotal = () => {
     let total = 0;
     documents.forEach((doc) => {
-      let rate = shop.rates.bw_simplex;
+      const selectedPages = parsePageNumbers(doc.options.pageRange || 'All', doc.pageCount);
+      const effectivePages = selectedPages.length > 0 ? selectedPages.length : Math.max(1, doc.pageCount);
+
+      let colorPagesCount = 0;
+      let bwPagesCount = 0;
+
       if (doc.options.colorMode === 'color') {
-        rate = doc.options.duplexMode === 'simplex' ? shop.rates.color_simplex : shop.rates.color_duplex;
+        colorPagesCount = effectivePages;
+        bwPagesCount = 0;
+      } else if (doc.options.colorMode === 'mixed') {
+        const customColorPages = parsePageNumbers(doc.options.colorPages || '', doc.pageCount);
+        // Intersect with selectedPages so we only charge color for pages that are actually being printed
+        const actualColorList = customColorPages.filter((p) => selectedPages.includes(p));
+        colorPagesCount = actualColorList.length;
+        bwPagesCount = Math.max(0, effectivePages - colorPagesCount);
       } else {
-        rate = doc.options.duplexMode === 'simplex' ? shop.rates.bw_simplex : shop.rates.bw_duplex;
+        colorPagesCount = 0;
+        bwPagesCount = effectivePages;
       }
 
-      // Paper type surcharges
-      if (doc.options.paperType === 'bond_85') rate += 0.5;
-      else if (doc.options.paperType === 'executive_100') rate += 1.5;
-      else if (doc.options.paperType === 'glossy_180') rate += 12.0;
-      else if (doc.options.paperType === 'card_250') rate += 8.0;
+      const bwRate = doc.options.duplexMode === 'simplex'
+        ? (shop.rates?.bw_simplex || 2.0)
+        : (shop.rates?.bw_duplex || 1.5);
+      const colorRate = doc.options.duplexMode === 'simplex'
+        ? (shop.rates?.color_simplex || 10.0)
+        : (shop.rates?.color_duplex || 8.0);
 
-      if (doc.options.paperSize === 'A3') rate *= 2.0;
+      let docCost = (colorPagesCount * colorRate) + (bwPagesCount * bwRate);
+
+      // Paper type surcharges
+      let paperSurcharge = 0;
+      if (doc.options.paperType === 'bond_85') paperSurcharge = 0.5;
+      else if (doc.options.paperType === 'executive_100') paperSurcharge = 1.5;
+      else if (doc.options.paperType === 'glossy_180') paperSurcharge = 12.0;
+      else if (doc.options.paperType === 'card_250') paperSurcharge = 8.0;
+
+      docCost += (paperSurcharge * effectivePages);
+
+      if (doc.options.paperSize === 'A3') docCost *= 2.0;
 
       // Finishing add-ons
       let finishingCost = 0;
@@ -376,8 +411,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
       else if (doc.options.finishing === 'thermal') finishingCost = 60.0;
       else if (doc.options.finishing === 'lamination') finishingCost = 25.0;
 
-      const effectivePages = parsePageRangeCount(doc.options.pageRange || 'All', doc.pageCount);
-      total += (effectivePages * rate * (doc.options.copies || 1)) + finishingCost;
+      total += (docCost * (doc.options.copies || 1)) + finishingCost;
     });
     return total * globalCopies;
   };
@@ -704,23 +738,41 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
             lineSubtotalPaise: Math.round(d.pageCount * 150),
           })),
         },
-        files: documents.map((d) => ({
-          fileName: d.fileName,
-          fileSizeBytes: d.file ? d.file.size : 1024 * 1024,
-          storageKey: d.storageKey || `uploads/${shop.id || 'shop-campus-1'}/${Date.now()}-${d.fileName}`,
-          fileUrl: d.fileUrl || '',
-          pageCount: d.pageCount,
-          options: {
-            ...d.options,
-            rotation: d.rotation || 0,
-            filter: d.filter || 'natural',
-            brightness: d.brightness || 100,
-            contrast: d.contrast || 100,
-            cropBox: d.cropBox,
-            note: d.note || '',
-          },
-          subtotalPaise: Math.round(d.pageCount * 150),
-        })),
+        files: documents.map((d) => {
+          const selected = parsePageNumbers(d.options.pageRange || 'All', d.pageCount);
+          const effCount = selected.length;
+          let cCount = 0;
+          let bCount = effCount;
+          if (d.options.colorMode === 'color') {
+            cCount = effCount;
+            bCount = 0;
+          } else if (d.options.colorMode === 'mixed') {
+            const cPages = parsePageNumbers(d.options.colorPages || '', d.pageCount).filter((p) => selected.includes(p));
+            cCount = cPages.length;
+            bCount = Math.max(0, effCount - cCount);
+          }
+          const bRate = d.options.duplexMode === 'simplex' ? (shop.rates?.bw_simplex || 2.0) : (shop.rates?.bw_duplex || 1.5);
+          const cRate = d.options.duplexMode === 'simplex' ? (shop.rates?.color_simplex || 10.0) : (shop.rates?.color_duplex || 8.0);
+          const docTotal = ((cCount * cRate) + (bCount * bRate)) * (d.options.copies || 1);
+
+          return {
+            fileName: d.fileName,
+            fileSizeBytes: d.file ? d.file.size : 1024 * 1024,
+            storageKey: d.storageKey || `uploads/${shop.id || 'shop-campus-1'}/${Date.now()}-${d.fileName}`,
+            fileUrl: d.fileUrl || '',
+            pageCount: d.pageCount,
+            options: {
+              ...d.options,
+              rotation: d.rotation || 0,
+              filter: d.filter || 'natural',
+              brightness: d.brightness || 100,
+              contrast: d.contrast || 100,
+              cropBox: d.cropBox,
+              note: d.note || '',
+            },
+            subtotalPaise: Math.round(docTotal * 100),
+          };
+        }),
       });
 
       if (data && (data.orderId || data.orderNumber)) {
@@ -1626,17 +1678,56 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                       </button>
                     </div>
                     {(activeDoc.options.pageRange || 'All').toLowerCase() !== 'all' && (
-                      <div className="space-y-1 mt-1.5 animate-fadeIn">
+                      <div className="space-y-1.5 mt-1.5 animate-fadeIn">
                         <input
                           type="text"
                           value={activeDoc.options.pageRange === 'All' ? '' : activeDoc.options.pageRange}
                           onChange={(e) => updateActiveOptions({ pageRange: e.target.value })}
-                          placeholder={`e.g. 1-${Math.min(activeDoc.pageCount, 2)}, ${activeDoc.pageCount}`}
+                          placeholder={`e.g. 1-${Math.min(activeDoc.pageCount, 5)}, ${activeDoc.pageCount}`}
                           className="w-full p-2.5 rounded-xl border border-indigo-300 text-xs text-slate-900 font-mono focus:ring-2 focus:ring-indigo-500 outline-none"
                         />
                         <p className="text-[10px] text-slate-400">
-                          Type individual pages or ranges separated by commas (e.g. <code>1, 3-5</code>).
+                          Type individual pages or ranges separated by commas (e.g. <code>1-5</code> or <code>1, 3, 5</code>).
                         </p>
+                        {activeDoc.pageCount > 1 && activeDoc.pageCount <= 30 && (
+                          <div className="pt-1">
+                            <div className="text-[10px] text-slate-500 font-semibold mb-1">Click to toggle pages:</div>
+                            <div className="flex flex-wrap gap-1">
+                              {Array.from({ length: activeDoc.pageCount }, (_, idx) => idx + 1).map((pg) => {
+                                const currentSelected = parsePageNumbers(activeDoc.options.pageRange || 'All', activeDoc.pageCount);
+                                const isSelected = currentSelected.includes(pg);
+                                return (
+                                  <button
+                                    key={pg}
+                                    type="button"
+                                    onClick={() => {
+                                      let nextList: number[];
+                                      if (isSelected) {
+                                        nextList = currentSelected.filter((p) => p !== pg);
+                                      } else {
+                                        nextList = [...currentSelected, pg].sort((a, b) => a - b);
+                                      }
+                                      if (nextList.length === activeDoc.pageCount) {
+                                        updateActiveOptions({ pageRange: 'All' });
+                                      } else if (nextList.length === 0) {
+                                        updateActiveOptions({ pageRange: `${pg}` });
+                                      } else {
+                                        updateActiveOptions({ pageRange: nextList.join(', ') });
+                                      }
+                                    }}
+                                    className={`w-7 h-7 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                                      isSelected
+                                        ? 'bg-indigo-600 text-white shadow-xs'
+                                        : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                                    }`}
+                                  >
+                                    {pg}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1693,44 +1784,130 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                       className="w-full p-2.5 rounded-xl border border-slate-200 text-xs text-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none"
                     />
                   </div>
-                  {/* Color Mode */}
+
+                  {/* Color Mode with Mixed Color Support */}
                   <div>
                     <label className="block text-slate-700 font-bold mb-1.5 flex items-center justify-between">
                       <span>Color Mode</span>
-                      <span className="text-[10px] text-slate-400 font-normal">Per page rate</span>
+                      <span className="text-[10px] text-slate-400 font-normal">
+                        {activeDoc.options.colorMode === 'mixed' ? 'Mixed Color + B&W' : 'Per page rate'}
+                      </span>
                     </label>
-                    <div className="grid grid-cols-2 gap-2.5">
+                    <div className="grid grid-cols-3 gap-2">
                       <button
                         type="button"
                         onClick={() => updateActiveOptions({ colorMode: 'bw' })}
-                        className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden ${
+                        className={`p-2.5 rounded-2xl border text-left transition-all relative overflow-hidden ${
                           activeDoc.options.colorMode === 'bw'
                             ? 'border-indigo-600 bg-indigo-50/70 text-indigo-950 font-bold ring-2 ring-indigo-500/20 shadow-xs'
                             : 'border-slate-200 text-slate-700 hover:bg-slate-50'
                         }`}
                       >
-                        <div className="flex items-center gap-2 mb-1">
-                          <div className="w-3.5 h-3.5 rounded-full bg-slate-800 border border-slate-600" />
-                          <div className="font-bold text-xs">Black & White</div>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <div className="w-3 h-3 rounded-full bg-slate-800 border border-slate-600 shrink-0" />
+                          <div className="font-bold text-[11px] truncate">B&W</div>
                         </div>
-                        <div className="text-[10px] text-slate-500 font-medium">₹1.50 per page</div>
+                        <div className="text-[9px] text-slate-500 font-medium">₹{shop.rates?.bw_simplex ? shop.rates.bw_simplex.toFixed(2) : '1.50'}/p</div>
                       </button>
+
                       <button
                         type="button"
                         onClick={() => updateActiveOptions({ colorMode: 'color' })}
-                        className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden ${
+                        className={`p-2.5 rounded-2xl border text-left transition-all relative overflow-hidden ${
                           activeDoc.options.colorMode === 'color'
                             ? 'border-indigo-600 bg-indigo-50/70 text-indigo-950 font-bold ring-2 ring-indigo-500/20 shadow-xs'
                             : 'border-slate-200 text-slate-700 hover:bg-slate-50'
                         }`}
                       >
-                        <div className="flex items-center gap-2 mb-1">
-                          <div className="w-3.5 h-3.5 rounded-full bg-gradient-to-tr from-rose-500 via-amber-400 to-indigo-500" />
-                          <div className="font-bold text-xs">Colour Print</div>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <div className="w-3 h-3 rounded-full bg-gradient-to-tr from-rose-500 via-amber-400 to-indigo-500 shrink-0" />
+                          <div className="font-bold text-[11px] truncate">Colour</div>
                         </div>
-                        <div className="text-[10px] text-slate-500 font-medium">₹8.00 per page</div>
+                        <div className="text-[9px] text-slate-500 font-medium">₹{shop.rates?.color_simplex ? shop.rates.color_simplex.toFixed(2) : '8.00'}/p</div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const defaultColorPages = activeDoc.options.colorPages || '1';
+                          updateActiveOptions({ colorMode: 'mixed', colorPages: defaultColorPages });
+                        }}
+                        className={`p-2.5 rounded-2xl border text-left transition-all relative overflow-hidden ${
+                          activeDoc.options.colorMode === 'mixed'
+                            ? 'border-purple-600 bg-purple-50/70 text-purple-950 font-bold ring-2 ring-purple-500/20 shadow-xs'
+                            : 'border-slate-200 text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <div className="w-3 h-3 rounded-full bg-gradient-to-r from-slate-700 to-purple-500 shrink-0" />
+                          <div className="font-bold text-[11px] truncate">Mixed</div>
+                        </div>
+                        <div className="text-[9px] text-purple-700 font-medium">Custom color</div>
                       </button>
                     </div>
+
+                    {/* Mixed Color Detail Section */}
+                    {activeDoc.options.colorMode === 'mixed' && (
+                      <div className="p-3 bg-purple-50/70 border border-purple-200 rounded-xl space-y-2 mt-2 animate-fadeIn">
+                        <div className="flex items-center justify-between text-xs">
+                          <label className="font-bold text-purple-950">Select Color Pages</label>
+                          <span className="text-[10px] text-purple-700 font-semibold">
+                            {(() => {
+                              const sel = parsePageNumbers(activeDoc.options.pageRange || 'All', activeDoc.pageCount);
+                              const clr = parsePageNumbers(activeDoc.options.colorPages || '', activeDoc.pageCount).filter((p) => sel.includes(p));
+                              return `${clr.length} Color · ${Math.max(0, sel.length - clr.length)} B&W`;
+                            })()}
+                          </span>
+                        </div>
+                        <input
+                          type="text"
+                          value={activeDoc.options.colorPages || ''}
+                          onChange={(e) => updateActiveOptions({ colorPages: e.target.value })}
+                          placeholder="e.g. 1, 2, 5 or 1-2"
+                          className="w-full p-2 bg-white rounded-lg border border-purple-300 font-mono text-purple-900 text-xs focus:ring-2 focus:ring-purple-500 outline-none"
+                        />
+                        {activeDoc.pageCount > 1 && activeDoc.pageCount <= 30 && (
+                          <div>
+                            <div className="text-[10px] text-purple-600 font-medium mb-1">Click pages to toggle Color / B&W:</div>
+                            <div className="flex flex-wrap gap-1">
+                              {Array.from({ length: activeDoc.pageCount }, (_, idx) => idx + 1).map((pg) => {
+                                const sel = parsePageNumbers(activeDoc.options.pageRange || 'All', activeDoc.pageCount);
+                                const inSelected = sel.includes(pg);
+                                const colorList = parsePageNumbers(activeDoc.options.colorPages || '', activeDoc.pageCount);
+                                const isColor = colorList.includes(pg);
+                                if (!inSelected) return null;
+                                return (
+                                  <button
+                                    key={pg}
+                                    type="button"
+                                    onClick={() => {
+                                      let nextColor: number[];
+                                      if (isColor) {
+                                        nextColor = colorList.filter((p) => p !== pg);
+                                      } else {
+                                        nextColor = [...colorList, pg].sort((a, b) => a - b);
+                                      }
+                                      updateActiveOptions({ colorPages: nextColor.join(', ') });
+                                    }}
+                                    className={`w-7 h-7 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                                      isColor
+                                        ? 'bg-gradient-to-tr from-rose-500 to-purple-600 text-white shadow-xs ring-1 ring-purple-400'
+                                        : 'bg-white border border-slate-300 text-slate-700 hover:bg-slate-50'
+                                    }`}
+                                    title={isColor ? `Page ${pg}: Color` : `Page ${pg}: B&W`}
+                                  >
+                                    {pg}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                        <p className="text-[10px] text-purple-700 leading-tight">
+                          💡 Selected color pages print in rich colour. Remaining selected pages print in B&W for maximum savings!
+                        </p>
+                      </div>
+                    )}
                   </div>
 
                   {/* Print Style (Sides) */}

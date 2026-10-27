@@ -11,7 +11,7 @@ interface DocumentViewerProps {
   onOpenEditor?: () => void;
   onRotate?: () => void;
   options: {
-    colorMode: 'bw' | 'color';
+    colorMode: 'bw' | 'color' | 'mixed';
     duplexMode: 'simplex' | 'duplex_auto';
     paperSize: string;
     orientation: string;
@@ -134,7 +134,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         {/* Live print configuration tags */}
         <div className="flex flex-wrap gap-1.5 justify-center">
           <span className="bg-black/80 text-indigo-200 text-[10px] font-semibold px-2 py-0.5 rounded-md border border-white/10">
-            {options.colorMode === 'bw' ? 'Black & White' : 'Full Colour'}
+            {options.colorMode === 'bw' ? 'Black & White' : options.colorMode === 'mixed' ? 'Mixed B&W + Color' : 'Full Colour'}
           </span>
           <span className="bg-black/80 text-emerald-300 text-[10px] font-semibold px-2 py-0.5 rounded-md border border-white/10">
             {options.duplexMode === 'simplex' ? 'Single Sided' : 'Back-to-Back'}
