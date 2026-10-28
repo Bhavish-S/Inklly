@@ -20,7 +20,7 @@ Use `BUILD_AND_TEST_RESULTS.md` for the latest executed checks and `REMAINING_IS
 - Commit `ce4582d` is pushed to `main`. Vercel serves the bundle built from this commit. Render still serves the older seven-path OpenAPI document, omits `revision` from `/health`, and returns 404 for `campus1`; the latest backend commit is not live yet.
 - PostgreSQL migration/startup against the live production project and Supabase private bucket behavior remain unverified.
 - Razorpay sandbox checkout and webhook round trip, refunds/reconciliation against provider statements, subscription checkout, and hybrid per-successful-side billing are not verified or fully implemented.
-- Financial ledger integrity is not proven database-immutable; database triggers/permissions and broad reconciliation remain open.
+- Database migrations now install append-only ledger triggers and a unique provider-transaction index; local SQLite tests cover immutability, compensating entries, and duplicate rejection. Live Supabase migration, pre-existing duplicate review, role/owner bypass protection, and complete reconciliation remain open.
 - The merchant vault has category and file access foundations, but no completed merchant upload workflow.
 - WhatsApp UI and setup routes report unavailable; real Meta onboarding, secure account lifecycle, inbound customer intake, and outbound messages are not implemented.
 - Shop-bound API keys authenticate merchant business routes only when `ENABLE_EXTERNAL_API_ACCESS=true`, with environment, expiry, revocation, active membership, and least-privilege scope checks. Webhook subscriptions are encrypted and validated, but signed delivery, DNS-pinned SSRF protection, retries, delivery history, replay, and rotation are incomplete.
@@ -37,4 +37,4 @@ Use `BUILD_AND_TEST_RESULTS.md` for the latest executed checks and `REMAINING_IS
 
 ## Verification record
 
-For the current local snapshot, `npm run build`, `npm test` (200 passed), and `npm audit --audit-level=high` passed. The Vercel frontend is live at commit `ce4582d`; Render is still serving an older API. See `BUILD_AND_TEST_RESULTS.md` for exact commands and deployment checks.
+For the current local snapshot, `npm run build`, `npm test` (202 passed), and `npm audit --audit-level=high` passed. The Vercel frontend is live at commit `ce4582d`; Render is still serving an older API. See `BUILD_AND_TEST_RESULTS.md` for exact commands and deployment checks.

@@ -5,11 +5,11 @@
 ## Current local verification
 
 - `npm run build` — passed for database, shared, desktop agent, server, and web workspaces using Vite 6.4.5. The main JavaScript bundle is 1,188.94 kB minified (312.90 kB gzip) and triggers Vite's 500 kB chunk warning; the build completes successfully.
-- `npm test` — 200 passed, 0 failed: database 7, shared 13, agent 12, server 168.
+- `npm test` — 202 passed, 0 failed: database 9, shared 13, agent 12, server 168.
 - `npm audit --audit-level=high` — passed with 0 vulnerabilities.
 - `npm run lint` — no root lint script is currently configured.
 
-The test suite covers deterministic Paise pricing, tenant boundaries, active-account and current-membership authorization, signed/revocable sessions, customer order and payment paths, private-storage behavior through a mocked Supabase API, merchant vault and printer ownership migrations, agent result persistence, dispatch replay/acknowledgment, expired handoff safety, paired-origin file downloads, crash-to-`OUTPUT_UNCERTAIN` recovery, developer-key scope validation/verifier redaction, and encrypted webhook-secret migration/storage.
+The test suite covers deterministic Paise pricing, tenant boundaries, active-account and current-membership authorization, signed/revocable sessions, customer order and payment paths, private-storage behavior through a mocked Supabase API, merchant vault and printer ownership migrations, append-only ledger enforcement and duplicate provider-transaction rejection, agent result persistence, dispatch replay/acknowledgment, expired handoff safety, paired-origin file downloads, crash-to-`OUTPUT_UNCERTAIN` recovery, developer-key scope validation/verifier redaction, and encrypted webhook-secret migration/storage.
 
 The print-release path now requires an online registered shop printer (or exactly one online default), assigns the target to every unassigned print job in the same transaction as order state changes, and excludes unassigned/offline targets from agent polling. Agent heartbeats synchronize inventory under the paired agent identity, so agents receive only their own queue's jobs. The Live Print screen and order printer selector consume API inventory instead of displaying sample devices. Printer discovery no longer invents HP/Canon devices, and a successful Sumatra process reports spooler submission rather than confirmed physical output.
 
@@ -36,6 +36,7 @@ WhatsApp Cloud API onboarding and message delivery are unavailable. The merchant
 - Merchant storage category and document tables are present in the generated schema; a versioned migration upgrades existing SQLite and PostgreSQL databases and a test checks migration registration and table presence. Live PostgreSQL migration/startup is not yet verified.
 - Browser visual/E2E testing was not run; the local browser surface was unavailable in this session.
 - PostgreSQL migration and transaction behavior for the latest API-key and nested-order-transaction changes have not been verified against the live Supabase database.
+- PostgreSQL ledger triggers and provider-transaction uniqueness have not been verified against Supabase. Migration v10 fails closed if existing duplicate provider transaction IDs are found; inspect production data before deployment.
 
 ## Reproduction
 

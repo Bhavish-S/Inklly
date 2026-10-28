@@ -770,14 +770,16 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
   });
 
   it('Collects cash at counter and credits ledger', async () => {
-    const cashRes = await fetch(`${baseUrl}/api/v1/payments/orders/${cashOrderId}/collect-cash`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${merchantToken}` },
-    });
-
-    assert.equal(cashRes.status, 200);
-    const cashBody = await cashRes.json();
+    const url = `${baseUrl}/api/v1/payments/orders/${cashOrderId}/collect-cash`;
+    const responses = await Promise.all([1, 2].map(() => fetch(url, {
+      method: 'POST', headers: { Authorization: `Bearer ${merchantToken}` },
+    })));
+    assert.deepEqual(responses.map((response) => response.status).sort(), [200, 409]);
+    const success = responses[0].status === 200 ? responses[0] : responses[1];
+    const cashBody = await success.json();
     assert.equal(cashBody.order.paymentStatus, 'VERIFIED');
+    assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM payments WHERE order_id = ? AND provider = 'MANUAL_CASH'`, [cashOrderId]).count), 1);
+    assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM ledger_entries WHERE order_id = ? AND provider = 'MANUAL_CASH'`, [cashOrderId]).count), 1);
   });
 
   it('Platform Owner Console returns system metrics and ledger', async () => {

@@ -35,6 +35,8 @@ export class DatabaseService {
       this.ensureSqliteLegacyInvitationRename();
       this.ensureSqlitePortalOrderIdempotencyMigration();
       this.ensureSqliteDeveloperKeyScopeMigration();
+      this.ensureSqliteLedgerAppendOnlyMigration();
+      this.ensureSqliteLedgerIdempotencyMigration();
     }
   }
 
@@ -137,6 +139,88 @@ export class DatabaseService {
     this.ensurePostgresLegacyInvitationRename();
     this.ensurePostgresPortalOrderIdempotencyMigration();
     this.ensurePostgresDeveloperKeyScopeMigration();
+    this.ensurePostgresLedgerAppendOnlyMigration();
+    this.ensurePostgresLedgerIdempotencyMigration();
+  }
+
+  private ensureSqliteLedgerIdempotencyMigration(): void {
+    if (this.db!.prepare(`SELECT version FROM inklly_schema_migrations WHERE version = 10`).get()) return;
+    this.db!.exec('BEGIN');
+    try {
+      const duplicate = this.db!.prepare(`SELECT provider FROM ledger_entries
+        WHERE provider_transaction_id IS NOT NULL
+        GROUP BY provider, provider_transaction_id HAVING COUNT(*) > 1 LIMIT 1`).get();
+      if (duplicate) throw new Error('Duplicate provider transaction IDs exist; reconcile ledger history before enabling uniqueness.');
+      this.db!.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ledger_provider_transaction_unique
+        ON ledger_entries(provider, provider_transaction_id) WHERE provider_transaction_id IS NOT NULL`);
+      this.db!.prepare(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (10, ?)`).run(new Date().toISOString());
+      this.db!.exec('COMMIT');
+    } catch (error) {
+      try { this.db!.exec('ROLLBACK'); } catch { /* preserve original migration error */ }
+      throw error;
+    }
+  }
+
+  private ensurePostgresLedgerIdempotencyMigration(): void {
+    if (this.queryPostgres(`SELECT version FROM inklly_schema_migrations WHERE version = ?`, [10]).length) return;
+    this.queryPostgres('BEGIN');
+    try {
+      const duplicate = this.queryPostgres<any>(`SELECT provider FROM ledger_entries
+        WHERE provider_transaction_id IS NOT NULL
+        GROUP BY provider, provider_transaction_id HAVING COUNT(*) > 1 LIMIT 1`)[0];
+      if (duplicate) throw new Error('Duplicate provider transaction IDs exist; reconcile ledger history before enabling uniqueness.');
+      this.queryPostgres(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ledger_provider_transaction_unique
+        ON ledger_entries(provider, provider_transaction_id) WHERE provider_transaction_id IS NOT NULL`);
+      this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [10, new Date().toISOString()]);
+      this.queryPostgres('COMMIT');
+    } catch (error) {
+      try { this.queryPostgres('ROLLBACK'); } catch { /* preserve original migration error */ }
+      throw new Error(`[Inklly DB] PostgreSQL ledger idempotency migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+
+  private ensureSqliteLedgerAppendOnlyMigration(): void {
+    if (this.db!.prepare(`SELECT version FROM inklly_schema_migrations WHERE version = 9`).get()) return;
+    this.db!.exec('BEGIN');
+    try {
+      this.db!.exec(`CREATE TRIGGER IF NOT EXISTS ledger_entries_prevent_update
+        BEFORE UPDATE ON ledger_entries
+        BEGIN
+          SELECT RAISE(ABORT, 'ledger_entries are append-only');
+        END`);
+      this.db!.exec(`CREATE TRIGGER IF NOT EXISTS ledger_entries_prevent_delete
+        BEFORE DELETE ON ledger_entries
+        BEGIN
+          SELECT RAISE(ABORT, 'ledger_entries are append-only');
+        END`);
+      this.db!.prepare(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (9, ?)`).run(new Date().toISOString());
+      this.db!.exec('COMMIT');
+    } catch (error) {
+      try { this.db!.exec('ROLLBACK'); } catch { /* preserve original migration error */ }
+      throw error;
+    }
+  }
+
+  private ensurePostgresLedgerAppendOnlyMigration(): void {
+    if (this.queryPostgres(`SELECT version FROM inklly_schema_migrations WHERE version = ?`, [9]).length) return;
+    this.queryPostgres('BEGIN');
+    try {
+      this.queryPostgres(`CREATE OR REPLACE FUNCTION prevent_ledger_entry_mutation() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+        BEGIN
+          RAISE EXCEPTION 'ledger_entries are append-only';
+        END;
+        $$`);
+      this.queryPostgres(`DROP TRIGGER IF EXISTS ledger_entries_prevent_mutation ON ledger_entries`);
+      this.queryPostgres(`CREATE TRIGGER ledger_entries_prevent_mutation
+        BEFORE UPDATE OR DELETE ON ledger_entries
+        FOR EACH ROW EXECUTE FUNCTION prevent_ledger_entry_mutation()`);
+      this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [9, new Date().toISOString()]);
+      this.queryPostgres('COMMIT');
+    } catch (error) {
+      try { this.queryPostgres('ROLLBACK'); } catch { /* preserve original migration error */ }
+      throw new Error(`[Inklly DB] PostgreSQL ledger append-only migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
   }
 
   private ensureSqliteDeveloperKeyScopeMigration(): void {

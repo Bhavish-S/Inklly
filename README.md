@@ -164,4 +164,4 @@ sequenceDiagram
 
 ## Current verification
 
-See [`BUILD_AND_TEST_RESULTS.md`](./BUILD_AND_TEST_RESULTS.md) for command output and [`REMAINING_ISSUES.md`](./REMAINING_ISSUES.md) for deployment blockers. Latest local verification: `npm run build` passed, `npm test` passed 200 tests, and `npm audit --audit-level=high` found zero vulnerabilities. These checks do not establish live provider, PostgreSQL, object-storage, browser, or printer behavior.
+See [`BUILD_AND_TEST_RESULTS.md`](./BUILD_AND_TEST_RESULTS.md) for command output and [`REMAINING_ISSUES.md`](./REMAINING_ISSUES.md) for deployment blockers. Latest local verification: `npm run build` passed, `npm test` passed 202 tests, and `npm audit --audit-level=high` found zero vulnerabilities. These checks do not establish live provider, PostgreSQL, object-storage, browser, or printer behavior.

@@ -48,6 +48,54 @@ describe('Relational Database & Multi-Tenancy Tests', () => {
     assert.deepEqual(tables.map((table) => table.name).sort(), ['storage_categories', 'storage_documents']);
   });
 
+  it('enforces append-only ledger entries and permits compensating entries', () => {
+    const migration = db.queryOne<any>(`SELECT version FROM inklly_schema_migrations WHERE version = 9`);
+    assert.equal(migration?.version, 9);
+    const id = `ledger-append-only-${Date.now()}`;
+    const now = new Date().toISOString();
+    db.execute(
+      `INSERT INTO ledger_entries (id, domain, shop_id, amount_paise, currency, provider, description, created_at)
+       VALUES (?, 'CUSTOMER_PRINT_PAYMENT', 'shop-campus-1', 1250, 'INR', 'MANUAL_CASH', 'Test receipt', ?)`,
+      [id, now]
+    );
+
+    assert.throws(
+      () => db.execute(`UPDATE ledger_entries SET amount_paise = 1 WHERE id = ?`, [id]),
+      /append-only/i
+    );
+    assert.throws(
+      () => db.execute(`DELETE FROM ledger_entries WHERE id = ?`, [id]),
+      /append-only/i
+    );
+    assert.equal(db.queryOne<any>(`SELECT amount_paise FROM ledger_entries WHERE id = ?`, [id])?.amount_paise, 1250);
+
+    db.execute(
+      `INSERT INTO ledger_entries (id, domain, shop_id, amount_paise, currency, provider, description, metadata, created_at)
+       VALUES (?, 'CUSTOMER_PRINT_PAYMENT', 'shop-campus-1', -1250, 'INR', 'MANUAL_ADJUSTMENT', 'Compensating entry', ?, ?)`,
+      [`${id}-reversal`, JSON.stringify({ reversesEntryId: id, reason: 'test correction' }), now]
+    );
+    const balance = db.queryOne<any>(
+      `SELECT SUM(amount_paise) AS total FROM ledger_entries WHERE id IN (?, ?)`,
+      [id, `${id}-reversal`]
+    );
+    assert.equal(Number(balance?.total), 0);
+  });
+
+  it('prevents posting a provider transaction to the ledger more than once', () => {
+    const migration = db.queryOne<any>(`SELECT version FROM inklly_schema_migrations WHERE version = 10`);
+    assert.equal(migration?.version, 10);
+    const now = new Date().toISOString();
+    const values = ['ledger-provider-once', 'provider-payment-once', now];
+    const insert = (id: string) => db.execute(
+      `INSERT INTO ledger_entries (id, domain, shop_id, amount_paise, currency, provider, provider_transaction_id, description, created_at)
+       VALUES (?, 'CUSTOMER_PRINT_PAYMENT', 'shop-campus-1', 500, 'INR', 'RAZORPAY', ?, 'Payment record', ?)`,
+      [id, values[1], values[2]]
+    );
+    insert(values[0]);
+    assert.throws(() => insert('ledger-provider-duplicate'), /UNIQUE constraint failed/i);
+    assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM ledger_entries WHERE provider = 'RAZORPAY' AND provider_transaction_id = ?`, [values[1]]).count), 1);
+  });
+
   it('applies the portal order idempotency migration without changing existing orders', () => {
     const before = Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM orders`)?.count);
     assert.ok(before > 0, 'seed data includes existing orders for migration preservation');

@@ -286,55 +286,64 @@ export class PaymentController {
 
   public collectCashAtCounter = (req: Request, res: Response) => {
     const id = String(req.params.id);
-    const order = this.orderRepo.getOrderById(id);
+    let outcome: 'NOT_FOUND' | 'FORBIDDEN' | 'WRONG_METHOD' | 'ALREADY_RECORDED' | 'RECORDED';
+    try {
+      outcome = this.db.transaction(() => {
+        // Serialize cash collection on the order row, then re-read all state
+        // inside the lock before creating payment and ledger records.
+        const locked = this.db.queryOne<any>(
+          `UPDATE orders SET updated_at = updated_at WHERE id = ? RETURNING id`,
+          [id]
+        );
+        if (!locked) return 'NOT_FOUND';
 
-    if (!order) {
-      return res.status(404).json({ error: 'Order not found' });
-    }
+        const order = this.orderRepo.getOrderById(id);
+        if (!order) return 'NOT_FOUND';
+        const effectiveShopId = req.user?.shopId;
+        if (
+          req.user?.role !== 'PLATFORM_OWNER' && req.user?.role !== 'PLATFORM_ADMIN' &&
+          (!effectiveShopId || order.shopId !== effectiveShopId)
+        ) return 'FORBIDDEN';
+        if (order.paymentMethod !== 'CASH_ON_COLLECTION') return 'WRONG_METHOD';
+        if (order.paymentStatus === 'VERIFIED') return 'ALREADY_RECORDED';
 
-    const effectiveShopId = req.user?.shopId;
-    if (
-      req.user?.role !== 'PLATFORM_OWNER' && req.user?.role !== 'PLATFORM_ADMIN' &&
-      (!effectiveShopId || order.shopId !== effectiveShopId)
-    ) {
-      return res.status(403).json({ error: 'Order is not available to this shop.' });
-    }
-    if (order.paymentMethod !== 'CASH_ON_COLLECTION') {
-      return res.status(409).json({ error: 'Cash collection is only available for cash-on-collection orders.' });
-    }
-    if (order.paymentStatus === 'VERIFIED') {
-      return res.status(409).json({ error: 'Payment for this order has already been recorded.' });
-    }
-
-    const now = new Date().toISOString();
-    const paymentId = `pay-cash-${order.id}`;
-
-    this.db.transaction(() => {
-      this.db.execute(
-        `INSERT INTO payments (id, order_id, provider, provider_transaction_id, provider_event_id, amount_paise, currency, status, created_at, updated_at)
-         VALUES (?, ?, 'MANUAL_CASH', ?, ?, ?, ?, 'VERIFIED', ?, ?)`,
-        [paymentId, order.id, paymentId, paymentId, order.totalAmountPaise, order.currency, now, now]
-      );
-      this.orderRepo.updatePaymentStatus(order.id, 'VERIFIED');
-      this.ledgerRepo.appendEntry({
-        id: `led-cash-${crypto.randomUUID()}`,
-        domain: 'CUSTOMER_PRINT_PAYMENT',
-        shopId: order.shopId,
-        orderId: order.id,
-        amountPaise: order.totalAmountPaise,
-        currency: order.currency,
-        provider: 'MANUAL_CASH',
-        providerTransactionId: paymentId,
-        description: `Cash collected at counter for Order ${order.orderNumber}`,
-        createdAt: now,
+        const now = new Date().toISOString();
+        const paymentId = `pay-cash-${order.id}`;
+        this.db.execute(
+          `INSERT INTO payments (id, order_id, provider, provider_transaction_id, provider_event_id, amount_paise, currency, status, created_at, updated_at)
+           VALUES (?, ?, 'MANUAL_CASH', ?, ?, ?, ?, 'VERIFIED', ?, ?)`,
+          [paymentId, order.id, paymentId, paymentId, order.totalAmountPaise, order.currency, now, now]
+        );
+        this.orderRepo.updatePaymentStatus(order.id, 'VERIFIED');
+        this.ledgerRepo.appendEntry({
+          id: `led-cash-${crypto.randomUUID()}`,
+          domain: 'CUSTOMER_PRINT_PAYMENT',
+          shopId: order.shopId,
+          orderId: order.id,
+          amountPaise: order.totalAmountPaise,
+          currency: order.currency,
+          provider: 'MANUAL_CASH',
+          providerTransactionId: paymentId,
+          description: `Cash collected at counter for Order ${order.orderNumber}`,
+          createdAt: now,
+        });
+        if (order.status === 'READY_FOR_COLLECTION') {
+          this.orderRepo.updateOrderStatus(order.id, 'COLLECTED');
+        }
+        return 'RECORDED';
       });
-      if (order.status === 'READY_FOR_COLLECTION') {
-        this.orderRepo.updateOrderStatus(order.id, 'COLLECTED');
-      }
-    });
+    } catch (error) {
+      console.error('[Cash collection]', error);
+      return res.status(503).json({ error: 'Cash collection was not recorded. Refresh the order before retrying.' });
+    }
 
-    const updated = this.orderRepo.getOrderById(order.id);
-    res.json({
+    if (outcome === 'NOT_FOUND') return res.status(404).json({ error: 'Order not found' });
+    if (outcome === 'FORBIDDEN') return res.status(403).json({ error: 'Order is not available to this shop.' });
+    if (outcome === 'WRONG_METHOD') return res.status(409).json({ error: 'Cash collection is only available for cash-on-collection orders.' });
+    if (outcome === 'ALREADY_RECORDED') return res.status(409).json({ error: 'Payment for this order has already been recorded.' });
+
+    const updated = this.orderRepo.getOrderById(id);
+    return res.json({
       success: true,
       message: 'Cash payment recorded and order updated',
       order: updated,
