@@ -5,7 +5,7 @@
 ## Current local verification
 
 - `npm run build` — passed for database, shared, desktop agent, server, and web workspaces using Vite 6.4.5. The main JavaScript bundle is 1,174.46 kB minified (309.72 kB gzip) and triggers Vite's 500 kB chunk warning; the build completes successfully.
-- `npm test` — 202 passed, 0 failed: database 9, shared 13, agent 12, server 168.
+- `npm test` — 203 passed, 0 failed: database 9, shared 13, agent 12, server 169.
 - `npm audit --audit-level=high` — passed with 0 vulnerabilities.
 - `npm run lint` — no root lint script is currently configured.
 
@@ -25,7 +25,7 @@ WhatsApp Cloud API onboarding and message delivery are unavailable. The merchant
 
 ## Deployment and integration limits
 
-- These results are from the current local source tree, built after the merchant vault and platform-console honesty changes. The latest checked-in baseline is `0ac3f47`; platform-console changes in this verification are not yet published. Vercel serves the frontend from published commit `0ac3f47`; the current local admin-console changes build to `assets/index-Cj61txgf.js` and are not published yet. Render `/health` returned HTTP 200 but omitted the `revision` field emitted by current source; its live OpenAPI document contained seven paths, with no merchant storage routes. Render is still serving an older backend revision. The live `/api/v1/portal/shop/campus1` endpoint returns HTTP 404; the deployed customer path is unusable until the backend is updated and the correct tenant is provisioned.
+- Commit `80b9c1e` is pushed to `main`. The latest local web build is `assets/index-CAL0rd8b.js`. A live check immediately after push still returned Vercel bundle `assets/index-Cj61txgf.js` (the previous published admin-console build), so the print-output reconciliation UI is not confirmed deployed yet. Render `/health` returned HTTP 200 without the `revision` field; its OpenAPI document still contains only seven paths and no merchant storage or print-output reconciliation routes. Render is serving an older backend revision. `/api/v1/portal/shop/campus1` previously returned HTTP 404; the deployed customer path and tenant provisioning remain unverified.
 - The latest Render log connected to Supabase PostgreSQL and then exited because Supabase Storage settings are missing or invalid. The current source reports the specific invalid settings; the supplied deployed log has an older generic error, so its revision is unverified.
 - Supabase Storage tests mock the HTTP API. Live bucket permissions and file retention have not been verified against the production project.
 - Razorpay tests use test doubles; a live sandbox checkout/webhook round trip has not been verified here.

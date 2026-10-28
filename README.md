@@ -165,4 +165,4 @@ sequenceDiagram
 
 ## Current verification
 
-See [`BUILD_AND_TEST_RESULTS.md`](./BUILD_AND_TEST_RESULTS.md) for command output and [`REMAINING_ISSUES.md`](./REMAINING_ISSUES.md) for deployment blockers. Latest local verification: `npm run build` passed, `npm test` passed 202 tests, and `npm audit --audit-level=high` found zero vulnerabilities. These checks do not establish live provider, PostgreSQL, object-storage, browser, or printer behavior.
+See [`BUILD_AND_TEST_RESULTS.md`](./BUILD_AND_TEST_RESULTS.md) for command output and [`REMAINING_ISSUES.md`](./REMAINING_ISSUES.md) for deployment blockers. Latest local verification: `npm run build` passed, `npm test` passed 203 tests, and `npm audit --audit-level=high` found zero vulnerabilities. These checks do not establish live provider, PostgreSQL, object-storage, browser, or printer behavior. Commit `80b9c1e` is pushed to `main`, but the latest print-output workflow is not yet confirmed on Vercel or Render.
