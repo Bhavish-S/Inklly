@@ -239,15 +239,9 @@ describe('Inklly End-to-End Automated Printing & Multi-Plan Workflow Test Suite'
     assert.equal(readyOrder.status, 'READY_FOR_COLLECTION');
 
     // 5c. Customer collects printed job: transition to COLLECTED
-    const collectedRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${createdOrderId}/status`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${merchantToken}`,
-      },
-      body: JSON.stringify({
-        status: 'COLLECTED',
-      }),
+    const collectedRes = await fetch(`${baseUrl}/api/v1/payments/orders/${createdOrderId}/collect-cash`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${merchantToken}` },
     });
 
     assert.equal(collectedRes.status, 200);

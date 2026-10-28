@@ -73,7 +73,7 @@ export const LegalPage: React.FC<LegalPageProps> = ({ initialTab = 'privacy', on
 
               <h3 className="text-base font-bold mb-2">2. Ephemeral Document Retention & Shredding</h3>
               <p className="text-xs text-[#5B6475] mb-4">
-                The 24-hour deletion period after order completion is the planned retention policy, but automated deletion and private file storage are not yet deployed in this preview. Use test documents only and do not upload sensitive files. We do not currently offer WhatsApp document intake.
+                Customer print files are scheduled for deletion 24 hours after an order is completed. The cleanup is implemented in the application, but the current Render deployment and live storage bucket have not been verified. Until deployment verification is complete, use test documents only and do not upload sensitive files. We do not currently offer WhatsApp document intake.
               </p>
 
               <h3 className="text-base font-bold mb-2">3. Security Standards</h3>
@@ -83,7 +83,7 @@ export const LegalPage: React.FC<LegalPageProps> = ({ initialTab = 'privacy', on
 
               <h3 className="text-base font-bold mb-2">4. Contact Information</h3>
               <p className="text-xs text-[#5B6475]">
-                For privacy compliance inquiries, contact our Data Protection Officer at privacy@inklly.in.
+                For privacy questions, contact support@inklly.in or use the contact form on the Inklly website.
               </p>
             </div>
           )}
@@ -105,7 +105,7 @@ export const LegalPage: React.FC<LegalPageProps> = ({ initialTab = 'privacy', on
 
               <h3 className="text-base font-bold mb-2">3. Subscription & Termination</h3>
               <p className="text-xs text-[#5B6475] mb-4">
-                Subscriptions renew on a monthly or annual basis. You may cancel at any time through your dashboard. Termination takes effect at the conclusion of the current prepaid billing period.
+                Inklly is running a pilot with rates agreed per participating shop. This preview does not start a paid subscription or renew a paid term. If subscription billing is enabled for your account, the applicable price, usage rate, billing period, and cancellation terms will be shown before you accept them.
               </p>
             </div>
           )}
@@ -117,12 +117,12 @@ export const LegalPage: React.FC<LegalPageProps> = ({ initialTab = 'privacy', on
 
               <h3 className="text-base font-bold mb-2">1. SaaS Subscriptions</h3>
               <p className="text-xs text-[#5B6475] mb-4">
-                We offer a full 7-day risk-free trial on our Growth plan. If you are dissatisfied with our software within 14 days of your initial paid subscription charge, contact support@inklly.in for a full, hassle-free refund.
+                Paid SaaS subscription and printed-side usage billing are not available in this preview. No subscription refund window or automatic renewal is promised here. If you have a separate written pilot agreement, contact Inklly support about a billing question under that agreement.
               </p>
 
               <h3 className="text-base font-bold mb-2">2. Failed Customer Print Jobs</h3>
               <p className="text-xs text-[#5B6475] mb-4">
-                If an end-customer pays via dynamic UPI but their pages fail to print due to a mechanical jam or printer power interruption (flagged as OUTPUT_UNCERTAIN or FAILED), the shop operator can either reprint the pages at zero cost or issue an instant UPI refund through the merchant operating queue.
+                Customer print payments are collected by the participating shop through its configured payment method. If output is incomplete or uncertain, contact the shop to resolve the order. Inklly blocks automatic retries for uncertain print jobs; this preview does not promise a free reprint or issue an instant refund. Any refund must be reviewed and processed through the shop's payment provider.
               </p>
             </div>
           )}

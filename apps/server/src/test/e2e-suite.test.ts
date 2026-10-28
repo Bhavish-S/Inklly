@@ -939,7 +939,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
         },
         body: JSON.stringify({ status: 'COLLECTED' }),
       });
-      assert.equal(jumpRes.status, 422);
+      assert.equal(jumpRes.status, 409);
     });
 
     it('T2.25: Platform owner updates organization plan tier and status gracefully', async () => {
@@ -1310,14 +1310,10 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       });
       assert.equal(agentConfirm.status, 200, await agentConfirm.clone().text());
 
-      // Step 7: Student collects printed thesis -> mark COLLECTED
-      const collectedRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${orderId}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${merchantToken}`,
-        },
-        body: JSON.stringify({ status: 'COLLECTED' }),
+      // Step 7: Record counter cash through the ledger-backed collection route.
+      const collectedRes = await fetch(`${baseUrl}/api/v1/payments/orders/${orderId}/collect-cash`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${merchantToken}` },
       });
       assert.equal(collectedRes.status, 200);
       const finalOrder = (await collectedRes.json()) as any;

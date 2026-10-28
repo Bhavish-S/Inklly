@@ -15,11 +15,13 @@ Use `BUILD_AND_TEST_RESULTS.md` for the latest executed checks and `REMAINING_IS
 - **Private files:** production refuses local-disk storage; upload concurrency is bounded, storage is private, and customer-order cleanup targets the configured retention policy. Merchant vault upload/list/download/delete now use private storage and tenant-scoped metadata.
 - **Request parsing:** ordinary JSON requests are capped at 1 MiB. The two base64 file-upload routes have a shared pre-parser concurrency cap; vault uploads pass persisted session, tenant, subscription, and permission checks before large-body parsing.
 - **Print confirmation:** agents can report spooler submission or uncertain output, but cannot attest printed pages. An authorized merchant must physically inspect output, confirm it with a reason, and the server records an audit event before an order becomes collectible.
+- **Cash collection:** generic order status updates cannot mark an unpaid order collected. Cash collection requires finance permission and the payment route that writes a verified payment and append-only ledger entry; the regression suite covers a staff account with only `orders:process`.
+- **Merchant/public copy:** fixed plan prices and quotas, unsupported printer controls, and unconditional payment/privacy claims were removed or qualified. Marketing labels illustrative order data, Razorpay availability is described as shop-configured, and legal copy no longer promises unimplemented subscription or instant print refunds.
 - **Platform data:** tenant onboarding, persisted agent fleet status, retention operations, financial summaries, and tenant status updates with audit records use backend data. Incident intake, runtime configuration, signed installer distribution, subscription billing, and quota editing are not yet backed by persistent services; the console now labels those gaps.
 
 ## Incomplete or unverified
 
-- Commit `0ac3f47` is pushed to `main` and Vercel serves its frontend bundle. The current local admin-console hardening is not yet published. Render still serves the older seven-path OpenAPI document, omits `revision` from `/health`, and returns 404 for `campus1`; the latest backend commit is not live yet.
+- Commit `1ff9741` is the latest pushed revision; Vercel served `assets/index-CAL0rd8b.js` from it. Current unpushed UI changes build to `assets/index-Cfcklamd.js`. Render still serves the older seven-path OpenAPI document, omits `revision` from `/health`, and does not expose the latest storage or print-reconciliation routes.
 - PostgreSQL migration/startup against the live production project and Supabase private bucket behavior remain unverified.
 - Razorpay sandbox checkout and webhook round trip, refunds/reconciliation against provider statements, subscription checkout, and hybrid per-successful-side billing are not verified or fully implemented.
 - Database migrations now install append-only ledger triggers and a unique provider-transaction index; local SQLite tests cover immutability, compensating entries, and duplicate rejection. Live Supabase migration, pre-existing duplicate review, role/owner bypass protection, and complete reconciliation remain open.
@@ -39,4 +41,4 @@ Use `BUILD_AND_TEST_RESULTS.md` for the latest executed checks and `REMAINING_IS
 
 ## Verification record
 
-For the current local snapshot, `npm run build`, `npm test` (202 passed), and `npm audit --audit-level=high` passed. The Vercel frontend is live at commit `0ac3f47`; Render is still serving an older API. See `BUILD_AND_TEST_RESULTS.md` for exact commands and deployment checks.
+For the current local snapshot, `npm run build` and `npm test` (204 passed) completed successfully. `npm audit --audit-level=high` timed out twice at the npm registry. Vercel serves the latest pushed frontend bundle; Render is still serving an older API. See `BUILD_AND_TEST_RESULTS.md` for deployment checks.

@@ -38,7 +38,7 @@ export const PricingPage: React.FC<PricingPageProps> = ({ onNavigate }) => (
 
     <section className="mx-auto max-w-3xl px-5 pb-20">
       <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm leading-6 text-amber-950">
-        Online customer payments are not available in this preview. Shops can configure their own Razorpay account, but checkout and payment verification are still being completed. No trial, subscription charge, or per-side charge is activated from this page.
+        Pilot subscription and per-side billing are not active, and this page will not take a SaaS payment. Customer print payments are separate: a shop may enable Razorpay checkout with its own credentials. Verify the hosted payment integration before accepting real payments.
       </div>
     </section>
   </main>

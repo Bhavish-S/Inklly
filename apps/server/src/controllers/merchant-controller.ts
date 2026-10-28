@@ -207,6 +207,9 @@ export class MerchantController {
     if (targetStatus === 'READY_FOR_COLLECTION') {
       return res.status(409).json({ error: 'Print completion requires the audited physical-output reconciliation workflow.' });
     }
+    if (targetStatus === 'COLLECTED' && order.paymentStatus !== 'VERIFIED') {
+      return res.status(409).json({ error: 'Record and verify payment through the payment workflow before marking this order collected.' });
+    }
     const printReleaseStatuses: OrderStatus[] = ['READY_FOR_PRINT', 'IN_PROGRESS', 'PENDING_AGENT_SPOOL', 'READY_FOR_COLLECTION', 'COLLECTED'];
     if (order.paymentMethod === 'ONLINE_RAZORPAY' && order.paymentStatus !== 'VERIFIED' && printReleaseStatuses.includes(targetStatus)) {
       return res.status(409).json({ error: 'Online payment must be verified before this order can be released or completed.' });

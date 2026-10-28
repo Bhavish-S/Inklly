@@ -383,7 +383,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ shopCode
                           checked={paymentMethod === 'ONLINE_RAZORPAY'}
                           onChange={() => setPaymentMethod('ONLINE_RAZORPAY')}
                         />
-                        <span>Instant UPI / Razorpay (Priority Dispatch)</span>
+                        <span>Razorpay online payment (when enabled by this shop)</span>
                       </label>
                     </div>
                   </div>

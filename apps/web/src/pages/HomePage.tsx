@@ -33,7 +33,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
     {
       question: 'How do customers pay, and when do I receive the money?',
       answer:
-        'The current preview does not connect to a payment provider, so it cannot verify UPI payments or promise settlement timing. Payment-provider setup is still part of the launch work.',
+        'A shop can offer Razorpay checkout after its owner configures valid shop credentials and a webhook secret. Cash on collection remains available. Payment availability and settlement timing depend on the shop’s provider setup; the hosted payment flow still needs production verification.',
     },
     {
       question: 'Can I set custom pricing for single-sided, back-to-back, and color prints?',
@@ -48,7 +48,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
     {
       question: 'How does Inklly handle document security and customer privacy?',
       answer:
-        'This preview stores uploaded files on the API server and does not yet have private object storage or an automatic retention policy. Do not upload sensitive documents until those controls are available.',
+        'Customer files use private storage in the application and are scheduled for deletion 24 hours after an order is completed. The live Render service is on an older backend and production bucket behavior has not been verified; use test files until deployment verification is complete.',
     },
   ];
 
@@ -236,7 +236,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
             <StepPhoneCard
               stepNumber={3}
               title="Pay at the counter"
-              description="The current preview does not verify online payments. Payment integrations are in progress."
+              description="Pay at the counter or use shop-configured Razorpay checkout when the shop has enabled it."
               price="₹36.00"
             />
             <StepPhoneCard

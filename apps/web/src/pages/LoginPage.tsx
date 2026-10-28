@@ -82,15 +82,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, onLoginSuccess
                 ? 'High-privilege console to audit active Indian print shops, GMV, fee collection, and hardware telemetry.'
                 : selectedRole === 'developer'
                 ? 'Create API credentials, test OpenAPI endpoints, and simulate webhook callbacks.'
-                : 'Access your counter queue, manage connected Canon/HP printers, review daily cash, and print QR standees.'}
+                : 'Review the shop order queue, connect a paired desktop agent, and manage QR ordering and shop payment settings.'}
             </p>
 
             <div className="space-y-2 text-xs">
               <div className="p-2.5 rounded-xl bg-white/10 border border-white/10 flex items-center gap-2">
-                <span className="text-green-400 font-bold">✓</span> Real-time Counter Print Spooler
+                <span className="text-green-400 font-bold">✓</span> Paired agent dispatch with audited output review
               </div>
               <div className="p-2.5 rounded-xl bg-white/10 border border-white/10 flex items-center gap-2">
-                <span className="text-green-400 font-bold">✓</span> Direct UPI & Cash Reconciliation
+                <span className="text-green-400 font-bold">✓</span> Shop Razorpay checkout and ledger-backed cash collection
               </div>
               <div className="p-2.5 rounded-xl bg-white/10 border border-white/10 flex items-center gap-2">
                 <span className="text-green-400 font-bold">✓</span> Multi-Tenant Isolation

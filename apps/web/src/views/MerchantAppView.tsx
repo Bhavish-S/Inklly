@@ -553,7 +553,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [razorpaySecret, setRazorpaySecret] = useState('');
   const [razorpayWebhookSecret, setRazorpayWebhookSecret] = useState('');
   const [razorpayCredentialStatus, setRazorpayCredentialStatus] = useState<any>({ configured: false });
-  const [acceptOnlinePayments, setAcceptOnlinePayments] = useState<boolean>(true);
   const [allowManualPayment, setAllowManualPayment] = useState<boolean>(true);
   const [autoPrintMode, setAutoPrintMode] = useState<'all' | 'after_payment' | 'off'>('after_payment');
   const [orderSeparator, setOrderSeparator] = useState<'none' | 'invoice' | 'blank'>('invoice');
@@ -564,6 +563,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [receiptIncludeQr, setReceiptIncludeQr] = useState<boolean>(true);
   const [notifyOnOrderReceived, setNotifyOnOrderReceived] = useState<boolean>(true);
   const [notifyOnOrderCompleted, setNotifyOnOrderCompleted] = useState<boolean>(true);
+  const razorpayCheckoutConfigured = Boolean(razorpayCredentialStatus.configured && razorpayCredentialStatus.webhookConfigured);
 
   useEffect(() => {
     let active = true;
@@ -705,12 +705,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const storageUploadInputRef = useRef<HTMLInputElement>(null);
 
   // WhatsApp State
-
-  // Live Print State
-  const [printerPausedMap, setPrinterPausedMap] = useState<Record<string, boolean>>({
-    'p-hp-401': false,
-    'p-canon-c3530': false,
-  });
 
   // Credits State
   const [creditsRemaining, setCreditsRemaining] = useState<number>(50);
@@ -2682,113 +2676,11 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                   }).length === 0 && <p className="col-span-full p-6 text-center text-sm text-gray-500">No printers match these filters.</p>}
                 </div>
 
-                {/* Active Spool Queue Table */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-5 shadow-xs space-y-3">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse" />
-                          <h3 className="font-extrabold text-sm text-[#172031] dark:text-white">HP LaserJet Pro M401dne</h3>
-                          <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
-                            DEFAULT B&W
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-gray-400 mt-0.5">USB Local Port 8765 · Edge Spooler Daemon</p>
-                      </div>
-                      <span className="text-xs font-bold text-green-600">Online & Ready</span>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2 text-xs pt-1">
-                      <div className="p-2.5 bg-gray-50 dark:bg-gray-700/50 rounded-xl">
-                        <span className="text-[10px] text-gray-400 font-bold block">TRAY 1 (A4 Plain)</span>
-                        <div className="font-extrabold mt-0.5">85% Full</div>
-                      </div>
-                      <div className="p-2.5 bg-gray-50 dark:bg-gray-700/50 rounded-xl">
-                        <span className="text-[10px] text-gray-400 font-bold block">TRAY 2 (Legal)</span>
-                        <div className="font-extrabold mt-0.5">40% Full</div>
-                      </div>
-                    </div>
-
-                    <div className="flex gap-2 pt-2 border-t border-gray-100 dark:border-gray-700">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          triggerSaveNotification('HP M401dne Calibration Test Page dispatched');
-                        }}
-                        className="flex-1 py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-xl text-xs font-bold transition-all cursor-pointer"
-                      >
-                        Test Print 📄
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPrinterPausedMap((prev) => ({ ...prev, 'p-hp-401': !prev['p-hp-401'] }));
-                          setOrderActionToast(printerPausedMap['p-hp-401'] ? 'HP M401dne queue resumed.' : 'HP M401dne queue paused.');
-                        }}
-                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                          printerPausedMap['p-hp-401']
-                            ? 'bg-amber-100 text-amber-800 hover:bg-amber-200'
-                            : 'border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'
-                        }`}
-                      >
-                        {printerPausedMap['p-hp-401'] ? 'Resume Queue' : 'Pause Queue'}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-5 shadow-xs space-y-3">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse" />
-                          <h3 className="font-extrabold text-sm text-[#172031] dark:text-white">Canon imageRUNNER ADVANCE C3530i</h3>
-                          <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-purple-50 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300">
-                            COLOUR A3/A4
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-gray-400 mt-0.5">Network IP 192.168.1.120:9100 · High Volume</p>
-                      </div>
-                      <span className="text-xs font-bold text-green-600">Online & Ready</span>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2 text-xs pt-1">
-                      <div className="p-2.5 bg-gray-50 dark:bg-gray-700/50 rounded-xl">
-                        <span className="text-[10px] text-gray-400 font-bold block">TRAY 1 (A4 Glossy)</span>
-                        <div className="font-extrabold mt-0.5">92% Full</div>
-                      </div>
-                      <div className="p-2.5 bg-gray-50 dark:bg-gray-700/50 rounded-xl">
-                        <span className="text-[10px] text-gray-400 font-bold block">TRAY 2 (A3 Heavy)</span>
-                        <div className="font-extrabold mt-0.5">65% Full</div>
-                      </div>
-                    </div>
-
-                    <div className="flex gap-2 pt-2 border-t border-gray-100 dark:border-gray-700">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          triggerSaveNotification('Canon C3530i Colour Calibration Sheet dispatched');
-                        }}
-                        className="flex-1 py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-xl text-xs font-bold transition-all cursor-pointer"
-                      >
-                        Test Print 📄
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPrinterPausedMap((prev) => ({ ...prev, 'p-canon-c3530': !prev['p-canon-c3530'] }));
-                          setOrderActionToast(printerPausedMap['p-canon-c3530'] ? 'Canon C3530i queue resumed.' : 'Canon C3530i queue paused.');
-                        }}
-                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                          printerPausedMap['p-canon-c3530']
-                            ? 'bg-amber-100 text-amber-800 hover:bg-amber-200'
-                            : 'border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'
-                        }`}
-                      >
-                        {printerPausedMap['p-canon-c3530'] ? 'Resume Queue' : 'Pause Queue'}
-                      </button>
-                    </div>
-                  </div>
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 text-sm dark:border-slate-700 dark:bg-slate-900">
+                  <h3 className="font-bold text-slate-900 dark:text-white">Printer controls</h3>
+                  <p className="mt-2 text-xs leading-5 text-slate-600 dark:text-slate-300">
+                    Tray levels, pause and resume controls, and calibration test prints are not reported or controlled by this agent release. The inventory above reflects queues reported by the paired agent. Staff must inspect physical pages before confirming output.
+                  </p>
                 </div>
 
                 {/* Active Spool Queue Table */}
@@ -4652,7 +4544,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                         { title: 'Pricing', tab: 'pricing', desc: 'A4 B&W ₹2.00, Color ₹10.00', ready: true },
                         { title: 'Discounts', tab: 'discounts', desc: `${bulkTiers.length} bulk tiers configured`, ready: true },
                         { title: 'Customer Portal', tab: 'portal', desc: 'Live QR portal & upload tools', ready: true },
-                        { title: 'Automation & Payment', tab: 'automation', desc: acceptOnlinePayments ? 'UPI + Cash Enabled' : 'Cash on pickup', ready: true },
+                        { title: 'Automation & Payment', tab: 'automation', desc: razorpayCheckoutConfigured ? 'Razorpay credentials + webhook saved; verify with provider' : 'Razorpay setup needed; cash collection available', ready: true },
                       ].map((item) => (
                         <div
                           key={item.title}
@@ -5797,8 +5689,8 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                       <div className="flex justify-between items-center">
                         <span className="font-extrabold text-sm text-[#172031] dark:text-white">Razorpay</span>
                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${razorpayCredentialStatus.configured ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
-                          {razorpayCredentialStatus.configured && razorpayCredentialStatus.webhookConfigured
-                            ? `checkout ready · ${razorpayCredentialStatus.keyIdPreview}`
+                          {razorpayCheckoutConfigured
+                            ? `credentials saved · ${razorpayCredentialStatus.keyIdPreview}`
                             : razorpayCredentialStatus.configured ? 'webhook setup needed' : 'not configured'}
                         </span>
                       </div>
@@ -5839,7 +5731,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                 <div className="bg-white dark:bg-gray-800 border border-[#E8EAF3] dark:border-gray-800 rounded-2xl p-6 shadow-xs space-y-4">
                   <div>
                     <h3 className="font-extrabold text-sm text-[#172031] dark:text-white">Customer payment options</h3>
-                    <p className="text-[11px] text-gray-400">Choose how customers pay for QR and WhatsApp portal orders. These preferences apply when you save page settings.</p>
+                    <p className="text-[11px] text-gray-400">Cash is available. Online checkout is derived from this shop's Razorpay credentials and webhook configuration.</p>
                   </div>
 
                   <div className="text-xs space-y-3">
@@ -5849,16 +5741,16 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                         <option>Razorpay</option>
                       </select>
                       <span className="text-[10px] text-gray-400 block mt-1">
-                        Razorpay is the planned provider. Credentials are stored per shop; no platform account fallback is used.
+                        Razorpay credentials are stored per shop; no platform account fallback is used.
                       </span>
                     </div>
 
                     <div className="p-3.5 border-2 border-emerald-400 dark:border-emerald-700 rounded-2xl flex justify-between items-center bg-emerald-50/20 dark:bg-emerald-950/20">
                       <div>
                         <div className="font-bold text-sm text-[#172031] dark:text-white">Online checkout</div>
-                        <div className="text-[10px] text-gray-500">Not available yet. Saving Razorpay credentials does not turn on checkout or verify payments.</div>
+                        <div className="text-[10px] text-gray-500">Checkout is offered when this shop has saved API credentials and webhook setup. Saved credentials still need provider and live-payment verification.</div>
                       </div>
-                      <input type="checkbox" disabled checked={false} readOnly aria-label="Online checkout unavailable" className="toggle-checkbox w-4 h-4 text-emerald-600" />
+                      <input type="checkbox" disabled checked={razorpayCheckoutConfigured} readOnly aria-label={razorpayCheckoutConfigured ? 'Razorpay credentials and webhook configured' : 'Razorpay credentials or webhook missing'} className="toggle-checkbox w-4 h-4 text-emerald-600" />
                     </div>
 
                     <div className="p-3.5 border-2 border-indigo-200 dark:border-indigo-800 rounded-2xl flex justify-between items-center bg-indigo-50/20 dark:bg-indigo-950/20">
@@ -5869,9 +5761,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                       <input type="checkbox" disabled checked readOnly aria-label="Cash on collection available" className="toggle-checkbox w-4 h-4 text-[#4D64E6]" />
                     </div>
 
-                    <div className="pt-2 text-xs text-gray-500 dark:text-gray-400">
-                      Checkout branding options will be available after payment integration is complete.
-                    </div>
+                    <div className="pt-2 text-xs text-gray-500 dark:text-gray-400">Checkout branding is fixed for the pilot. Payment status is verified by the server through the shop's Razorpay integration.</div>
                   </div>
                 </div>
 

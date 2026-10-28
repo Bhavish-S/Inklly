@@ -19,12 +19,12 @@ export const QrOrderingPage: React.FC<QrOrderingPageProps> = ({ onNavigate }) =>
           <li>Shop-specific customer page</li>
           <li>File upload and print option selection</li>
           <li>Order submission for staff review</li>
-          <li>Cash on collection as the preview payment path</li>
+          <li>Cash on collection, or shop-configured Razorpay checkout when enabled</li>
         </ul>
       </article>
       <article className="rounded-2xl border border-amber-200 bg-amber-50 p-7 shadow-sm">
         <h2 className="text-xl font-extrabold text-amber-950">Before using real customer files</h2>
-        <p className="mt-4 text-sm leading-6 text-amber-950">Private file storage and automatic deletion within 24 hours after order completion are not deployed yet. Use test documents only. Online payment verification is also not active.</p>
+        <p className="mt-4 text-sm leading-6 text-amber-950">Files are stored privately and scheduled for deletion 24 hours after an order is completed. The latest backend is not yet live on Render, so production storage, deletion, and payment verification need deployment checks. Use test documents until those checks are complete.</p>
       </article>
     </section>
   </main>

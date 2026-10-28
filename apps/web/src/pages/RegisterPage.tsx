@@ -106,7 +106,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
               Start automating your print counter today
             </h2>
             <p className="text-xs sm:text-sm text-gray-300 leading-relaxed mb-8">
-              Join hundreds of print shops across India replacing manual calculations and paper jams with automated QR and WhatsApp printing.
+              Join the Inklly pilot to manage shop QR orders, pricing, and print workflow from one workspace.
             </p>
 
             <div className="space-y-3.5 text-xs text-gray-200">
@@ -114,31 +114,31 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
                 <div className="w-5 h-5 rounded-full bg-[#EAFBF0] text-[#1F8A4C] flex items-center justify-center shrink-0 mt-0.5">
                   <CheckIcon size={12} />
                 </div>
-                <span><strong>Full 7-day trial:</strong> Growth tier features unlocked with zero credit card required.</span>
+                <span><strong>7-day pilot trial:</strong> No payment details are requested during registration. Pilot rates are agreed before paid billing starts.</span>
               </div>
               <div className="flex items-start gap-3">
                 <div className="w-5 h-5 rounded-full bg-[#EAFBF0] text-[#1F8A4C] flex items-center justify-center shrink-0 mt-0.5">
                   <CheckIcon size={12} />
                 </div>
-                <span><strong>Instant QR Standee PDF:</strong> Download and print your counter acrylic standee right away.</span>
+                <span><strong>Shop QR page:</strong> A shop-specific order page is created for customers to open from a link or QR code.</span>
               </div>
               <div className="flex items-start gap-3">
                 <div className="w-5 h-5 rounded-full bg-[#EAFBF0] text-[#1F8A4C] flex items-center justify-center shrink-0 mt-0.5">
                   <CheckIcon size={12} />
                 </div>
-                <span><strong>Connect your printers:</strong> Windows 10/11 agent hooks into USB/LAN printers in 5 mins.</span>
+                <span><strong>Printer workflow:</strong> Pair a Windows desktop agent and verify the supported printer setup before processing live orders. A signed production installer is not yet available here.</span>
               </div>
               <div className="flex items-start gap-3">
                 <div className="w-5 h-5 rounded-full bg-[#EAFBF0] text-[#1F8A4C] flex items-center justify-center shrink-0 mt-0.5">
                   <CheckIcon size={12} />
                 </div>
-                <span><strong>Payment setup:</strong> Each shop can enter its own Razorpay credentials. Online checkout and payment verification are not active in this preview.</span>
+                <span><strong>Payment setup:</strong> Each shop can connect its own Razorpay account. Checkout is enabled only after the shop credentials and webhook are configured; the hosted payment flow still needs production verification.</span>
               </div>
             </div>
           </div>
 
           <div className="relative z-10 mt-10 pt-6 border-t border-white/15 text-xs text-gray-400">
-            🔒 Bank-grade encryption • 100% data privacy • No long-term lock-in.
+            Private file access and retention controls are implemented in the application; verify the live storage deployment before using real customer documents.
           </div>
         </div>
 
@@ -149,7 +149,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
               Create your merchant account
             </h3>
             <p className="text-xs text-[#5B6475]">
-              Start your 7-day trial. No payment details required.
+              Start your 7-day pilot trial. No payment details are requested at signup.
             </p>
           </div>
 

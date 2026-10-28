@@ -5,8 +5,8 @@
 ## Current local verification
 
 - `npm run build` — passed for database, shared, desktop agent, server, and web workspaces using Vite 6.4.5. The main JavaScript bundle is 1,174.46 kB minified (309.72 kB gzip) and triggers Vite's 500 kB chunk warning; the build completes successfully.
-- `npm test` — 203 passed, 0 failed: database 9, shared 13, agent 12, server 169.
-- `npm audit --audit-level=high` — passed with 0 vulnerabilities.
+- `npm test` — 204 passed, 0 failed: database 9, shared 13, agent 12, server 170.
+- `npm audit --audit-level=high` — attempted twice; both requests to the npm advisory endpoint timed out, so no current audit result is available.
 - `npm run lint` — no root lint script is currently configured.
 
 The test suite covers deterministic Paise pricing, tenant boundaries, active-account and current-membership authorization, signed/revocable sessions, customer order and payment paths, private-storage behavior through a mocked Supabase API, merchant vault uploads/downloads/deletion/tenant isolation and retention, printer ownership migrations, append-only ledger enforcement and duplicate provider-transaction rejection, agent result persistence, dispatch replay/acknowledgment, expired handoff safety, paired-origin file downloads, crash-to-`OUTPUT_UNCERTAIN` recovery, developer-key scope validation/verifier redaction, and encrypted webhook-secret migration/storage.
@@ -25,7 +25,7 @@ WhatsApp Cloud API onboarding and message delivery are unavailable. The merchant
 
 ## Deployment and integration limits
 
-- Commit `80b9c1e` is pushed to `main`. The latest local web build is `assets/index-CAL0rd8b.js`. A live check immediately after push still returned Vercel bundle `assets/index-Cj61txgf.js` (the previous published admin-console build), so the print-output reconciliation UI is not confirmed deployed yet. Render `/health` returned HTTP 200 without the `revision` field; its OpenAPI document still contains only seven paths and no merchant storage or print-output reconciliation routes. Render is serving an older backend revision. `/api/v1/portal/shop/campus1` previously returned HTTP 404; the deployed customer path and tenant provisioning remain unverified.
+- Commit `1ff9741` is the latest pushed revision. Vercel served `assets/index-CAL0rd8b.js` at 2026-10-28 09:34 UTC, confirming the print-output reconciliation frontend is deployed. Current local UI edits build to `assets/index-Cfcklamd.js` and are not deployed. Render `/health` returned HTTP 200 without the `revision` field; its OpenAPI document still contains only seven paths and no merchant storage or print-output reconciliation routes. Render is serving an older backend revision. `/api/v1/portal/shop/campus1` previously returned HTTP 404; the deployed customer path and tenant provisioning remain unverified.
 - The latest Render log connected to Supabase PostgreSQL and then exited because Supabase Storage settings are missing or invalid. The current source reports the specific invalid settings; the supplied deployed log has an older generic error, so its revision is unverified.
 - Supabase Storage tests mock the HTTP API. Live bucket permissions and file retention have not been verified against the production project.
 - Razorpay tests use test doubles; a live sandbox checkout/webhook round trip has not been verified here.

@@ -62,11 +62,11 @@ export const MarketingView: React.FC<MarketingViewProps> = ({ onNavigate }) => {
             </div>
             <div>
               <div style={{ fontSize: '1.875rem', fontWeight: 800, color: '#12B76A' }}>Dual Payment</div>
-              <div style={{ fontSize: '0.8125rem', color: '#98A2B3' }}>Instant UPI or Cash at counter collection</div>
+              <div style={{ fontSize: '0.8125rem', color: '#98A2B3' }}>Shop-configured Razorpay or cash at collection</div>
             </div>
             <div>
               <div style={{ fontSize: '1.875rem', fontWeight: 800, color: '#F79009' }}>Hardware Safe</div>
-              <div style={{ fontSize: '0.8125rem', color: '#98A2B3' }}>Zero blind re-prints on paper jams</div>
+              <div style={{ fontSize: '0.8125rem', color: '#98A2B3' }}>No blind retry when output is uncertain</div>
             </div>
           </div>
         </div>
@@ -156,7 +156,7 @@ export const MarketingView: React.FC<MarketingViewProps> = ({ onNavigate }) => {
             </div>
             <h3 style={{ fontSize: '1.125rem', fontWeight: 700, marginBottom: '0.5rem' }}>Review Quote & Submit</h3>
             <p style={{ color: '#667085', fontSize: '0.875rem', lineHeight: 1.5 }}>
-              The portal calculates a quote from shop rates. Online payment verification is not active; cash on collection is the current preview path.
+              The portal calculates a quote from shop rates. Customers can pay cash or use shop-configured Razorpay checkout when available.
             </p>
           </div>
 
@@ -259,21 +259,20 @@ export const MarketingView: React.FC<MarketingViewProps> = ({ onNavigate }) => {
                   <span className="badge badge-info" style={{ marginBottom: '0.75rem' }}>Desktop Edge Spooler</span>
                   <h3 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.75rem' }}>Multi-Printer Routing & Tray Discovery</h3>
                   <p style={{ color: '#667085', fontSize: '0.9375rem', lineHeight: 1.6, marginBottom: '1rem' }}>
-                    Our native desktop agent connects directly to your shop computer on `localhost:8765`. It queries system driver capabilities (HP LaserJet, Canon imageRUNNER, Epson, Xerox) and routes jobs to the correct paper tray.
+                    The paired Windows agent reports its locally discovered printer queues. Driver features and physical output vary by setup and must be verified on the shop's actual hardware.
                   </p>
                   <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.875rem', color: '#344054' }}>
-                    <li>✓ Auto-detects Duplex & Color hardware capabilities</li>
-                    <li>✓ Maps Tray 1 (A4 Plain), Tray 2 (A3 Heavy), Tray 3 (Photo 4x6)</li>
-                    <li>✓ Local SQLite offline queue caches jobs during internet drops</li>
-                    <li>✓ Safe recovery stops automated retries on paper jams</li>
+                    <li>Queue inventory comes from the paired agent, not a sample device list.</li>
+                    <li>Driver capabilities are not verified by this preview.</li>
+                    <li>The local queue persists work across agent restarts.</li>
+                    <li>Ambiguous output is held for staff review and is never retried automatically.</li>
                   </ul>
                 </div>
                 <div style={{ backgroundColor: '#182230', borderRadius: '12px', padding: '1.5rem', color: '#FFFFFF', fontFamily: 'JetBrains Mono', fontSize: '0.75rem' }}>
-                  <div style={{ color: '#12B76A', marginBottom: '0.5rem' }}>● Inklly Agent Daemon: ONLINE (Port 8765)</div>
-                  <div style={{ color: '#98A2B3' }}>Discovered Devices:</div>
-                  <div style={{ margin: '0.25rem 0' }}>- HP LaserJet Pro M401dne (B&W Duplex, Tray 1)</div>
-                  <div style={{ margin: '0.25rem 0' }}>- Canon imageRUNNER C3530i (Color, Tray 2/3)</div>
-                  <div style={{ color: '#8EA7FF', marginTop: '0.5rem' }}>Offline Queue: 0 pending • Spooler: READY</div>
+                  <div style={{ color: '#8EA7FF', marginBottom: '0.5rem' }}>Illustrative agent view · no live hardware data</div>
+                  <div style={{ color: '#98A2B3' }}>A connected shop sees queues reported by its paired agent.</div>
+                  <div style={{ margin: '0.75rem 0', padding: '0.75rem', border: '1px solid #344054', borderRadius: '8px' }}>Capabilities and online state appear only when reported by the actual agent.</div>
+                  <div style={{ color: '#98A2B3', marginTop: '0.5rem' }}>Spooler submission does not confirm physical pages.</div>
                 </div>
               </div>
             )}
@@ -284,16 +283,17 @@ export const MarketingView: React.FC<MarketingViewProps> = ({ onNavigate }) => {
                   <span className="badge badge-warning" style={{ marginBottom: '0.75rem' }}>Queue & Finance</span>
                   <h3 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.75rem' }}>7-Status Queue & Dual Financial Ledgers</h3>
                   <p style={{ color: '#667085', fontSize: '0.9375rem', lineHeight: 1.6, marginBottom: '1rem' }}>
-                    Review orders and update their workflow in the merchant workspace. The current preview supports staff cash collection; online payment verification and a production audit ledger are not available.
+                    Review shop orders, release eligible work, inspect physical output, and record cash through the ledger-backed payment workflow. Shops can enable Razorpay with their own account and webhook credentials.
                   </p>
                   <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.875rem', color: '#344054' }}>
                     <li>Cash collection can be recorded by shop staff.</li>
-                    <li>Print agent integration is still being secured and validated.</li>
-                    <li>✓ Staff Role Presets: Order Handler, Print Operator, Manager</li>
-                    <li>✓ Detailed daily revenue and order metrics</li>
+                    <li>Uncertain print output requires staff inspection; retries are not automatic.</li>
+                    <li>Staff access is scoped by shop membership and permissions.</li>
+                    <li>Revenue uses payment records rather than order status.</li>
                   </ul>
                 </div>
-                <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E4E7EC', borderRadius: '12px', padding: '1.5rem' }}>
+                <div aria-label="Illustrative sample order, not live merchant data" style={{ backgroundColor: '#FFFFFF', border: '1px solid #E4E7EC', borderRadius: '12px', padding: '1.5rem' }}>
+                  <div style={{ fontSize: '0.7rem', color: '#667085', marginBottom: '0.75rem' }}>ILLUSTRATIVE SAMPLE · NOT LIVE DATA</div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem', fontSize: '0.8125rem' }}>
                     <strong>Order #INK-20261025-001</strong>
                     <span className="badge badge-success">READY FOR PICKUP</span>
@@ -313,51 +313,16 @@ export const MarketingView: React.FC<MarketingViewProps> = ({ onNavigate }) => {
       {/* Pricing Section */}
       <section style={{ backgroundColor: '#EDF0F7', padding: '5rem 1.5rem' }}>
         <div style={{ maxWidth: '1000px', margin: '0 auto', textAlign: 'center' }}>
-          <h2 style={{ fontSize: '2rem', fontWeight: 700, marginBottom: '0.5rem' }}>Simple, Predictable SaaS Plans</h2>
+          <h2 style={{ fontSize: '2rem', fontWeight: 700, marginBottom: '0.5rem' }}>Pilot pricing, agreed with each shop</h2>
           <p style={{ color: '#667085', marginBottom: '2.5rem' }}>
-            No hidden setup fees. No hardware lock-in. Cancel or upgrade anytime.
+            Inklly plans a monthly subscription plus a configurable fee per successfully printed side. Rates and limits are not published or charged from this preview.
           </p>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.5rem', textAlign: 'left' }}>
-            <div className="card">
-              <span className="badge badge-info" style={{ marginBottom: '0.75rem' }}>Starter</span>
-              <h3 style={{ fontSize: '1.625rem', fontWeight: 800 }}>₹499 <span style={{ fontSize: '0.875rem', fontWeight: 400, color: '#667085' }}>/ month</span></h3>
-              <p style={{ fontSize: '0.875rem', color: '#667085', margin: '0.5rem 0 1rem' }}>For single-counter photocopy shops.</p>
-              <ul style={{ listStyle: 'none', fontSize: '0.875rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', color: '#344054' }}>
-                <li>✓ 500 monthly orders</li>
-                <li>✓ 2 connected printers</li>
-                <li>✓ Dedicated Shop QR Code standee</li>
-                <li>✓ Cash on Counter collection</li>
-                <li>✓ Basic order queue & receipts</li>
-              </ul>
-            </div>
-
-            <div className="card" style={{ border: '2px solid #4A69ED', position: 'relative' }}>
-              <span className="badge badge-success" style={{ marginBottom: '0.75rem' }}>Most Popular</span>
-              <h3 style={{ fontSize: '1.625rem', fontWeight: 800 }}>₹1,199 <span style={{ fontSize: '0.875rem', fontWeight: 400, color: '#667085' }}>/ month</span></h3>
-              <p style={{ fontSize: '0.875rem', color: '#667085', margin: '0.5rem 0 1rem' }}>For growing campus and commercial print shops.</p>
-              <ul style={{ listStyle: 'none', fontSize: '0.875rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', color: '#344054' }}>
-                <li>✓ 2,000 monthly orders</li>
-                <li>✓ 5 connected printers</li>
-                <li>✓ Multi-printer tray auto-routing</li>
-                <li>✓ WhatsApp notification bot</li>
-                <li>✓ Custom rates & bulk discounts</li>
-                <li>✓ Revenue analytics</li>
-              </ul>
-            </div>
-
-            <div className="card">
-              <span className="badge badge-neutral" style={{ marginBottom: '0.75rem' }}>Pro Multi-Counter</span>
-              <h3 style={{ fontSize: '1.625rem', fontWeight: 800 }}>₹2,499 <span style={{ fontSize: '0.875rem', fontWeight: 400, color: '#667085' }}>/ month</span></h3>
-              <p style={{ fontSize: '0.875rem', color: '#667085', margin: '0.5rem 0 1rem' }}>For busy college complexes and commercial hubs.</p>
-              <ul style={{ listStyle: 'none', fontSize: '0.875rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', color: '#344054' }}>
-                <li>✓ 10,000 monthly orders</li>
-                <li>✓ 15 connected printers</li>
-                <li>✓ Staff Role Presets (Manager, Operator)</li>
-                <li>✓ Developer API & Webhooks</li>
-                <li>✓ Priority phone & WhatsApp SLA</li>
-              </ul>
-            </div>
+          <div className="card" style={{ maxWidth: '720px', margin: '0 auto', padding: '1.5rem', textAlign: 'left' }}>
+            <span className="badge badge-info" style={{ marginBottom: '0.75rem' }}>Configurable pilot</span>
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 800 }}>No fixed tiers or usage charges yet</h3>
+            <p style={{ color: '#667085', fontSize: '0.9375rem', lineHeight: 1.6, marginTop: '0.5rem' }}>
+              The subscription checkout, per-side usage meter, and quota enforcement are not active. A shop-specific pilot agreement will state the monthly base price, per-successful-side rate, and included limits before billing begins.
+            </p>
           </div>
         </div>
       </section>
@@ -381,15 +346,15 @@ export const MarketingView: React.FC<MarketingViewProps> = ({ onNavigate }) => {
             },
             {
               q: 'Does Inklly work with my existing printers and computers?',
-              a: 'Yes. Inklly is designed specifically for existing photocopy and print shops. Our lightweight desktop agent connects to any standard Windows PC or Mac and detects all installed USB and network printers (HP, Canon, Epson, Xerox, Brother, etc.).',
+              a: 'Inklly is designed for existing photocopy and print shops. The current desktop agent targets Windows. Printer discovery reports local queues, but compatibility, capabilities, and physical output must be verified on each shop’s hardware.',
             },
             {
               q: 'Can customers still pay cash at my counter?',
-              a: 'Absolutely. Customers can choose either instant online UPI/card payment or "Pay Cash on Collection". When the customer collects their documents, your operator simply clicks "Collect Cash" to verify payment and record it in the ledger.',
+              a: 'Customers can pay cash on collection. A shop may also enable Razorpay checkout after its owner saves valid shop credentials and a webhook secret. Cash is recorded through the ledger-backed collection action; online availability depends on that shop’s setup.',
             },
             {
               q: 'What happens if a printer runs out of paper or jams?',
-              a: 'Inklly enforces a strict hardware safety state machine. When an interruption occurs, the job transitions to OUTPUT_UNCERTAIN and stops. The system never blindly retries print jobs automatically, preventing paper and ink waste.',
+              a: 'The agent does not reliably detect every paper jam or confirm physical pages. If output is uncertain, the order stays under review for staff inspection; the system does not automatically retry it.',
             },
             {
               q: 'Can I set my own custom rates for B&W, Color, and duplex printing?',

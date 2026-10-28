@@ -646,7 +646,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       },
       body: JSON.stringify({ status: 'COLLECTED' }),
     });
-    assert.equal(invalidRes.status, 422);
+    assert.equal(invalidRes.status, 409);
 
     const rejectRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${demoOrder.id}/status`, {
       method: 'PATCH',
@@ -661,6 +661,41 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
 
     // Keep the shared fixture in its pre-approval state for later workflow tests.
     db.execute(`UPDATE orders SET status = 'AWAITING_REVIEW' WHERE id = ?`, [demoOrder.id]);
+  });
+
+  it('prevents order-processing staff from collecting unpaid cash without a ledger entry', async () => {
+    const originalOrder = db.queryOne<any>(`SELECT status, payment_status FROM orders WHERE id = ?`, [cashOrderId]);
+    const session = verifySessionToken(merchantToken);
+    assert.ok(originalOrder && session && typeof session !== 'string');
+    const membership = db.queryOne<any>(
+      `SELECT role, permissions FROM memberships WHERE user_id = ? AND shop_id = ?`,
+      [session.userId, 'shop-campus-1']
+    );
+    assert.ok(membership);
+    const ledgerCount = Number(db.queryOne<any>(
+      `SELECT COUNT(*) AS count FROM ledger_entries WHERE order_id = ? AND domain = 'CUSTOMER_PRINT_PAYMENT'`, [cashOrderId]
+    ).count);
+    db.execute(`UPDATE memberships SET role = 'SHOP_STAFF', permissions = ? WHERE user_id = ? AND shop_id = ?`, [JSON.stringify(['orders:process']), session.userId, 'shop-campus-1']);
+    db.execute(`UPDATE orders SET status = 'READY_FOR_COLLECTION', payment_status = 'PENDING' WHERE id = ?`, [cashOrderId]);
+    try {
+      for (const status of ['COLLECTED', 'COMPLETED']) {
+        const response = await fetch(`${baseUrl}/api/v1/merchant/orders/${cashOrderId}/status`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+          body: JSON.stringify({ status }),
+        });
+        assert.equal(response.status, 409);
+      }
+      const persisted = db.queryOne<any>(`SELECT status, payment_status FROM orders WHERE id = ?`, [cashOrderId]);
+      assert.equal(persisted.status, 'READY_FOR_COLLECTION');
+      assert.equal(persisted.payment_status, 'PENDING');
+      assert.equal(Number(db.queryOne<any>(
+        `SELECT COUNT(*) AS count FROM ledger_entries WHERE order_id = ? AND domain = 'CUSTOMER_PRINT_PAYMENT'`, [cashOrderId]
+      ).count), ledgerCount);
+    } finally {
+      db.execute(`UPDATE memberships SET role = ?, permissions = ? WHERE user_id = ? AND shop_id = ?`, [membership.role, membership.permissions, session.userId, 'shop-campus-1']);
+      db.execute(`UPDATE orders SET status = ?, payment_status = ? WHERE id = ?`, [originalOrder.status, originalOrder.payment_status, cashOrderId]);
+    }
   });
 
   it('Desktop Print Agent pairs, receives heartbeat, and polls queued tickets', async () => {
