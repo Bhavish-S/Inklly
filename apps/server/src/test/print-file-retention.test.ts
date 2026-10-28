@@ -20,8 +20,13 @@ describe('private print-file retention', () => {
        VALUES ('retention-file', 'retention-order', 'sample.pdf', 1234, 'application/pdf', ?, 1, '{}', 100, ?)`,
       [`uploads/${shopId}/sample.pdf`, old]
     );
+    db.execute(
+      `INSERT INTO storage_documents (id, shop_id, file_name, mime_type, file_size_bytes, page_count, storage_key, created_at)
+       VALUES ('vault-retention-document', ?, 'saved.pdf', 'application/pdf', 1234, 1, ?, ?)`,
+      [shopId, `uploads/${shopId}/saved-vault-document.pdf`, old]
+    );
 
-    let orphanNames = Array.from({ length: 101 }, (_, index) => `orphan-${index}.pdf`);
+    let orphanNames = [...Array.from({ length: 101 }, (_, index) => `orphan-${index}.pdf`), `${shopId}/saved-vault-document.pdf`];
     const removed: string[] = [];
     const storage = {
       async remove(key: string) {
@@ -49,8 +54,9 @@ describe('private print-file retention', () => {
       assert.equal(summary.expiredFilesDeleted, 1);
       assert.equal(summary.orphanFilesScanned, 101);
       assert.equal(summary.orphanFilesDeleted, 101);
-      assert.equal(orphanNames.length, 0);
+      assert.deepEqual(orphanNames, [`${shopId}/saved-vault-document.pdf`], 'vault documents must not be purged as unreferenced order uploads');
       assert.equal(removed.filter((key) => key === `uploads/${shopId}/sample.pdf`).length, 1);
+      assert.equal(removed.includes(`uploads/${shopId}/saved-vault-document.pdf`), false);
       const updatedFile = db.queryOne<any>(`SELECT storage_key FROM order_files WHERE id = 'retention-file'`);
       assert.equal(updatedFile.storage_key, 'expired:retention-file');
     } finally {

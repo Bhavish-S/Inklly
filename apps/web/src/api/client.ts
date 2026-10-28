@@ -302,6 +302,61 @@ export const api = {
     return body;
   },
 
+  async getStorageCategories() {
+    const res = await fetch(`${API_BASE}/merchant/storage/categories`, { headers: getHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not load storage categories');
+    return body as Array<{ id: string; name: string; description?: string; documentCount: number; createdAt: string }>;
+  },
+
+  async createStorageCategory(name: string, description?: string) {
+    const res = await fetch(`${API_BASE}/merchant/storage/categories`, {
+      method: 'POST', headers: getHeaders(), body: JSON.stringify({ name, description }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not create storage category');
+    return body.category;
+  },
+
+  async getStorageDocuments() {
+    const res = await fetch(`${API_BASE}/merchant/storage/documents`, { headers: getHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not load stored documents');
+    return body as Array<{
+      id: string; name: string; fileName: string; mimeType: string; fileSizeBytes: number;
+      pageCount: number; categoryId: string | null; categoryName: string | null; downloadUrl: string; createdAt: string;
+    }>;
+  },
+
+  async uploadStorageDocument(fileName: string, fileData: string, categoryId?: string) {
+    const res = await fetch(`${API_BASE}/merchant/storage/documents`, {
+      method: 'POST', headers: getHeaders(), body: JSON.stringify({ fileName, fileData, categoryId }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not upload document');
+    return body.document;
+  },
+
+  async downloadStorageDocument(documentId: string) {
+    const res = await fetch(`${API_BASE}/merchant/storage/documents/${encodeURIComponent(documentId)}/download`, {
+      headers: getHeaders({ 'Content-Type': '' }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || 'Could not download document');
+    }
+    return res.blob();
+  },
+
+  async deleteStorageDocument(documentId: string) {
+    const res = await fetch(`${API_BASE}/merchant/storage/documents/${encodeURIComponent(documentId)}`, {
+      method: 'DELETE', headers: getHeaders(),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not delete document');
+    return body;
+  },
+
   async createAgentPairingCode() {
     const res = await fetch(`${API_BASE}/merchant/agents/pairing-code`, {
       method: 'POST', headers: getHeaders(), body: JSON.stringify({}),

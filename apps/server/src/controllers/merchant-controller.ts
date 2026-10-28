@@ -15,6 +15,7 @@ import { OrderStatus, ROLE_PRESETS } from '@inklly/shared';
 import { ShopPaymentCredentialsService } from '../services/shop-payment-credentials';
 import { PrivateFileStorage } from '../services/private-file-storage';
 import { getPrinterHealthStatus, hasFreshOnlinePrinterEvidence } from '../services/printer-health';
+import { inspectDocument } from '../services/document-page-count';
 
 export class MerchantController {
   constructor(
@@ -739,7 +740,7 @@ export class MerchantController {
     const rows = this.db.query<any>(sql, params);
     res.json(rows.map((r) => ({
       id: r.id,
-      name: r.name,
+      name: r.file_name,
       fileName: r.file_name,
       mimeType: r.mime_type,
       fileSizeBytes: r.file_size_bytes,
@@ -749,6 +750,81 @@ export class MerchantController {
       downloadUrl: `/api/v1/merchant/storage/documents/${r.id}/download`,
       createdAt: r.created_at,
     })));
+  };
+
+  public uploadStorageDocument = async (req: Request, res: Response) => {
+    const shopId = this.getShopId(req);
+    const { fileName: rawFileName, fileData, categoryId } = req.body || {};
+    if (typeof rawFileName !== 'string' || !rawFileName.trim() || rawFileName.length > 255 || typeof fileData !== 'string') {
+      return res.status(400).json({ error: 'fileName and fileData (Base64) are required.' });
+    }
+
+    const maxFileBytes = Math.max(1, Math.min(35, Number(process.env.MAX_FILE_SIZE_MB) || 25)) * 1024 * 1024;
+    const base64 = fileData.includes('base64,') ? fileData.slice(fileData.indexOf('base64,') + 7) : fileData;
+    if (!base64 || base64.length > Math.ceil(maxFileBytes * 4 / 3) + 8 || !/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) {
+      return res.status(413).json({ error: 'File is too large or has invalid encoding.' });
+    }
+    const body = Buffer.from(base64, 'base64');
+    const normalizedBase64 = base64.replace(/=+$/, '');
+    if (!body.length || body.length > maxFileBytes || body.toString('base64').replace(/=+$/, '') !== normalizedBase64) {
+      return res.status(413).json({ error: 'File is empty, too large, or has invalid encoding.' });
+    }
+
+    let inspected: { mimeType: string; pageCount: number };
+    try {
+      inspected = await inspectDocument(body);
+    } catch (error: any) {
+      return res.status(415).json({ error: error?.message || 'Upload a valid PDF, JPEG, or PNG file.' });
+    }
+
+    const selectedCategoryId = typeof categoryId === 'string' && categoryId.trim() ? categoryId.trim() : null;
+    if (selectedCategoryId) {
+      const category = this.db.queryOne<any>(
+        `SELECT id FROM storage_categories WHERE id = ? AND shop_id = ?`,
+        [selectedCategoryId, shopId]
+      );
+      if (!category) return res.status(404).json({ error: 'Storage category not found.' });
+    }
+
+    const id = `storage-doc-${crypto.randomUUID()}`;
+    const extension = inspected.mimeType === 'application/pdf' ? '.pdf' : inspected.mimeType === 'image/png' ? '.png' : '.jpg';
+    const providedName = path.basename(rawFileName.replace(/\\/g, '/'));
+    const safeBaseName = path.parse(providedName).name
+      .replace(/[^A-Za-z0-9._ -]/g, '_').replace(/^[. ]+|[. ]+$/g, '').slice(0, 170) || 'document';
+    const safeFileName = `${safeBaseName}${extension}`;
+    const storageObjectName = `${crypto.randomUUID()}${extension}`;
+    const createdAt = new Date().toISOString();
+    let storageKey: string;
+    try {
+      storageKey = await this.fileStorage.store(shopId, storageObjectName, inspected.mimeType, body);
+    } catch (error) {
+      console.error('[Merchant vault upload]', error);
+      return res.status(503).json({ error: 'Private document storage is unavailable. No document was saved.' });
+    }
+
+    try {
+      this.db.transaction(() => {
+        this.db.execute(
+          `INSERT INTO storage_documents (id, shop_id, category_id, file_name, mime_type, file_size_bytes, page_count, storage_key, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [id, shopId, selectedCategoryId, safeFileName, inspected.mimeType, body.length, inspected.pageCount, storageKey, createdAt]
+        );
+      });
+    } catch (error) {
+      try { await this.fileStorage.remove(storageKey); }
+      catch (cleanupError) { console.error('[Merchant vault upload cleanup]', cleanupError); }
+      console.error('[Merchant vault metadata]', error);
+      return res.status(503).json({ error: 'Document metadata could not be saved. The uploaded file is being cleaned up.' });
+    }
+
+    return res.status(201).json({
+      success: true,
+      document: {
+        id, fileName: safeFileName, mimeType: inspected.mimeType, fileSizeBytes: body.length,
+        pageCount: inspected.pageCount, categoryId: selectedCategoryId, createdAt,
+        downloadUrl: `/api/v1/merchant/storage/documents/${encodeURIComponent(id)}/download`,
+      },
+    });
   };
 
   public downloadStorageDocument = async (req: Request, res: Response) => {

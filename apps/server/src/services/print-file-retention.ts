@@ -74,7 +74,13 @@ async function performPurge(db: DatabaseService, storage: PrivateFileStorage): P
           continue;
         }
         const storageKey = `uploads/${objectPath}`;
-        const referenced = db.queryOne<any>(`SELECT id FROM order_files WHERE storage_key = ? LIMIT 1`, [storageKey]);
+        const referenced = db.queryOne<any>(
+          `SELECT id FROM order_files WHERE storage_key = ?
+           UNION ALL
+           SELECT id FROM storage_documents WHERE storage_key = ?
+           LIMIT 1`,
+          [storageKey, storageKey]
+        );
         if (!referenced && entry.created_at && Date.parse(entry.created_at) <= orphanDate) {
           summary.orphanFilesScanned++;
           try {

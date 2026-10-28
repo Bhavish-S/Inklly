@@ -66,6 +66,16 @@ export interface MerchantAppViewProps {
   onNavigate?: (path: string) => void;
 }
 
+type MerchantStorageFileView = {
+  id: string;
+  name: string;
+  pages: number;
+  size: string;
+  date: string;
+  type: string;
+  mimeType: string;
+};
+
 export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) => {
   // Sidebar state
   const [sidebarExpanded, setSidebarExpanded] = useState<boolean>(true);
@@ -679,16 +689,17 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [orderSearchQuery, setOrderSearchQuery] = useState<string>('');
   const [orderActionToast, setOrderActionToast] = useState<string | null>(null);
 
-  // Storage State
-  const [storageAgentOnline, setStorageAgentOnline] = useState<boolean>(false);
-  const [selectedStorageCategory, setSelectedStorageCategory] = useState<string>('college');
+  // Merchant vault documents are private shop files; QR-order uploads use a separate retention path.
+  const [selectedStorageCategory, setSelectedStorageCategory] = useState<string>('__uncategorized');
   const [selectedStorageFile, setSelectedStorageFile] = useState<any>(null);
   const [newCategoryModalOpen, setNewCategoryModalOpen] = useState<boolean>(false);
   const [newCategoryName, setNewCategoryName] = useState<string>('');
-  const [storageCategories, setStorageCategories] = useState([
-    { id: 'temporary', name: 'Temporary customer uploads', count: 0, size: '0 MB' },
-  ]);
-  const [storageFiles, setStorageFiles] = useState<Record<string, Array<{ id: string; name: string; pages: number; size: string; date: string; type: string }>>>({ temporary: [] });
+  const [storageCategories, setStorageCategories] = useState<Array<{ id: string; name: string; documentCount: number }>>([]);
+  const [storageFiles, setStorageFiles] = useState<Record<string, MerchantStorageFileView[]>>({});
+  const [storageLoading, setStorageLoading] = useState(false);
+  const [storageError, setStorageError] = useState('');
+  const [storageUploadBusy, setStorageUploadBusy] = useState(false);
+  const storageUploadInputRef = useRef<HTMLInputElement>(null);
 
   // WhatsApp State
 
@@ -868,6 +879,128 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     }
   };
 
+  const loadStorageData = async () => {
+    const [apiCategories, documents] = await Promise.all([
+      api.getStorageCategories(),
+      api.getStorageDocuments(),
+    ]);
+    const categories = [
+      ...apiCategories.map((category) => ({ id: category.id, name: category.name, documentCount: category.documentCount || 0 })),
+      { id: '__uncategorized', name: 'Uncategorized', documentCount: 0 },
+    ];
+    const grouped: Record<string, MerchantStorageFileView[]> = { __uncategorized: [] };
+    for (const category of apiCategories) grouped[category.id] = [];
+    for (const document of documents) {
+      const categoryId = document.categoryId || '__uncategorized';
+      grouped[categoryId] ??= [];
+      grouped[categoryId].push({
+        id: document.id,
+        name: document.fileName || document.name,
+        pages: document.pageCount,
+        size: document.fileSizeBytes < 1024 * 1024
+          ? `${Math.max(1, Math.round(document.fileSizeBytes / 1024))} KB`
+          : `${(document.fileSizeBytes / (1024 * 1024)).toFixed(1)} MB`,
+        date: new Date(document.createdAt).toLocaleDateString(),
+        type: document.mimeType.toUpperCase(),
+        mimeType: document.mimeType,
+      });
+    }
+    for (const category of categories) {
+      category.documentCount = grouped[category.id]?.length || 0;
+    }
+    setStorageCategories(categories);
+    setStorageFiles(grouped);
+    setSelectedStorageCategory((current) => categories.some((category) => category.id === current) ? current : '__uncategorized');
+    setSelectedStorageFile((current: MerchantStorageFileView | null) => current
+      ? Object.values(grouped).flat().find((file) => file.id === current.id) || null
+      : null);
+  };
+
+  const handleStorageUpload = async (file?: File) => {
+    if (!file) return;
+    setStorageError('');
+    if (file.size > 35 * 1024 * 1024) {
+      setStorageError('Files must be 35 MB or smaller.');
+      return;
+    }
+    setStorageUploadBusy(true);
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error('The selected file could not be read.'));
+        reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('The selected file could not be read.'));
+        reader.readAsDataURL(file);
+      });
+      const categoryId = selectedStorageCategory === '__uncategorized' ? undefined : selectedStorageCategory;
+      await api.uploadStorageDocument(file.name, dataUrl, categoryId);
+      await loadStorageData();
+      setGlobalToast(`${file.name} was saved to the private shop vault.`);
+    } catch (error) {
+      setStorageError(error instanceof Error ? error.message : 'Document upload failed.');
+    } finally {
+      setStorageUploadBusy(false);
+      if (storageUploadInputRef.current) storageUploadInputRef.current.value = '';
+    }
+  };
+
+  const handleDownloadStorageFile = async (file: MerchantStorageFileView) => {
+    setStorageError('');
+    try {
+      const blob = await api.downloadStorageDocument(file.id);
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = file.name;
+      anchor.rel = 'noopener';
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+    } catch (error) {
+      setStorageError(error instanceof Error ? error.message : 'Document download failed.');
+    }
+  };
+
+  const handleDeleteStorageFile = async (file: MerchantStorageFileView) => {
+    if (!window.confirm(`Delete ${file.name} from the shop vault? This permanently removes the stored file.`)) return;
+    setStorageError('');
+    try {
+      await api.deleteStorageDocument(file.id);
+      setSelectedStorageFile(null);
+      await loadStorageData();
+    } catch (error) {
+      setStorageError(error instanceof Error ? error.message : 'Document could not be deleted.');
+    }
+  };
+
+  const handleCreateStorageCategory = async () => {
+    const name = newCategoryName.trim();
+    if (name.length < 2 || name.length > 100) {
+      setStorageError('Category names must be between 2 and 100 characters.');
+      return;
+    }
+    try {
+      const category = await api.createStorageCategory(name);
+      setNewCategoryName('');
+      setNewCategoryModalOpen(false);
+      await loadStorageData();
+      setSelectedStorageCategory(category.id);
+    } catch (error) {
+      setStorageError(error instanceof Error ? error.message : 'Category could not be created.');
+    }
+  };
+
+  useEffect(() => {
+    if (activeView !== 'storage' || !localStorage.getItem('inklly_token')) return;
+    let cancelled = false;
+    setStorageLoading(true);
+    setStorageError('');
+    loadStorageData().catch((error) => {
+      if (!cancelled) setStorageError(error instanceof Error ? error.message : 'Could not load the shop vault.');
+    }).finally(() => {
+      if (!cancelled) setStorageLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [activeView, liveShop?.id]);
+
   useEffect(() => {
     fetchLiveOrdersFromApi();
     const interval = setInterval(() => {
@@ -998,11 +1131,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     setOrderActionToast(`Order #${orderId} marked as Completed & Delivered.`);
     setTimeout(() => setOrderActionToast(null), 3000);
     setSelectedOrder(null);
-  };
-
-  const handlePrintStorageFile = (file: { id: string; name: string; pages: number }) => {
-    setOrderActionToast(`${file.name} is a temporary customer upload. Create an order from the shop portal to price it and send it through the print agent.`);
-    setTimeout(() => setOrderActionToast(null), 5000);
   };
 
   const handlePurchaseCredits = (qty: number) => {
@@ -2736,47 +2864,44 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
           <div className="p-6 max-w-6xl w-full mx-auto space-y-6">
             <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 pb-4 border-b border-gray-200 dark:border-gray-800">
               <div>
-                <h2 className="text-xl font-extrabold text-[#172031] dark:text-white">Permanent Local Storage</h2>
-                <p className="text-xs text-gray-400">
-                  Files reside only on this merchant computer via Inklly Agent (localhost:8765)
+                <h2 className="text-xl font-extrabold text-[#172031] dark:text-white">Shop document vault</h2>
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  Private shop documents stay here until an authorized staff member deletes them. Customer order files follow separate 24-hour retention.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
+                <input
+                  ref={storageUploadInputRef}
+                  type="file"
+                  accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png"
+                  className="hidden"
+                  onChange={(event) => { void handleStorageUpload(event.target.files?.[0]); }}
+                />
                 <button
                   type="button"
-                  onClick={() => setGlobalToast('The permanent file vault is not available. Customer files remain private and are deleted 24 hours after order completion.')}
-                  className="px-3 py-1.5 border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-bold hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer"
-                >
-                  📁 Select local folder
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setGlobalToast('Permanent document categories are not available in this pilot.')}
+                  onClick={() => { setStorageError(''); setNewCategoryModalOpen(true); }}
                   className="px-3 py-1.5 border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-bold hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer"
                 >
                   + New category
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    setGlobalToast('Receive documents through a customer order so private storage, pricing, and 24-hour deletion are tracked.');
-                  }}
-                  className="px-3.5 py-1.5 bg-[#4D64E6] hover:bg-[#3F54D1] text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer"
+                  disabled={storageUploadBusy}
+                  onClick={() => storageUploadInputRef.current?.click()}
+                  className="px-3.5 py-1.5 bg-[#4D64E6] hover:bg-[#3F54D1] text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer disabled:opacity-50"
                 >
-                  Upload files
+                  {storageUploadBusy ? 'Uploading…' : 'Upload document'}
                 </button>
               </div>
             </div>
 
-            {/* Storage Agent Status Banner */}
-            <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl text-xs text-amber-800 dark:text-amber-200 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-amber-500" />
-                <span className="font-bold">No permanent customer file vault</span>
-                <span className="text-[11px] text-gray-500 dark:text-gray-400">· Customer files are temporary order documents</span>
-              </div>
-              <span className="font-mono text-[10px] bg-white dark:bg-gray-800 px-2 py-0.5 rounded font-bold">24 HOUR RETENTION</span>
+            <div className="p-3 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 rounded-xl text-xs text-blue-900 dark:text-blue-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+              <span>Files are stored in the shop’s private document vault. Do not upload documents without authorization to retain them.</span>
+              <span className="font-mono text-[10px] bg-white dark:bg-gray-800 px-2 py-0.5 rounded font-bold whitespace-nowrap">PRIVATE STORAGE</span>
             </div>
+
+            {storageError && <div role="alert" className="p-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-xl text-xs text-red-800 dark:text-red-200">{storageError}</div>}
+            {storageLoading && <div className="text-xs text-gray-500">Loading documents from the private shop vault…</div>}
 
             <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
               {/* Categories & File List */}
@@ -2836,24 +2961,24 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              handlePrintStorageFile(file);
+                              void handleDownloadStorageFile(file);
                             }}
                             className="px-2.5 py-1 bg-[#4D64E6] hover:bg-[#3F54D1] text-white rounded-lg text-[11px] font-bold shadow-xs cursor-pointer"
                           >
-                            Print 🖨️
+                            Download ↓
                           </button>
                         </div>
                       ))
                     ) : (
                       <div className="p-8 text-center text-xs text-gray-400">
-                        No files in this category yet. Click "Upload files" above to add documents.
+                        No files in this category yet. Choose Upload document to add a private shop file.
                       </div>
                     )}
                   </div>
                 </div>
               </div>
 
-              {/* Preview & Print Options */}
+                {/* Private document details */}
               <div className="md:col-span-5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-6 flex flex-col justify-between shadow-xs min-h-[350px]">
                 {selectedStorageFile ? (
                   <div className="space-y-4">
@@ -2872,36 +2997,68 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                     </div>
 
                     <div className="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-xl space-y-2 text-xs">
-                      <span className="text-[10px] font-bold uppercase text-gray-400 block">Dispatch Settings</span>
-                      <div className="grid grid-cols-2 gap-2 text-[11px]">
-                        <div><strong>Target:</strong> HP LaserJet Pro M401dne</div>
-                        <div><strong>Format:</strong> B&W Duplex</div>
-                        <div><strong>Paper:</strong> A4 Standard</div>
-                        <div><strong>Est. Cost:</strong> ₹{(selectedStorageFile.pages * 1.2).toFixed(2)}</div>
-                      </div>
-                    </div>
-
-                    <div className="p-4 border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-xl text-center text-gray-400 text-xs">
-                      📄 Document Preview Rendered Locally
+                      <span className="text-[10px] font-bold uppercase text-gray-400 block">Stored document</span>
+                      <p>This file is private to your shop. Downloads are authorized and streamed through Inklly; the storage key is never exposed.</p>
+                      <p>Stored documents are not print orders. Create a customer order to quote and dispatch printing.</p>
                     </div>
 
                     <button
                       type="button"
-                      onClick={() => handlePrintStorageFile(selectedStorageFile)}
+                      onClick={() => void handleDownloadStorageFile(selectedStorageFile)}
                       className="w-full py-3 bg-[#4D64E6] hover:bg-[#3F54D1] text-white rounded-xl text-xs font-bold shadow-md cursor-pointer transition-all"
                     >
-                      Send to Spooler (Print Now) →
+                      Download document
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteStorageFile(selectedStorageFile)}
+                      className="w-full py-2.5 border border-red-200 text-red-700 dark:border-red-900 dark:text-red-300 rounded-xl text-xs font-bold hover:bg-red-50 dark:hover:bg-red-950/30 cursor-pointer transition-all"
+                    >
+                      Delete from vault
                     </button>
                   </div>
                 ) : (
                   <div className="flex flex-col items-center justify-center my-auto text-center p-6 text-gray-400 text-xs space-y-2">
                     <span className="text-3xl block">📑</span>
                     <span className="font-bold text-gray-600 dark:text-gray-300">No document selected</span>
-                    <p className="text-[11px] max-w-xs">Click on any file from the categories list on the left to preview and dispatch print jobs.</p>
+                    <p className="text-[11px] max-w-xs">Select a stored file to download or remove it. Printing requires creating an order so pricing and dispatch are recorded.</p>
                   </div>
                 )}
               </div>
             </div>
+          </div>
+        )}
+
+        {activeView === 'storage' && newCategoryModalOpen && (
+          <div className="fixed inset-0 z-50 bg-black/40 p-4 flex items-center justify-center" role="presentation">
+            <form
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="storage-category-title"
+              onSubmit={(event) => { event.preventDefault(); void handleCreateStorageCategory(); }}
+              className="w-full max-w-md bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-5 shadow-xl space-y-4"
+            >
+              <div>
+                <h3 id="storage-category-title" className="text-base font-extrabold text-[#172031] dark:text-white">Create a document category</h3>
+                <p className="mt-1 text-xs text-gray-500">Categories are private to this shop.</p>
+              </div>
+              <label className="block text-xs font-bold text-gray-700 dark:text-gray-200">
+                Category name
+                <input
+                  autoFocus
+                  value={newCategoryName}
+                  onChange={(event) => setNewCategoryName(event.target.value)}
+                  maxLength={100}
+                  required
+                  className="mt-1.5 w-full rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2.5 text-sm font-normal"
+                  placeholder="e.g. Store forms"
+                />
+              </label>
+              <div className="flex justify-end gap-2">
+                <button type="button" onClick={() => { setNewCategoryModalOpen(false); setNewCategoryName(''); }} className="px-3 py-2 rounded-lg text-xs font-bold border border-gray-200 dark:border-gray-700">Cancel</button>
+                <button type="submit" className="px-3 py-2 rounded-lg text-xs font-bold bg-[#4D64E6] text-white">Create category</button>
+              </div>
+            </form>
           </div>
         )}
 

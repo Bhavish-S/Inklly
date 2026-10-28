@@ -85,6 +85,7 @@ export function createMerchantRoutes(db: DatabaseService, fileStorage: PrivateFi
   router.get('/storage/categories', requirePermission('storage:view'), controller.getStorageCategories);
   router.post('/storage/categories', requirePermission('storage:manage'), controller.createStorageCategory);
   router.delete('/storage/categories/:id', requirePermission('storage:manage'), controller.deleteStorageCategory);
+  router.post('/storage/documents', requirePermission('storage:manage'), controller.uploadStorageDocument);
   router.get('/storage/documents', requirePermission('storage:view'), controller.getStorageDocuments);
   router.get('/storage/documents/:id/download', requirePermission('storage:view'), controller.downloadStorageDocument);
   router.delete('/storage/documents/:id', requirePermission('storage:manage'), controller.deleteStorageDocument);

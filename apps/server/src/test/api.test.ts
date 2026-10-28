@@ -423,6 +423,44 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(list.status, 200);
     assert.ok((await list.json() as any[]).some((category) => category.id === created.category.id));
 
+    const pdf = makeTestPdf(3);
+    const invalidCategory = await fetch(`${baseUrl}/api/v1/merchant/storage/documents`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ fileName: 'report.pdf', fileData: pdf.toString('base64'), categoryId: 'foreign-category-id' }),
+    });
+    assert.equal(invalidCategory.status, 404);
+
+    const invalidContent = await fetch(`${baseUrl}/api/v1/merchant/storage/documents`, {
+      method: 'POST', headers, body: JSON.stringify({ fileName: 'report.pdf', fileData: Buffer.from('not a pdf').toString('base64') }),
+    });
+    assert.equal(invalidContent.status, 415);
+
+    const upload = await fetch(`${baseUrl}/api/v1/merchant/storage/documents`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ fileName: '../year-end?.exe', fileData: pdf.toString('base64'), categoryId: created.category.id }),
+    });
+    assert.equal(upload.status, 201);
+    const stored = (await upload.json() as any).document;
+    assert.equal(stored.pageCount, 3, 'page count must be derived from PDF bytes');
+    assert.equal(stored.fileName, 'year-end_.pdf', 'display name is sanitized and extension follows inspected content');
+    assert.equal('storageKey' in stored, false, 'private storage keys are not exposed');
+
+    const documents = await fetch(`${baseUrl}/api/v1/merchant/storage/documents?categoryId=${encodeURIComponent(created.category.id)}`, { headers });
+    assert.equal(documents.status, 200);
+    const storedList = await documents.json() as any[];
+    assert.ok(storedList.some((doc) => doc.id === stored.id && doc.name === stored.fileName && doc.categoryName === created.category.name));
+
+    const download = await fetch(`${baseUrl}${stored.downloadUrl}`, { headers: { Authorization: `Bearer ${merchantToken}` } });
+    assert.equal(download.status, 200);
+    assert.equal(download.headers.get('cache-control'), 'private, no-store');
+    assert.equal(download.headers.get('x-content-type-options'), 'nosniff');
+    assert.deepEqual(Buffer.from(await download.arrayBuffer()), pdf);
+
+    const removeDocument = await fetch(`${baseUrl}/api/v1/merchant/storage/documents/${encodeURIComponent(stored.id)}`, {
+      method: 'DELETE', headers,
+    });
+    assert.equal(removeDocument.status, 200);
+
     const remove = await fetch(`${baseUrl}/api/v1/merchant/storage/categories/${encodeURIComponent(created.category.id)}`, { method: 'DELETE', headers });
     assert.equal(remove.status, 200);
   });
@@ -1121,7 +1159,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       '/merchant/payouts': ['get', 'post'],
       '/merchant/storage/categories': ['get', 'post'],
       '/merchant/storage/categories/{id}': ['delete'],
-      '/merchant/storage/documents': ['get'],
+      '/merchant/storage/documents': ['get', 'post'],
       '/merchant/storage/documents/{id}/download': ['get'],
       '/merchant/storage/documents/{id}': ['delete'],
       '/merchant/whatsapp/setup': ['get', 'post'],
@@ -1580,6 +1618,26 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     });
     assert.equal(login2Res.status, 200);
     const tenant2Token = (await login2Res.json()).token;
+
+    const vaultUpload = await fetch(`${baseUrl}/api/v1/merchant/storage/documents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+      body: JSON.stringify({ fileName: 'private-vault.pdf', fileData: makeTestPdf().toString('base64') }),
+    });
+    assert.equal(vaultUpload.status, 201);
+    const vaultDocument = (await vaultUpload.json() as any).document;
+    const crossTenantDownload = await fetch(`${baseUrl}${vaultDocument.downloadUrl}`, {
+      headers: { Authorization: `Bearer ${tenant2Token}` },
+    });
+    assert.equal(crossTenantDownload.status, 404);
+    const crossTenantDelete = await fetch(`${baseUrl}/api/v1/merchant/storage/documents/${encodeURIComponent(vaultDocument.id)}`, {
+      method: 'DELETE', headers: { Authorization: `Bearer ${tenant2Token}` },
+    });
+    assert.equal(crossTenantDelete.status, 404);
+    const ownerDeleteVault = await fetch(`${baseUrl}/api/v1/merchant/storage/documents/${encodeURIComponent(vaultDocument.id)}`, {
+      method: 'DELETE', headers: { Authorization: `Bearer ${merchantToken}` },
+    });
+    assert.equal(ownerDeleteVault.status, 200);
 
     // 4. Fetch Tenant 1's order to get its real ID
     const ordersRes = await fetch(`${baseUrl}/api/v1/merchant/orders`, {

@@ -38,6 +38,7 @@ const MERCHANT_ROUTE_DOCUMENTATION: Array<{ path: string; method: string; summar
   { path: '/merchant/storage/categories', method: 'get', summary: 'List storage categories', access: 'Requires storage:view.' },
   { path: '/merchant/storage/categories', method: 'post', summary: 'Create a storage category', access: 'Requires storage:manage.' },
   { path: '/merchant/storage/categories/{id}', method: 'delete', summary: 'Delete a storage category', access: 'Requires storage:manage.' },
+  { path: '/merchant/storage/documents', method: 'post', summary: 'Upload a private shop storage document', access: 'Requires storage:manage.' },
   { path: '/merchant/storage/documents', method: 'get', summary: 'List stored documents', access: 'Requires storage:view.' },
   { path: '/merchant/storage/documents/{id}/download', method: 'get', summary: 'Download a stored document', access: 'Requires storage:view and document ownership.' },
   { path: '/merchant/storage/documents/{id}', method: 'delete', summary: 'Delete a stored document', access: 'Requires storage:manage.' },
