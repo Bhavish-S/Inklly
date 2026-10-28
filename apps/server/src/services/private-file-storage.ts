@@ -21,8 +21,14 @@ export class PrivateFileStorage {
     this.supabaseUrl = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
     this.serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
     this.bucket = process.env.SUPABASE_STORAGE_BUCKET || 'customer-print-files';
-    if (this.driver === 'supabase' && (!/^https:\/\//i.test(this.supabaseUrl) || !this.serviceKey || !/^[a-z0-9][a-z0-9_-]{0,62}$/.test(this.bucket))) {
-      throw new Error('Supabase file storage requires HTTPS SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, and a valid SUPABASE_STORAGE_BUCKET');
+    if (this.driver === 'supabase') {
+      const invalidSettings: string[] = [];
+      if (!/^https:\/\//i.test(this.supabaseUrl)) invalidSettings.push('SUPABASE_URL (must be the HTTPS project URL)');
+      if (!this.serviceKey) invalidSettings.push('SUPABASE_SERVICE_ROLE_KEY');
+      if (!/^[a-z0-9][a-z0-9_-]{0,62}$/.test(this.bucket)) invalidSettings.push('SUPABASE_STORAGE_BUCKET (invalid bucket name)');
+      if (invalidSettings.length) {
+        throw new Error(`Supabase file storage configuration is invalid: ${invalidSettings.join(', ')}`);
+      }
     }
   }
 

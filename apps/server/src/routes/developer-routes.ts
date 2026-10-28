@@ -15,7 +15,7 @@ export function createDeveloperRoutes(db: DatabaseService): Router {
   // Internal developer tools are authenticated. Merchant self-service API
   // access remains disabled until product governance, quotas, support terms,
   // and the external API security review are approved.
-  const developerAccess = [authenticate, requireRole('DEVELOPER', 'MERCHANT_OWNER')];
+  const developerAccess = [authenticate(db), requireRole('DEVELOPER', 'MERCHANT_OWNER')];
   const externalApiGate = (_req: Request, res: Response, next: NextFunction) => {
     if (process.env.ENABLE_EXTERNAL_API_ACCESS !== 'true') {
       return res.status(403).json({

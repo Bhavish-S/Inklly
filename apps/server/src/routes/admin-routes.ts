@@ -11,7 +11,7 @@ export function createAdminRoutes(db: DatabaseService): Router {
   const enquiryRepo = new EnquiryRepository(db);
   const controller = new AdminController(db, ledgerRepo, userRepo, enquiryRepo);
 
-  router.use(authenticate);
+  router.use(authenticate(db));
   router.use(requireRole('PLATFORM_OWNER', 'PLATFORM_ADMIN'));
 
   router.get('/overview', requirePermission('platform:view'), controller.getOverview);

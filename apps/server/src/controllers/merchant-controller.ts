@@ -231,7 +231,10 @@ export class MerchantController {
     const shopId = this.getShopId(req);
     const { id, paperSize, colorMode, duplexMode, pricePerPrintedSidePaise, printerId } = req.body;
 
-    if (!paperSize || !colorMode || !duplexMode || pricePerPrintedSidePaise === undefined) {
+    const validPaperSizes = ['A4', 'A3', 'PHOTO_4X6', 'PHOTO_5X7', 'GLOSSY', 'PLAIN'];
+    if (typeof paperSize !== 'string' || !validPaperSizes.includes(paperSize.toUpperCase()) ||
+        !['bw', 'color'].includes(colorMode) || !['simplex', 'duplex_auto', 'duplex_manual'].includes(duplexMode) ||
+        !Number.isSafeInteger(pricePerPrintedSidePaise) || pricePerPrintedSidePaise < 0 || pricePerPrintedSidePaise > 100_000_000) {
       return res.status(400).json({ error: 'Missing required rate rule parameters' });
     }
 
@@ -240,10 +243,10 @@ export class MerchantController {
       id: ruleId,
       shopId,
       printerId: printerId || undefined,
-      paperSize,
+      paperSize: paperSize.toUpperCase() as any,
       colorMode,
       duplexMode,
-      pricePerPrintedSidePaise: Number(pricePerPrintedSidePaise),
+      pricePerPrintedSidePaise,
     });
 
     res.json({ success: true, rateRules: this.pricingRepo.getRateRules(shopId) });
@@ -253,11 +256,17 @@ export class MerchantController {
     const shopId = this.getShopId(req);
     const { minOrderValuePaise, discountPercentage, isEnabled } = req.body;
 
+    if (!Number.isSafeInteger(minOrderValuePaise) || minOrderValuePaise < 0 || minOrderValuePaise > 5_000_000_000 ||
+        typeof discountPercentage !== 'number' || !Number.isFinite(discountPercentage) || discountPercentage < 0 || discountPercentage > 100 ||
+        (isEnabled !== undefined && typeof isEnabled !== 'boolean')) {
+      return res.status(400).json({ error: 'Bulk discount values must be valid Paise amounts, a percentage from 0 to 100, and a boolean enabled flag.' });
+    }
+
     this.pricingRepo.setBulkDiscountRule({
       id: `bulk-${shopId}`,
       shopId,
-      minOrderValuePaise: Number(minOrderValuePaise || 10000),
-      discountPercentage: Number(discountPercentage || 10),
+      minOrderValuePaise,
+      discountPercentage,
       isEnabled: isEnabled !== undefined ? Boolean(isEnabled) : true,
     });
 
@@ -284,11 +293,13 @@ export class MerchantController {
       shopId,
       name,
       systemDriverName,
-      isOnline: true,
+      // Registration stores a capability profile; only an authenticated agent
+      // heartbeat may later establish that this device is online.
+      isOnline: false,
       isDefault: false,
       supportsColor: Boolean(supportsColor),
       supportsDuplex: Boolean(supportsDuplex),
-      lastHeartbeat: new Date().toISOString(),
+      lastHeartbeat: '',
       trays: Array.isArray(trays)
         ? trays.map((t: any, i: number) => ({
             id: t.id || `tray-${printerId}-${i + 1}`,

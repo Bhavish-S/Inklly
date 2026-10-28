@@ -106,8 +106,8 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       assert.equal(res.status, 201);
       const data = (await res.json()) as any;
       assert.equal(data.success, true);
-      assert.equal(data.registrationComplete, false);
-      assert.equal(data.organization.planStatus, 'PENDING_PAYMENT');
+      assert.equal(data.registrationComplete, true);
+      assert.equal(data.organization.planStatus, 'TRIAL');
       assert.ok(data.shop.id);
       assert.equal(data.user.role, 'MERCHANT_OWNER');
       assert.ok(data.organization.id);
@@ -962,7 +962,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       });
       assert.equal(regRes.status, 201);
       const regData = (await regRes.json()) as any;
-      assert.equal(regData.registrationComplete, false);
+      assert.equal(regData.registrationComplete, true);
       const shopCode = regData.shop.shopCode;
       const shopId = regData.shop.id;
       const orgId = regData.organizationId;
@@ -1092,6 +1092,8 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       const tickets = await pollRes.json() as any[];
       const ticket = tickets.find((item) => item.correlationId === `corr-${orderId}`);
       assert.ok(ticket);
+      const ackRes = await fetch(`${baseUrl}/api/v1/agent/acknowledge-command`, { method: 'POST', headers: agentHeaders, body: JSON.stringify({ commandId: ticket.commandId, attemptId: ticket.attemptId }) });
+      assert.equal(ackRes.status, 200);
 
       // 4. Agent reports PRINT_CONFIRMED
       const confirmRes = await fetch(`${baseUrl}/api/v1/agent/command-result`, {
@@ -1473,6 +1475,8 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       const tickets = await pollRes.json() as any[];
       const ticket = tickets.find((item) => item.correlationId === `corr-${orderId}`);
       assert.ok(ticket);
+      const ackRes = await fetch(`${baseUrl}/api/v1/agent/acknowledge-command`, { method: 'POST', headers: agentHeaders, body: JSON.stringify({ commandId: ticket.commandId, attemptId: ticket.attemptId }) });
+      assert.equal(ackRes.status, 200);
 
       // 3. Printer experiences mechanical paper jam on page 14
       // Agent reports OUTPUT_UNCERTAIN
@@ -1565,8 +1569,8 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       });
       assert.equal(regRes.status, 201);
       const regData = await regRes.json();
-      assert.equal(regData.registrationComplete, false);
-      assert.equal(regData.organization.planStatus, 'PENDING_PAYMENT');
+      assert.equal(regData.registrationComplete, true);
+      assert.equal(regData.organization.planStatus, 'TRIAL');
       const newShopId = regData.shop.id;
       const newShopCode = regData.shop.shopCode;
 
@@ -1764,7 +1768,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       });
       assert.equal(regRes.status, 201);
       const regData = await regRes.json();
-      assert.equal(regData.registrationComplete, false);
+      assert.equal(regData.registrationComplete, true);
 
       // 2. Activate subscription via platform admin
       await fetch(`${baseUrl}/api/v1/platform/merchants/${regData.organizationId}/status`, {

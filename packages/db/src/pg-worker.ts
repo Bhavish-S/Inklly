@@ -11,7 +11,9 @@ const dataBytes = new Uint8Array(sharedBuffer, 16);
 
 const client = new Client({
   connectionString,
-  ssl: { rejectUnauthorized: false },
+  // Reject untrusted database certificates; Supabase's managed endpoint uses
+  // publicly trusted TLS certificates.
+  ssl: { rejectUnauthorized: true },
 });
 
 client.connect()

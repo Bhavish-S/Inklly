@@ -24,6 +24,7 @@ export function createAgentRoutes(db: DatabaseService, fileStorage: PrivateFileS
   router.post('/enroll', controller.enroll);
   router.post('/heartbeat', authenticateAgent, controller.heartbeat);
   router.get('/poll-commands', authenticateAgent, controller.pollCommands);
+  router.post('/acknowledge-command', authenticateAgent, controller.acknowledgeCommand);
   router.post('/command-result', authenticateAgent, controller.reportCommandResult);
   router.get('/files/:fileId', authenticateAgent, controller.downloadPrintFile);
   router.get('/download', controller.downloadAgent);

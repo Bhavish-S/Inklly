@@ -1,9 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
 import { UserRole } from '@inklly/shared';
 import { DatabaseService } from '@inklly/db';
-import { verifySessionToken } from './session-token';
+import { hashSessionToken, verifySessionToken } from './session-token';
 
 export interface AuthenticatedUser {
+  sessionId: string;
   userId: string;
   email: string;
   role: UserRole;
@@ -25,7 +26,8 @@ declare global {
  * Supports only server-signed Bearer session tokens. Identity and authorization
  * claims from request headers are never trusted.
  */
-export function authenticate(req: Request, res: Response, next: NextFunction): void {
+export function authenticate(db: DatabaseService) {
+  return (req: Request, res: Response, next: NextFunction): void => {
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -33,7 +35,8 @@ export function authenticate(req: Request, res: Response, next: NextFunction): v
     return next();
   }
 
-  const session = verifySessionToken(authHeader.substring(7));
+  const token = authHeader.substring(7);
+  const session = verifySessionToken(token);
   if (session === 'expired') {
     res.status(401).json({ error: 'Token has expired' });
     return;
@@ -42,8 +45,18 @@ export function authenticate(req: Request, res: Response, next: NextFunction): v
     res.status(401).json({ error: 'Invalid authentication token' });
     return;
   }
+  const storedSession = db.queryOne<any>(
+    `SELECT id FROM user_sessions WHERE id = ? AND user_id = ? AND token_hash = ? AND revoked_at IS NULL AND expires_at > ?`,
+    [session.sessionId, session.userId, hashSessionToken(token), new Date().toISOString()]
+  );
+  if (!storedSession) {
+    res.status(401).json({ error: 'Session has expired or was revoked. Please sign in again.' });
+    return;
+  }
+  db.execute(`UPDATE user_sessions SET last_used_at = ? WHERE id = ?`, [new Date().toISOString(), session.sessionId]);
   req.user = session;
   next();
+  };
 }
 
 export function requireRole(...allowedRoles: UserRole[]) {
@@ -62,8 +75,8 @@ export function requirePermission(permission: string) {
   return (req: Request, res: Response, next: NextFunction) => {
     const user = req.user;
     if (!user) return res.status(401).json({ error: 'Authentication required' });
-    if (user.role === 'PLATFORM_OWNER' || user.role === 'PLATFORM_ADMIN' || user.role === 'MERCHANT_OWNER') return next();
-    if (user.permissions.includes('*') || user.permissions.includes(permission)) return next();
+    if (user.role === 'PLATFORM_OWNER' || user.role === 'MERCHANT_OWNER') return next();
+    if (user.role === 'PLATFORM_ADMIN' ? user.permissions.includes(permission) : (user.permissions.includes('*') || user.permissions.includes(permission))) return next();
     return res.status(403).json({ error: `Permission required: ${permission}` });
   };
 }

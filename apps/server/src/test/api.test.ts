@@ -5,7 +5,7 @@ import { DatabaseService } from '@inklly/db';
 import * as http from 'node:http';
 import * as crypto from 'node:crypto';
 import { makeTestPdf } from './test-pdf';
-import { createSessionToken } from '../middleware/session-token';
+import { createSessionToken, hashSessionToken } from '../middleware/session-token';
 
 describe('Inklly Backend API Integration Test Suite', { concurrency: false }, () => {
   let server: http.Server;
@@ -106,12 +106,24 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
   });
 
   it('does not create developer webhook configuration without an organization membership', async () => {
+    const userId = `developer-without-org-${crypto.randomUUID()}`;
+    const sessionId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    db.execute(
+      `INSERT INTO users (id, email, password_hash, full_name, role, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+      [userId, `${userId}@example.invalid`, 'test-hash', 'Orphan Developer', 'DEVELOPER', now, now]
+    );
     const developerToken = createSessionToken({
-      userId: 'developer-without-org',
+      sessionId,
+      userId,
       email: 'developer@example.invalid',
       role: 'DEVELOPER',
       permissions: [],
     });
+    db.execute(
+      `INSERT INTO user_sessions (id, user_id, token_hash, created_at, last_used_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      [sessionId, userId, hashSessionToken(developerToken), now, now, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()]
+    );
     const res = await fetch(`${baseUrl}/api/v1/developer/webhooks`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${developerToken}` },
@@ -271,6 +283,43 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     merchantToken = loginBody.token;
   });
 
+  it('enforces revocable server-side sessions and price-management permission', async () => {
+    const sessionId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const staffToken = createSessionToken({
+      sessionId,
+      userId: 'user-staff-1',
+      email: 'operator@campusprint.in',
+      role: 'SHOP_STAFF',
+      organizationId: 'org-campus-network',
+      shopId: 'shop-campus-1',
+      permissions: ['orders:view', 'orders:process', 'live_print:manage', 'printers:view', 'printers:manage', 'storage:view'],
+    });
+    db.execute(
+      `INSERT INTO user_sessions (id, user_id, token_hash, created_at, last_used_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      [sessionId, 'user-staff-1', hashSessionToken(staffToken), now, now, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()]
+    );
+
+    const deniedRateChange = await fetch(`${baseUrl}/api/v1/merchant/rates`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${staffToken}` },
+      body: JSON.stringify({ paperSize: 'A4', colorMode: 'bw', duplexMode: 'simplex', pricePerPrintedSidePaise: 1 }),
+    });
+    assert.equal(deniedRateChange.status, 403);
+
+    const sessionsRes = await fetch(`${baseUrl}/api/v1/auth/sessions`, { headers: { Authorization: `Bearer ${staffToken}` } });
+    assert.equal(sessionsRes.status, 200);
+    const sessions = await sessionsRes.json() as Array<{ id: string; isCurrent: boolean }>;
+    assert.equal(sessions.find((session) => session.id === sessionId)?.isCurrent, true);
+
+    const revokeRes = await fetch(`${baseUrl}/api/v1/auth/sessions/${sessionId}`, {
+      method: 'DELETE', headers: { Authorization: `Bearer ${staffToken}` },
+    });
+    assert.equal(revokeRes.status, 200);
+    const afterRevoke = await fetch(`${baseUrl}/api/v1/merchant/dashboard`, { headers: { Authorization: `Bearer ${staffToken}` } });
+    assert.equal(afterRevoke.status, 401);
+  });
+
   it('Retrieves merchant dashboard stats and orders queue', async () => {
     const res = await fetch(`${baseUrl}/api/v1/merchant/dashboard`, {
       headers: { Authorization: `Bearer ${merchantToken}` },
@@ -362,14 +411,67 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     });
     assert.equal(hbRes.status, 200);
 
+    const dispatchRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${cashOrderId}/print`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${merchantToken}` },
+    });
+    assert.equal(dispatchRes.status, 200);
+
     // 3. Poll commands
     const pollRes = await fetch(`${baseUrl}/api/v1/agent/poll-commands`, { headers: agentHeaders });
     assert.equal(pollRes.status, 200);
-    const tickets = await pollRes.json();
+    const tickets = await pollRes.json() as Array<{ jobId: string; commandId: string; attemptId: string }>;
     assert.ok(Array.isArray(tickets));
 
-    if (tickets.length > 0) {
-      const ticket = tickets[0];
+    const targetJob = db.queryOne<any>(`SELECT id FROM print_jobs WHERE order_id = ? ORDER BY created_at LIMIT 1`, [cashOrderId]);
+    assert.ok(targetJob, 'dispatched order should have a print job');
+    const ticket = tickets.find((candidate) => candidate.jobId === targetJob.id);
+    assert.ok(ticket, 'poll returns the dispatched order job');
+
+    // A lost poll response can be replayed with the same command identity until SQLite enqueue is acknowledged.
+    const replayRes = await fetch(`${baseUrl}/api/v1/agent/poll-commands`, { headers: agentHeaders });
+    const replayTickets = await replayRes.json() as Array<{ jobId: string; commandId: string; attemptId: string }>;
+    const replay = replayTickets.find((candidate) => candidate.jobId === targetJob.id);
+    assert.equal(replay?.commandId, ticket.commandId);
+    assert.equal(replay?.attemptId, ticket.attemptId);
+
+    const ackRes = await fetch(`${baseUrl}/api/v1/agent/acknowledge-command`, {
+      method: 'POST',
+      headers: agentHeaders,
+      body: JSON.stringify({ commandId: ticket.commandId, attemptId: ticket.attemptId }),
+    });
+    assert.equal(ackRes.status, 200);
+    const ackRetry = await fetch(`${baseUrl}/api/v1/agent/acknowledge-command`, {
+      method: 'POST',
+      headers: agentHeaders,
+      body: JSON.stringify({ commandId: ticket.commandId, attemptId: ticket.attemptId }),
+    });
+    assert.equal(ackRetry.status, 200, 'acknowledgement is idempotent');
+
+    const afterAckRes = await fetch(`${baseUrl}/api/v1/agent/poll-commands`, { headers: agentHeaders });
+    const afterAckTickets = await afterAckRes.json() as Array<{ jobId: string }>;
+    assert.ok(!afterAckTickets.some((candidate) => candidate.jobId === targetJob.id), 'acknowledged command is not replayed');
+
+    // A command that never receives an acknowledgement is made uncertain when its lease expires, never reprinted blindly.
+    const fileRow = db.queryOne<any>(`SELECT order_file_id FROM print_jobs WHERE id = ?`, [targetJob.id]);
+    const expiredJobId = `job-expired-ack-${crypto.randomUUID()}`;
+    const now = new Date().toISOString();
+    db.execute(
+      `INSERT INTO print_jobs (id, order_id, order_file_id, status, created_at, updated_at) VALUES (?, ?, ?, 'RECEIVED', ?, ?)`,
+      [expiredJobId, cashOrderId, fileRow.order_file_id, now, now]
+    );
+    const issuedRes = await fetch(`${baseUrl}/api/v1/agent/poll-commands`, { headers: agentHeaders });
+    const issued = await issuedRes.json() as Array<{ jobId: string; attemptId: string }>;
+    const expiredTicket = issued.find((candidate) => candidate.jobId === expiredJobId);
+    assert.ok(expiredTicket);
+    db.execute(`UPDATE print_attempts SET created_at = ? WHERE id = ?`, [new Date(Date.now() - 3 * 60 * 1000).toISOString(), expiredTicket.attemptId]);
+    const expirePoll = await fetch(`${baseUrl}/api/v1/agent/poll-commands`, { headers: agentHeaders });
+    const expireTickets = await expirePoll.json() as Array<{ jobId: string }>;
+    assert.ok(!expireTickets.some((candidate) => candidate.jobId === expiredJobId));
+    assert.equal(db.queryOne<any>(`SELECT status FROM print_jobs WHERE id = ?`, [expiredJobId]).status, 'OUTPUT_UNCERTAIN');
+    assert.equal(db.queryOne<any>(`SELECT status FROM print_attempts WHERE id = ?`, [expiredTicket.attemptId]).status, 'OUTPUT_UNCERTAIN');
+
+    if (ticket) {
       // Report Uncertain Output - safety invariant verification!
       const resultRes = await fetch(`${baseUrl}/api/v1/agent/command-result`, {
         method: 'POST',
@@ -507,8 +609,10 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(res.status, 201);
     const body = await res.json();
     assert.equal(body.success, true);
-    assert.equal(body.registrationComplete, false);
-    assert.equal(body.organization.planStatus, 'PENDING_PAYMENT');
+    assert.equal(body.registrationComplete, true);
+    assert.equal(body.organization.planStatus, 'TRIAL');
+    assert.equal(body.subscription.status, 'TRIALING');
+    assert.equal(body.subscription.amountPaise, 0);
     assert.equal(body.user.email, 'vikas@omsaixerox.in');
     assert.equal(body.shop.shopCode, 'om-sai-hub');
     assert.equal(body.organization.planTier, 'STARTER');
@@ -727,7 +831,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     });
     assert.equal(reg2.status, 201);
     const reg2Body = await reg2.json();
-    assert.equal(reg2Body.registrationComplete, false);
+    assert.equal(reg2Body.registrationComplete, true);
 
     // Activate tenant 2 subscription via platform admin
     const activateRes = await fetch(`${baseUrl}/api/v1/platform/merchants/${reg2Body.organizationId}/status`, {

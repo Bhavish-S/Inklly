@@ -38,7 +38,7 @@ export function createMerchantRoutes(db: DatabaseService, fileStorage: PrivateFi
   );
 
   // Apply authentication and tenant isolation
-  router.use(authenticate);
+  router.use(authenticate(db));
   router.use(enforceTenantIsolation);
   router.use(requireActiveSubscription(db));
 
@@ -53,8 +53,8 @@ export function createMerchantRoutes(db: DatabaseService, fileStorage: PrivateFi
   router.delete('/agents/:id', requireRole('MERCHANT_OWNER'), controller.revokeAgent);
 
   router.get('/rates', requirePermission('settings:view'), controller.getRates);
-  router.put('/rates', controller.updateRateRule);
-  router.put('/discounts/bulk', controller.updateBulkDiscount);
+  router.put('/rates', requirePermission('settings:manage'), controller.updateRateRule);
+  router.put('/discounts/bulk', requirePermission('settings:manage'), controller.updateBulkDiscount);
 
   router.get('/printers', requirePermission('printers:view'), controller.getPrinters);
   router.post('/printers', requirePermission('printers:manage'), controller.addPrinter);

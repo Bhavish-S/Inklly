@@ -9,6 +9,7 @@ interface OrderTrackerViewProps {
 
 const ORDER_STEPS = [
   { key: 'SUBMITTED', label: 'Order Submitted', icon: FileTextIcon },
+  { key: 'AWAITING_PAYMENT', label: 'Payment', icon: ClockIcon },
   { key: 'AWAITING_REVIEW', label: 'Counter Review', icon: ClockIcon },
   { key: 'READY_FOR_PRINT', label: 'Queued for Spooler', icon: PrinterIcon },
   { key: 'IN_PROGRESS', label: 'Printing & Collation', icon: PrinterIcon },
@@ -79,15 +80,39 @@ export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onB
 
   // Determine active step index
   const getStepIndex = (status: string) => {
-    if (status === 'AWAITING_REVIEW') return 1;
-    if (status === 'READY_FOR_PRINT') return 2;
-    if (status === 'IN_PROGRESS') return 3;
-    if (status === 'READY_FOR_COLLECTION') return 4;
-    if (status === 'COLLECTED') return 5;
+    if (status === 'AWAITING_PAYMENT') return 1;
+    if (status === 'AWAITING_REVIEW') return 2;
+    if (status === 'READY_FOR_PRINT') return 3;
+    if (status === 'IN_PROGRESS') return 4;
+    if (status === 'READY_FOR_COLLECTION') return 5;
+    if (status === 'COLLECTED') return 6;
     return 0;
   };
 
   const currentStep = getStepIndex(order.status);
+  const terminalIssue = ['CANCELLED', 'REJECTED', 'PRINT_FAILED', 'PRINT_UNCONFIRMED', 'FAILED_REQUIRES_SUPPORT', 'ON_HOLD'].includes(order.status);
+  const statusTitle = order.status === 'AWAITING_PAYMENT'
+    ? 'Payment required to continue'
+    : order.status === 'CANCELLED' || order.status === 'REJECTED'
+      ? 'This order was cancelled'
+      : ['PRINT_FAILED', 'PRINT_UNCONFIRMED', 'FAILED_REQUIRES_SUPPORT', 'ON_HOLD'].includes(order.status)
+        ? 'This order needs the shop’s attention'
+        : order.status === 'COLLECTED'
+          ? 'Your order has been collected'
+          : order.status === 'READY_FOR_COLLECTION'
+            ? 'Your order is ready for pickup'
+            : 'Your order is being processed';
+  const statusDescription = order.status === 'AWAITING_PAYMENT'
+    ? 'Complete payment to send this order to the shop. The shop has not started processing it yet.'
+    : order.status === 'CANCELLED' || order.status === 'REJECTED'
+      ? 'Contact the shop if you need help with this order.'
+      : ['PRINT_FAILED', 'PRINT_UNCONFIRMED', 'FAILED_REQUIRES_SUPPORT', 'ON_HOLD'].includes(order.status)
+        ? 'Please contact the shop before collecting or placing this order again.'
+        : order.status === 'COLLECTED'
+          ? 'This order has been marked as collected.'
+          : order.status === 'READY_FOR_COLLECTION'
+            ? 'Show your pickup token at the counter to collect your order.'
+            : `Hello ${order.customerName || 'there'}, we’ll update this page as the shop processes your order.`;
 
   return (
     <div style={{ maxWidth: '800px', margin: '2rem auto', padding: '0 1rem' }}>
@@ -113,29 +138,23 @@ export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onB
         </div>
 
         <h1 style={{ fontSize: '1.875rem', fontWeight: 800, marginBottom: '0.5rem', color: '#182230' }}>
-          {order.status === 'CANCELLED' || order.status === 'REJECTED'
-            ? 'This order was cancelled'
-            : order.status === 'READY_FOR_COLLECTION' || order.status === 'COLLECTED'
-              ? '🎉 Your Prints are Ready for Pickup!'
-              : 'Printing Order in Progress'}
+          {statusTitle}
         </h1>
 
         <p style={{ color: '#667085', fontSize: '0.9375rem', maxWidth: '480px', margin: '0 auto 1.5rem' }}>
-          {order.status === 'CANCELLED' || order.status === 'REJECTED'
-            ? 'Contact the shop if you need help with this order.'
-            : `Hello ${order.customerName || 'there'}, show this pickup screen at the counter when collecting your documents.`}
+          {statusDescription}
         </p>
 
         {/* Pickup Token Card */}
-        <div style={{ display: 'inline-block', backgroundColor: '#F7F8FA', border: '2px dashed #4A69ED', borderRadius: '12px', padding: '1rem 2rem', marginBottom: '2rem' }}>
+        {order.tokenNumber && !terminalIssue && <div style={{ display: 'inline-block', backgroundColor: '#F7F8FA', border: '2px dashed #4A69ED', borderRadius: '12px', padding: '1rem 2rem', marginBottom: '2rem' }}>
           <div style={{ fontSize: '0.75rem', color: '#667085', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Counter Pickup Token</div>
           <div style={{ fontSize: '2.25rem', fontWeight: 800, color: '#182230', letterSpacing: '0.1em' }}>
             {order.tokenNumber || '—'}
           </div>
-        </div>
+        </div>}
 
         {/* Visual Stepper */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '0.5rem', marginTop: '1rem', position: 'relative' }}>
+        {!terminalIssue && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '0.5rem', marginTop: '1rem', position: 'relative' }}>
           {ORDER_STEPS.map((step, idx) => {
             const isCompleted = idx < currentStep;
             const isCurrent = idx === currentStep;
@@ -163,7 +182,7 @@ export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onB
               </div>
             );
           })}
-        </div>
+        </div>}
       </div>
 
       {/* Order Details & Summary Card */}

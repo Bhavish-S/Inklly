@@ -52,7 +52,10 @@ export class AgentDaemon {
     // Start background tasks
     this.heartbeatInterval = setInterval(() => this.sendHeartbeat(), config.heartbeatIntervalMs);
     this.pollInterval = setInterval(() => this.pollServerCommands(), config.pollIntervalMs);
-    this.workerInterval = setInterval(() => this.processNextQueueItem(), 2000);
+    this.workerInterval = setInterval(() => {
+      void this.processPendingReports();
+      void this.processNextQueueItem();
+    }, 2000);
 
     // Initial immediate run
     this.sendHeartbeat();
@@ -141,9 +144,14 @@ export class AgentDaemon {
       const tickets = (await res.json()) as PrintCommandTicket[];
       let enqueued = 0;
       for (const ticket of tickets) {
-        if (this.queue.enqueue(ticket)) {
-          enqueued++;
-        }
+        // Persist into local SQLite before acknowledging. If the response or
+        // acknowledgement is lost, the next poll replays the same stable ID.
+        if (this.queue.enqueue(ticket)) enqueued++;
+        await fetch(`${config.serverUrl}/agent/acknowledge-command`, {
+          method: 'POST',
+          headers: this.agentHeaders(config),
+          body: JSON.stringify({ commandId: ticket.commandId, attemptId: ticket.attemptId }),
+        });
       }
       return enqueued;
     } catch {
@@ -170,39 +178,50 @@ export class AgentDaemon {
       documentUrl: item.documentUrl,
       fileName: item.fileName,
       options: item.options,
-      expiresAt: new Date(Date.now() + 60000).toISOString(),
+      expiresAt: item.expiresAt,
       correlationId: `corr-${item.jobId}`,
     };
 
     const config = this.configManager.get();
-    const result = await SpoolerExecutor.executeTicket(ticket, {
-      downloadHeaders: this.agentHeaders(config),
-    });
+    const expiry = Date.parse(item.expiresAt);
+    const result = !Number.isFinite(expiry) || expiry <= Date.now()
+      ? {
+          attemptId: item.attemptId,
+          jobId: item.jobId,
+          status: 'OUTPUT_UNCERTAIN' as const,
+          errorMessage: 'The server print ticket expired before local execution; output requires operator reconciliation.',
+          timestamp: new Date().toISOString(),
+        }
+      : await SpoolerExecutor.executeTicket(ticket, {
+          downloadHeaders: this.agentHeaders(config),
+        });
 
-    // Update local queue status
-    if (result.status === 'PRINT_CONFIRMED') {
-      this.queue.updateStatus(item.commandId, 'COMPLETED');
-    } else if (result.status === 'OUTPUT_UNCERTAIN') {
-      this.queue.updateStatus(item.commandId, 'OUTPUT_UNCERTAIN', result.errorMessage);
-    } else {
-      this.queue.updateStatus(item.commandId, 'FAILED', result.errorMessage);
-    }
-
-    // Report back to server
-    await this.reportResultToServer(result);
+    // Persist the outcome before network I/O so a restart can retry server reporting.
+    this.queue.saveResult(item.commandId, result);
+    await this.processPendingReports();
     return result;
   }
 
-  private async reportResultToServer(result: SpoolerResult): Promise<void> {
+  private async processPendingReports(): Promise<void> {
+    for (const item of this.queue.getPendingReports()) {
+      if (item.result && await this.reportResultToServer(item.result)) {
+        this.queue.completeReport(item.commandId, item.result);
+      }
+    }
+  }
+
+  private async reportResultToServer(result: SpoolerResult): Promise<boolean> {
     const config = this.configManager.get();
     try {
-      await fetch(`${config.serverUrl}/agent/command-result`, {
+      const response = await fetch(`${config.serverUrl}/agent/command-result`, {
         method: 'POST',
         headers: this.agentHeaders(config),
         body: JSON.stringify(result),
       });
+      return response.ok;
     } catch (err: any) {
       console.warn('[Inklly Agent] Failed to report spooler result back to server:', err.message);
+      return false;
     }
   }
 

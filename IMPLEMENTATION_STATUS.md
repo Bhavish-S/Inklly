@@ -3,13 +3,24 @@
 **Project Root:** `/Users/bhavishs/Documents/Education/Projects Source_Code/Inkly/Source Code/`
 **Authoritative Documentation:** `../printproject1/PrintCatalyst_Master_Codex_Package/reference/`
 **Started:** 2026-10-25 (Asia/Kolkata)  
-**Current Phase:** Phase 10 — Verification in progress (not release-ready)
+**Current Phase:** Productization and workflow hardening (not release-ready)
 
-> **Current evidence (2026-10-27):** `npm run build` passes across all workspaces (Vite reports a 1.22 MB main bundle warning). Latest `npm test` run passes: database 3, shared 12, agent 7, server 131 (153 total). `npm run lint` has no configured workspace lint scripts. Supabase Storage transport tests are mocked; production storage remains unverified. Historical phase checklists below describe intended/previously reported scope and are not proof of current production readiness.
+> **Verified snapshot (2026-10-28):** `npm run build` succeeds across all workspaces; Vite reports a large-bundle warning. `npm test` passes 171 tests (database 3, shared 12, agent 8, server 148). This proves local build and test behavior only; it does not certify production readiness.
 
-**Latest implemented work:** health responses expose Render's deployed Git revision. Developer credential and webhook configuration require authentication; key/webhook management stays disabled unless explicitly enabled. Public upload concurrency is capped before JSON parsing. The developer portal no longer seeds fake keys, provider health, delivery history, or printer status, and no longer fabricates keys or successful explorer responses. Production file handling requires Supabase Storage and refuses local-disk fallback; document page counts and MIME types are derived from bytes. Website enquiries persist idempotently and are shown in an audited platform inbox. Vercel serves the new frontend build, but Render still serves the old health handler without the revision stamp; live Supabase verification is also required. The installer endpoint remains unavailable until a verified installer artifact exists.
+**Implemented and tested in source:**
 
-Merchant API key and webhook management remains gated unless product governance is approved. Public website enquiries now validate input, use an idempotency key, rate-limit by client address, persist in the database, and appear in an authenticated platform-owner/admin inbox; submitted personal data is no longer written to logs. The server/web changes pass the full test and build commands recorded below; Razorpay, WhatsApp, production storage, Render and physical printing remain externally unverified. Enquiry email delivery and an approved retention period are still outstanding.
+- Customer portal upload/order/quote paths use server-side document inspection and integer-Paise pricing; tenant-specific APIs enforce shop scope.
+- Merchant sessions are signed, persisted, checked on every authenticated request, and revocable. Pricing edits require the settings permission.
+- Per-shop Razorpay customer payments validate the provider order, captured status, amount, currency, and webhook signature. Live provider credentials and callbacks have not been verified here.
+- PostgreSQL startup installs the baseline schema on a new database and applies the dispatch-ack migration; TLS certificate verification is enabled.
+- Private Supabase Storage is required in production. The latest Render log connects to PostgreSQL but exits because Storage environment settings/bucket are missing or invalid.
+- Agent results are persisted locally for retry, unacknowledged dispatch tickets replay with stable IDs, and expired handoffs become `OUTPUT_UNCERTAIN`. Physical printing is disabled by default for this pilot.
+- Printer profiles save through the API; registration no longer claims that hardware is online. Customer tracking distinguishes payment-pending and attention-required states.
+- Subscription checkout and per-successful-side SaaS billing are not implemented. Pilot prices remain configurable, and the dashboard now states that no subscription charge will be taken there. WhatsApp Meta messaging and a verified agent installer also remain unavailable.
+
+**Production verification still required:** configure Render's private Supabase bucket and service-role credentials; verify the running revision and health endpoint; exercise the live Supabase schema/storage path and Razorpay sandbox; and validate actual provider/billing workflows. Physical printer output is explicitly outside this build pass.
+
+> Historical phase checklists below contain earlier claims and are retained for traceability only. Some claims describe prototype behavior or integrations that are now explicitly unavailable. The checked boxes are not evidence that those features currently work. Use source, current tests, and deployment evidence above when assessing status.
 
 ---
 
@@ -43,6 +54,8 @@ Merchant API key and webhook management remains gated unless product governance 
   - [x] Cash-on-collection and Razorpay/Stripe checkout session intents.
   - [x] Webhook signature verification & idempotency guards via event-id tracking in ledger.
   - [x] Counter Cash Collection workflow crediting `CUSTOMER_PRINT_PAYMENT` ledger.
+  - [x] **Refund lifecycle** (`REQUESTED` $\rightarrow$ `COMPLETED`/`FAILED`/`REVERSED`) with Razorpay provider refund API, signature-verified callbacks, idempotency protection, and `REFUND_DISPUTE` ledger entries.
+  - [x] Cash collection now creates an auditable `payments` record enabling refund linkage and financial reconciliation.
 - [x] **Phase 5: Merchant Workspace**
   - [x] Real-time order queue with status filters and active metrics bar.
   - [x] Document Studio preview & inspection modal.
@@ -60,14 +73,18 @@ Merchant API key and webhook management remains gated unless product governance 
   - [x] Global metrics: Platform GMV (₹), SaaS MRR (₹), Active print agents, Total organizations and shops.
   - [x] Merchant directory with Suspend / Reactivate controls.
   - [x] Subscription plans catalog (`STARTER`, `GROWTH`, `PRO`, `SCALE`).
-  - [x] Append-only financial ledger viewer partitioned across all 6 official money domains.
+  - [x] **Subscription lifecycle management** (create/update with ACTIVE/PAST_DUE/GRACE/CANCELLED states, proration support, ledger entries under `SAAS_SUBSCRIPTION` domain).
+  - [x] **Credit purchase & balance tracking** under `CONVERSION_CREDIT` domain with ledger entries.
+  - [x] **Payout/withdrawal** with eligibility checks (`CUSTOMER_PRINT_PAYMENT` domain balance), duplicate-request prevention, step-up auth, and `MERCHANT_PAYOUT` ledger entries.
+  - [x] Append-only financial ledger viewer partitioned across all 6 official money domains (`CUSTOMER_PRINT_PAYMENT`, `SAAS_SUBSCRIPTION`, `CONVERSION_CREDIT`, `MERCHANT_PAYOUT`, `REFUND_DISPUTE`, `REFERRAL_REWARD`).
   - [x] System audit log explorer.
 - [x] **Phase 8: Developer & Integration Portal**
   - [x] OpenAPI 3.0 specification generation (`/api/v1/developer/openapi.json`) and interactive documentation catalog.
   - [x] Scoped API key generator (`ink_live_...`, `ink_test_...`) with revocation.
   - [x] Webhook event dispatch simulator for external integrations.
-- [x] **Phase 9: Quality, Security & Production Readiness**
-  - [x] 32 automated unit and integration tests passing with 0 failures across all domains.
+- [x] **Phase 9: Quality, Security & Production Readiness (historical checklist; not a readiness certification)**
+  - [x] 168 automated tests reported in an earlier run; current 2026-10-28 run is 171 (DB 3, shared 12, agent 8, server 148).
+  - [ ] Linting is not configured as a working project check.
   - [x] Zero external native C++ dependency requirements (`node:sqlite` DatabaseSync used throughout).
   - [x] Vite production build generated for web frontend.
   - [x] Cross-tenant isolation and hardware retry prevention verified.

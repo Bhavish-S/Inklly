@@ -59,7 +59,7 @@ describe('Milestone 1 Challenger Adversarial Stress Suite', { concurrency: false
     });
     assert.equal(reg1Res.status, 201, 'Tenant 1 registration failed');
     const reg1Data = await reg1Res.json();
-    assert.equal(reg1Data.registrationComplete, false);
+    assert.equal(reg1Data.registrationComplete, true);
     tenant1ShopId = reg1Data.shopId;
 
     // Activate tenant 1 subscription via platform admin
@@ -157,7 +157,7 @@ describe('Milestone 1 Challenger Adversarial Stress Suite', { concurrency: false
     });
     assert.equal(reg2Res.status, 201, 'Tenant 2 registration failed');
     const reg2Data = await reg2Res.json();
-    assert.equal(reg2Data.registrationComplete, false);
+    assert.equal(reg2Data.registrationComplete, true);
     tenant2ShopId = reg2Data.shopId;
 
     // Activate tenant 2 subscription via platform admin

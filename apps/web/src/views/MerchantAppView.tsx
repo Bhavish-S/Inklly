@@ -85,7 +85,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   >('dashboard');
 
   // Business Setup tab state
-    const [selectedMerchantId, setSelectedMerchantId] = useState<string>('merchant-growth-monthly');
   const [merchantMenuOpen, setMerchantMenuOpen] = useState<boolean>(false);
   const [activeBranch, setActiveBranch] = useState<string>('Central Library Branch');
 
@@ -274,11 +273,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     setGlobalToast(`Downloading Inklly Agent for ${platform}...`);
   };
 
-  const handleSwitchMerchant = (merchantId: string) => {
-    setSelectedMerchantId(merchantId);
-    setMerchantMenuOpen(false);
-  };
-
   const [setupTab, setSetupTab] = useState<
     'profile' | 'printers' | 'pricing' | 'discounts' | 'portal' | 'automation'
   >('profile');
@@ -306,8 +300,8 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [selectedDefaultPrinter, setSelectedDefaultPrinter] = useState<string>('');
   const [selectedPaperTray, setSelectedPaperTray] = useState<string>('Auto-Select');
   const [showAddPrinterModal, setShowAddPrinterModal] = useState<boolean>(false);
+  const [savingPrinter, setSavingPrinter] = useState<boolean>(false);
   const [newPrinterName, setNewPrinterName] = useState<string>('');
-  const [newPrinterPort, setNewPrinterPort] = useState<string>('USB002');
   const [newPrinterColor, setNewPrinterColor] = useState<boolean>(true);
   const [newPrinterDuplex, setNewPrinterDuplex] = useState<boolean>(true);
 
@@ -327,23 +321,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
 
   // Upgrade Plan Modal State
   const [upgradeModalOpen, setUpgradeModalOpen] = useState<boolean>(false);
-  const [currentPlan, setCurrentPlan] = useState<string>('Starter Plan');
-  const [selectedPlanTier, setSelectedPlanTier] = useState<'starter' | 'growth' | 'pro' | 'scale'>('growth');
-  const [billingCycleUpgrade, setBillingCycleUpgrade] = useState<'monthly' | 'yearly' | 'lifetime'>('monthly');
-  const [billingName, setBillingName] = useState<string>('Printing Shopz');
-  const [billingEmail, setBillingEmail] = useState<string>('owner@printingshopz.in');
-  const [billingMobile, setBillingMobile] = useState<string>('+91 98765 43210');
-  const [billingAddress, setBillingAddress] = useState<string>('Shop 4, Ground Floor, Academic Complex');
-  const [billingCity, setBillingCity] = useState<string>('Pune');
-  const [billingState, setBillingState] = useState<string>('Maharashtra');
-  const [billingPincode, setBillingPincode] = useState<string>('411007');
-  const [billingGstin, setBillingGstin] = useState<string>('27AABCU9603R1ZM');
-  const [selectedAddons, setSelectedAddons] = useState<{ [key: string]: boolean }>({
-    extraPrinter: false,
-    extraWhatsapp: false,
-    creditPack: false,
-  });
-  const [upgradeProcessing, setUpgradeProcessing] = useState<boolean>(false);
 
   // Global toast
   const [showOfflineToast, setShowOfflineToast] = useState<boolean>(true);
@@ -723,35 +700,9 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     }
   };
 
-  // Plan Upgrade Calculation Helpers
-  const getBasePlanPrice = () => {
-    if (billingCycleUpgrade === 'lifetime') {
-      if (selectedPlanTier === 'starter') return 999;
-      if (selectedPlanTier === 'growth') return 1999;
-      if (selectedPlanTier === 'pro') return 4999;
-      return 8999;
-    }
-    if (selectedPlanTier === 'starter') return billingCycleUpgrade === 'monthly' ? 99 : 79;
-    if (selectedPlanTier === 'growth') return billingCycleUpgrade === 'monthly' ? 199 : 159;
-    if (selectedPlanTier === 'pro') return billingCycleUpgrade === 'monthly' ? 499 : 399;
-    return billingCycleUpgrade === 'monthly' ? 899 : 719;
-  };
-
-  const getAddonTotal = () => {
-    let total = 0;
-    if (selectedAddons.extraWhatsapp) total += 99;
-    if (selectedAddons.extraPrinter) total += 49;
-    if (selectedAddons.creditPack) total += 50;
-    return total;
-  };
-
-  const totalUpgradeSubtotal = getBasePlanPrice() + getAddonTotal();
-  const upgradeGst = Math.round(totalUpgradeSubtotal * 0.18);
-  const totalDueToday = totalUpgradeSubtotal + upgradeGst;
-
   const handleConfirmUpgrade = () => {
     setUpgradeModalOpen(false);
-    if (onNavigate) onNavigate('/pricing');
+    if (onNavigate) onNavigate('/contact');
     else setSaveSuccessToast('Pilot pricing is configured directly with Inklly. Visit Contact to discuss your shop.');
   };
 
@@ -1077,21 +1028,65 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   };
 
   // Hardware Printer Probing & Control Handlers
-  const handleRefreshPrinters = async () => {
+  const handleRefreshPrinters = async (showResult = true): Promise<boolean> => {
     setDetectingPrinters(true);
     try {
       const result = await api.getPrinters();
       if (!Array.isArray(result)) throw new Error(result?.error || 'Printer list is unavailable.');
-      const livePrinters = result;
+      const livePrinters = result.map((printer: any) => ({
+        ...printer,
+        driver: printer.systemDriverName || printer.driver || 'Driver not reported',
+        port: printer.port || 'Registered with shop',
+        status: printer.isOnline ? 'Ready' : 'Offline',
+        isPhysical: printer.isPhysical ?? true,
+        tray: printer.trays?.[0]?.name || 'Auto-Select',
+      }));
       setDetectedPrinters(livePrinters);
       setAgentConnected(livePrinters.some((printer: any) => printer.isOnline));
       setSelectedDefaultPrinter(livePrinters.find((printer: any) => printer.isDefault)?.name || '');
-      triggerSaveNotification(livePrinters.length ? `Loaded ${livePrinters.length} printer(s) registered with this shop.` : 'No printers are registered yet. Pair the desktop agent to discover local printers.');
+      if (showResult) {
+        triggerSaveNotification(livePrinters.length ? `Loaded ${livePrinters.length} printer(s) registered with this shop.` : 'No printers are registered yet. Pair the desktop agent to discover local printers.');
+      }
+      return true;
     } catch (error) {
       setAgentConnected(false);
-      triggerSaveNotification(error instanceof Error ? error.message : 'Could not load printers from the server.');
+      if (showResult) triggerSaveNotification(error instanceof Error ? error.message : 'Could not load printers from the server.');
+      return false;
     } finally {
       setDetectingPrinters(false);
+    }
+  };
+
+  const handleSavePrinter = async () => {
+    if (savingPrinter) return;
+    if (!newPrinterName.trim()) {
+      triggerSaveNotification('⚠️ Please enter a valid printer name');
+      return;
+    }
+
+    const printerName = newPrinterName.trim();
+    setSavingPrinter(true);
+    try {
+      await api.addPrinter({
+        name: printerName,
+        systemDriverName: `${printerName} Driver`,
+        supportsColor: newPrinterColor,
+        supportsDuplex: newPrinterDuplex,
+        trays: [{ name: 'Tray 1 (A4 Plain)', supportedSizes: ['A4', 'PLAIN'], isDefault: true }],
+      });
+
+      setShowAddPrinterModal(false);
+      setNewPrinterName('');
+      const refreshed = await handleRefreshPrinters(false);
+      triggerSaveNotification(
+        refreshed
+          ? `✓ Printer ${printerName} saved. Pair a desktop agent to report its connection status.`
+          : `Printer ${printerName} was saved, but the printer list could not be refreshed. Use Refresh detected printers to reload it.`,
+      );
+    } catch (error) {
+      triggerSaveNotification(error instanceof Error ? error.message : 'Could not save printer. Please try again.');
+    } finally {
+      setSavingPrinter(false);
     }
   };
 
@@ -1475,7 +1470,7 @@ start "Inklly Agent" "InkllyAgent.exe"
                 {currentMerchant.name}
               </span>
               <span className="px-1.5 py-0.5 rounded-md text-[10px] font-black bg-indigo-600 text-white uppercase shrink-0">
-                {currentMerchant.planBadge || 'STARTER · ₹99/mo'}
+                {currentMerchant.planBadge || 'Pilot pricing'}
               </span>
             </div>
 
@@ -2894,19 +2889,19 @@ start "Inklly Agent" "InkllyAgent.exe"
                   <span className="text-xl">🔒</span>
                   <div>
                     <span className="font-bold text-amber-900 dark:text-amber-200 block">
-                      Dedicated WhatsApp Bot is Locked on Starter Plan (₹99/mo)
+                      WhatsApp automation is not available in the pilot yet
                     </span>
                     <span className="text-amber-700 dark:text-amber-300 text-[11px]">
-                      Automated student document intake over WhatsApp is included in <strong>Growth (₹199/mo)</strong> and <strong>Pro (₹499/mo)</strong>.
+                      Meta messaging is not connected, so customer intake through WhatsApp is unavailable. Ask Inklly about pilot access.
                     </span>
                   </div>
                 </div>
                 <button
                   type="button"
-                  onClick={() => handleSwitchMerchant('merchant-growth-monthly')}
+                  onClick={() => setUpgradeModalOpen(true)}
                   className="px-3.5 py-1.5 bg-[#4D64E6] hover:bg-[#3F54D1] text-white font-bold rounded-xl shadow-xs transition-all cursor-pointer shrink-0"
                 >
-                  ⚡ Upgrade to Growth (₹199/mo)
+                  Contact Inklly
                 </button>
               </div>
             )}
@@ -3861,16 +3856,16 @@ start "Inklly Agent" "InkllyAgent.exe"
               Shift Cash Reconciliation is Locked on {currentMerchant.planBadge}
             </span>
             <span className="text-purple-700 dark:text-purple-300 text-[11px]">
-              Daily register z-reports, opening/closing drawer balancing, and staff cash audit tools are included in <strong>Pro (₹499/mo)</strong> and <strong>Scale (₹899/mo)</strong>.
+              Cash-shift reconciliation is not included in the current pilot workspace. Contact Inklly to discuss availability.
             </span>
           </div>
         </div>
         <button
           type="button"
-          onClick={() => handleSwitchMerchant('merchant-pro-monthly')}
+          onClick={() => setUpgradeModalOpen(true)}
           className="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl shadow-xs transition-all cursor-pointer shrink-0"
         >
-          ⚡ Upgrade to Pro (₹499/mo)
+          Contact Inklly
         </button>
       </div>
     )}
@@ -5221,7 +5216,7 @@ start "Inklly Agent" "InkllyAgent.exe"
                         ) : (
                           <button
                             type="button"
-                            onClick={handleRefreshPrinters}
+                            onClick={() => void handleRefreshPrinters()}
                             className="text-[11px] text-blue-600 dark:text-blue-400 underline font-bold cursor-pointer hover:text-blue-700"
                           >
                             Refresh detected printers
@@ -5337,7 +5332,7 @@ start "Inklly Agent" "InkllyAgent.exe"
                       </button>
                       <button
                         type="button"
-                        onClick={handleRefreshPrinters}
+                        onClick={() => void handleRefreshPrinters()}
                         className="px-4 py-2 border rounded-xl text-xs font-bold bg-white dark:bg-gray-800 hover:bg-gray-50 flex items-center gap-1.5 cursor-pointer shadow-xs transition-all"
                       >
                         <span>🔄</span> Refresh Printer List
@@ -6449,16 +6444,16 @@ start "Inklly Agent" "InkllyAgent.exe"
               Custom Store Branding is Locked on {currentMerchant.planBadge}
             </span>
             <span className="text-purple-700 dark:text-purple-300 text-[11px]">
-              Replacing standard Inklly branding with your custom shop logo, brand colors, and tailored standees is included in <strong>Pro (₹499/mo)</strong> and <strong>Scale (₹899/mo)</strong>.
+              Custom shop branding is not available in the current pilot workspace. Contact Inklly to discuss availability.
             </span>
           </div>
         </div>
         <button
           type="button"
-          onClick={() => handleSwitchMerchant('merchant-pro-monthly')}
+          onClick={() => setUpgradeModalOpen(true)}
           className="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl shadow-xs transition-all cursor-pointer shrink-0"
         >
-          ⚡ Upgrade to Pro (₹499/mo)
+          Contact Inklly
         </button>
       </div>
     )}
@@ -6604,13 +6599,13 @@ start "Inklly Agent" "InkllyAgent.exe"
             <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between bg-gray-50/50 dark:bg-gray-900/40">
               <div>
                 <span className="text-[10px] font-bold uppercase tracking-wider text-[#4D64E6] block">
-                  PLANS BUILT FOR PROFITABLE PRINTING
+                  INKLLY PILOT
                 </span>
                 <h3 className="text-xl font-extrabold text-gray-900 dark:text-white">
-                  Choose your Inklly plan
+                  Discuss pilot pricing
                 </h3>
                 <p className="text-xs text-gray-400 mt-0.5">
-                  WhatsApp service conversations started by customers are not charged by Inklly. Paid Meta templates, if ever used, remain separate.
+                  Subscription checkout and usage charges are not enabled for the pilot account.
                 </p>
               </div>
               <div className="flex items-center gap-4">
@@ -6632,274 +6627,11 @@ start "Inklly Agent" "InkllyAgent.exe"
 
             {/* Scrollable Body */}
             <div className="p-6 overflow-y-auto space-y-6 text-xs">
-              {/* Billing Interval Pill Switcher */}
-              <div className="flex items-center justify-center">
-                <div className="bg-gray-100 dark:bg-gray-800 p-1 rounded-2xl flex items-center gap-1 border border-gray-200 dark:border-gray-700">
-                  <button
-                    type="button"
-                    onClick={() => setBillingCycleUpgrade('monthly')}
-                    className={`px-5 py-2 rounded-xl font-bold transition-all ${
-                      billingCycleUpgrade === 'monthly'
-                        ? 'bg-[#4D64E6] text-white shadow-xs'
-                        : 'text-gray-500 hover:text-gray-900 dark:hover:text-white'
-                    }`}
-                  >
-                    Monthly
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setBillingCycleUpgrade('yearly')}
-                    className={`px-5 py-2 rounded-xl font-bold transition-all flex items-center gap-1.5 ${
-                      billingCycleUpgrade === 'yearly'
-                        ? 'bg-[#4D64E6] text-white shadow-xs'
-                        : 'text-gray-500 hover:text-gray-900 dark:hover:text-white'
-                    }`}
-                  >
-                    <span>Yearly · save</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setBillingCycleUpgrade('lifetime')}
-                    className={`px-5 py-2 rounded-xl font-bold transition-all flex items-center gap-1.5 ${
-                      billingCycleUpgrade === 'lifetime'
-                        ? 'bg-[#4D64E6] text-white shadow-xs'
-                        : 'text-gray-500 hover:text-gray-900 dark:hover:text-white'
-                    }`}
-                  >
-                    <span>Lifetime · 90% off</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* 4 Plan Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-stretch">
-                {/* 1. Starter */}
-                <div className="border border-emerald-300 dark:border-emerald-700 rounded-3xl p-5 bg-white dark:bg-gray-800 flex flex-col justify-between shadow-xs relative">
-                  <div>
-                    <span className="inline-block px-2.5 py-0.5 rounded-full text-[9px] font-extrabold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 uppercase mb-2">
-                      CURRENT PLAN
-                    </span>
-                    <h4 className="text-base font-black text-gray-900 dark:text-white">Starter</h4>
-                    <p className="text-[11px] text-gray-400 mt-1 leading-snug">
-                      QR and WhatsApp portal for a small single-printer shop.
-                    </p>
-
-                    <div className="my-3 flex items-baseline gap-1">
-                      <span className="text-2xl font-black text-gray-900 dark:text-white">
-                        {billingCycleUpgrade === 'monthly' ? '₹99' : billingCycleUpgrade === 'yearly' ? '₹79' : '₹999'}
-                      </span>
-                      <span className="text-gray-400 text-[10px]">
-                        {billingCycleUpgrade === 'lifetime' ? 'one-time' : '/month'}
-                      </span>
-                    </div>
-
-                    <div className="space-y-1.5 text-[11px] text-gray-600 dark:text-gray-300 border-t border-gray-100 dark:border-gray-700 pt-3">
-                      <div>✓ 25 orders/day</div>
-                      <div>✓ 300 orders/month</div>
-                      <div>✓ 600 files/month</div>
-                      <div>✓ 10 MB/file</div>
-                      <div>✓ 1 WhatsApp accounts</div>
-                      <div>✓ 1 printers</div>
-                      <div>✓ 1 dashboard users</div>
-                      <div>✓ 50 conversions</div>
-                      <div>✓ 25 editor exports</div>
-                      <div>✓ 100 scanner pages</div>
-                      <div>✓ 30 days analytics</div>
-                      <div>✓ Manual print release</div>
-                      <div>✓ QR + WhatsApp portals</div>
-                      <div className="text-gray-400">✓ CSV export not included</div>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    className="w-full py-2.5 mt-5 bg-emerald-600 text-white rounded-xl font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-sm"
-                  >
-                    <span>⚡</span> Active now
-                  </button>
-                </div>
-
-                {/* 2. Growth */}
-                <div className="border-2 border-indigo-400 dark:border-indigo-600 rounded-3xl p-5 bg-indigo-50/20 dark:bg-indigo-950/20 flex flex-col justify-between shadow-md relative">
-                  <div>
-                    <span className="inline-block px-2.5 py-0.5 rounded-full text-[9px] font-extrabold bg-indigo-600 text-white uppercase mb-2">
-                      MOST POPULAR
-                    </span>
-                    <h4 className="text-base font-black text-gray-900 dark:text-white">Growth</h4>
-                    <p className="text-[11px] text-gray-400 mt-1 leading-snug">
-                      Payment-triggered automation for growing shops.
-                    </p>
-
-                    <div className="my-3 flex items-baseline gap-1">
-                      <span className="text-2xl font-black text-gray-900 dark:text-white">
-                        {billingCycleUpgrade === 'monthly' ? '₹199' : billingCycleUpgrade === 'yearly' ? '₹159' : '₹1,999'}
-                      </span>
-                      <span className="text-gray-400 text-[10px]">
-                        {billingCycleUpgrade === 'lifetime' ? 'one-time' : '/month'}
-                      </span>
-                    </div>
-
-                    <div className="space-y-1.5 text-[11px] text-gray-600 dark:text-gray-300 border-t border-gray-100 dark:border-gray-700 pt-3">
-                      <div>✓ 100 orders/day</div>
-                      <div>✓ 1,500 orders/month</div>
-                      <div>✓ 3,000 files/month</div>
-                      <div>✓ 25 MB/file</div>
-                      <div>✓ 1 WhatsApp accounts</div>
-                      <div>✓ 2 printers</div>
-                      <div>✓ 2 dashboard users</div>
-                      <div>✓ 500 conversions</div>
-                      <div>✓ 250 editor exports</div>
-                      <div>✓ 1,000 scanner pages</div>
-                      <div>✓ 90 days analytics</div>
-                      <div>✓ Payment-received auto print</div>
-                      <div>✓ QR + WhatsApp portals</div>
-                      <div>✓ CSV export</div>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedPlanTier('growth');
-                      handleConfirmUpgrade();
-                    }}
-                    className="w-full py-2.5 mt-5 bg-[#4F46E5] hover:bg-[#4338CA] text-white rounded-xl font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all"
-                  >
-                    <span>⚡</span> Upgrade plan
-                  </button>
-                </div>
-
-                {/* 3. Pro */}
-                <div className="border border-gray-200 dark:border-gray-700 rounded-3xl p-5 bg-white dark:bg-gray-800 flex flex-col justify-between shadow-xs">
-                  <div>
-                    <span className="inline-block px-2.5 py-0.5 rounded-full text-[9px] font-extrabold bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300 uppercase mb-2">
-                      PRO
-                    </span>
-                    <h4 className="text-base font-black text-gray-900 dark:text-white">Pro</h4>
-                    <p className="text-[11px] text-gray-400 mt-1 leading-snug">
-                      Full automatic printing with multiple printers and staff.
-                    </p>
-
-                    <div className="my-3 flex items-baseline gap-1">
-                      <span className="text-2xl font-black text-gray-900 dark:text-white">
-                        {billingCycleUpgrade === 'monthly' ? '₹499' : billingCycleUpgrade === 'yearly' ? '₹399' : '₹4,999'}
-                      </span>
-                      <span className="text-gray-400 text-[10px]">
-                        {billingCycleUpgrade === 'lifetime' ? 'one-time' : '/month'}
-                      </span>
-                    </div>
-
-                    <div className="space-y-1.5 text-[11px] text-gray-600 dark:text-gray-300 border-t border-gray-100 dark:border-gray-700 pt-3">
-                      <div>✓ 300 orders/day</div>
-                      <div>✓ 6,000 orders/month</div>
-                      <div>✓ 12,000 files/month</div>
-                      <div>✓ 50 MB/file</div>
-                      <div>✓ 2 WhatsApp accounts</div>
-                      <div>✓ 5 printers</div>
-                      <div>✓ 5 dashboard users</div>
-                      <div>✓ 2,500 conversions</div>
-                      <div>✓ 1,500 editor exports</div>
-                      <div>✓ 5,000 scanner pages</div>
-                      <div>✓ 365 days analytics</div>
-                      <div>✓ All-document auto print</div>
-                      <div>✓ QR + WhatsApp portals</div>
-                      <div>✓ CSV export</div>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedPlanTier('pro');
-                      handleConfirmUpgrade();
-                    }}
-                    className="w-full py-2.5 mt-5 bg-[#4F46E5] hover:bg-[#4338CA] text-white rounded-xl font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all"
-                  >
-                    <span>⚡</span> Upgrade plan
-                  </button>
-                </div>
-
-                {/* 4. Scale */}
-                <div className="border border-gray-200 dark:border-gray-700 rounded-3xl p-5 bg-white dark:bg-gray-800 flex flex-col justify-between shadow-xs">
-                  <div>
-                    <span className="inline-block px-2.5 py-0.5 rounded-full text-[9px] font-extrabold bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300 uppercase mb-2">
-                      ENTERPRISE
-                    </span>
-                    <h4 className="text-base font-black text-gray-900 dark:text-white">Scale</h4>
-                    <p className="text-[11px] text-gray-400 mt-1 leading-snug">
-                      High-volume automation for busy shops and branches.
-                    </p>
-
-                    <div className="my-3 flex items-baseline gap-1">
-                      <span className="text-2xl font-black text-gray-900 dark:text-white">
-                        {billingCycleUpgrade === 'monthly' ? '₹899' : billingCycleUpgrade === 'yearly' ? '₹719' : '₹8,999'}
-                      </span>
-                      <span className="text-gray-400 text-[10px]">
-                        {billingCycleUpgrade === 'lifetime' ? 'one-time' : '/month'}
-                      </span>
-                    </div>
-
-                    <div className="space-y-1.5 text-[11px] text-gray-600 dark:text-gray-300 border-t border-gray-100 dark:border-gray-700 pt-3">
-                      <div>✓ 2,500 orders/day</div>
-                      <div>✓ 50,000 orders/month</div>
-                      <div>✓ 100,000 files/month</div>
-                      <div>✓ 100 MB/file</div>
-                      <div>✓ 5 WhatsApp accounts</div>
-                      <div>✓ 10 printers</div>
-                      <div>✓ 10 dashboard users</div>
-                      <div>✓ 20,000 conversions</div>
-                      <div>✓ 10,000 editor exports</div>
-                      <div>✓ 25,000 scanner pages</div>
-                      <div>✓ 730 days analytics</div>
-                      <div>✓ All-document auto print</div>
-                      <div>✓ QR + WhatsApp portals</div>
-                      <div>✓ CSV export</div>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedPlanTier('scale');
-                      handleConfirmUpgrade();
-                    }}
-                    className="w-full py-2.5 mt-5 bg-[#4F46E5] hover:bg-[#4338CA] text-white rounded-xl font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all"
-                  >
-                    <span>⚡</span> Upgrade plan
-                  </button>
-                </div>
-              </div>
-
-              {/* Status Box */}
-              <div className="p-4 border rounded-2xl bg-gray-50/50 dark:bg-gray-800/40 text-xs">
-                <div className="font-extrabold text-gray-800 dark:text-gray-200">Automatic renewal cancelled</div>
-                <div className="text-[11px] text-gray-400">Access remains available until the paid period ends.</div>
-              </div>
-
-              {/* Add-ons (INR) Card */}
-              <div className="border border-gray-200 dark:border-gray-700 rounded-3xl p-6 bg-white dark:bg-gray-800 space-y-4">
-                <h4 className="text-sm font-extrabold text-center text-gray-900 dark:text-white">
-                  Add-ons (INR)
-                </h4>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 text-xs">
-                  {[
-                    'Additional printer · ₹99.00/month',
-                    'Additional WhatsApp account · ₹199.00/month',
-                    '1,000 additional files · ₹99.00/month',
-                    '1,000 conversion credits · ₹299.00/month',
-                    '1,000 editor exports · ₹299.00/month',
-                    '1,000 scanner pages · ₹299.00/month',
-                  ].map((addon) => (
-                    <div key={addon} className="p-3 border rounded-xl bg-gray-50 dark:bg-gray-900 text-center font-medium text-gray-700 dark:text-gray-300">
-                      {addon}
-                    </div>
-                  ))}
-                </div>
-
-                <p className="text-[10px] text-gray-400 text-center leading-relaxed pt-2">
-                  Employee access adds separate dashboard logins under one business. Employees with Printer setup permission use their own agent credentials and connected printers; the owner's setup remains unchanged. Shop QR, pricing and business settings stay shared. Dashboard-user capacity includes the owner; printer connections remain subject to their separate plan/add-on limit.
-                </p>
+              <div className="max-w-2xl mx-auto rounded-2xl border border-indigo-100 dark:border-indigo-900 bg-indigo-50/70 dark:bg-indigo-950/30 p-6 space-y-3">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-300">Pilot billing</p>
+                <h4 className="text-lg font-extrabold text-slate-900 dark:text-white">Plan and usage rates are configured with Inklly</h4>
+                <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">The pilot uses a monthly subscription plus a configurable fee per successfully printed side. Subscription checkout and printed-side billing are not active here, so this screen will not start a payment or change your plan.</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">No charge will be made from this page. Contact Inklly to confirm your pilot terms.</p>
               </div>
             </div>
 
@@ -6914,15 +6646,10 @@ start "Inklly Agent" "InkllyAgent.exe"
               </button>
               <button
                 type="button"
-                disabled={upgradeProcessing}
                 onClick={handleConfirmUpgrade}
-                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#4D64E6] to-[#4338CA] hover:from-[#3F54D1] hover:to-[#3730A3] text-white font-bold text-xs shadow-md transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#4D64E6] to-[#4338CA] hover:from-[#3F54D1] hover:to-[#3730A3] text-white font-bold text-xs shadow-md transition-all flex items-center gap-2 cursor-pointer"
               >
-                {upgradeProcessing ? (
-                  <span>Authorizing AutoPay Mandate...</span>
-                ) : (
-                  <span>Authorize via Razorpay AutoPay →</span>
-                )}
+                <span>Discuss pilot pricing →</span>
               </button>
             </div>
           </div>
@@ -7025,7 +6752,7 @@ start "Inklly Agent" "InkllyAgent.exe"
             <div className="flex justify-between items-center border-b pb-3">
               <h3 className="font-extrabold text-sm text-[#172031] dark:text-white flex items-center gap-2">
                 <span>🖨</span>
-                <span>Add Detected or Network Printer</span>
+                <span>Register Printer</span>
               </h3>
               <button
                 type="button"
@@ -7048,19 +6775,9 @@ start "Inklly Agent" "InkllyAgent.exe"
                 />
               </div>
 
-              <div>
-                <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">Port / Connection</label>
-                <select
-                  value={newPrinterPort}
-                  onChange={(e) => setNewPrinterPort(e.target.value)}
-                  className="w-full px-3 py-2 border rounded-xl bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 font-medium"
-                >
-                  <option value="USB001">USB001 (Local USB Spooler)</option>
-                  <option value="USB002">USB002 (Local USB Spooler)</option>
-                  <option value="TCP_IP">TCP/IP Network Port (192.168.1.150)</option>
-                  <option value="PORTPROMPT">PORTPROMPT: (Virtual Spooler)</option>
-                </select>
-              </div>
+              <p className="rounded-xl bg-amber-50 dark:bg-amber-950/30 p-3 text-[11px] leading-5 text-amber-800 dark:text-amber-200">
+                This saves the printer profile for your shop. It does not connect a hardware port or confirm that the printer is online; pair a desktop agent for connection reporting.
+              </p>
 
               <div className="grid grid-cols-2 gap-3 pt-1">
                 <label className="flex items-center gap-2 p-3 border rounded-xl bg-gray-50 dark:bg-gray-900 cursor-pointer">
@@ -7094,30 +6811,11 @@ start "Inklly Agent" "InkllyAgent.exe"
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  if (!newPrinterName.trim()) {
-                    triggerSaveNotification('⚠️ Please enter a valid printer name');
-                    return;
-                  }
-                  const newDevice = {
-                    name: newPrinterName.trim(),
-                    driver: newPrinterName.trim() + ' Driver',
-                    port: newPrinterPort,
-                    status: 'Ready' as const,
-                    isDefault: false,
-                    isPhysical: !newPrinterPort.includes('PROMPT'),
-                    supportsColor: newPrinterColor,
-                    supportsDuplex: newPrinterDuplex,
-                    tray: 'Auto-Select (Tray 1: A4 Standard)',
-                  };
-                  setDetectedPrinters((prev) => [...prev, newDevice]);
-                  setShowAddPrinterModal(false);
-                  setNewPrinterName('');
-                  triggerSaveNotification(`✓ Printer ${newDevice.name} registered and ready for spooling!`);
-                }}
-                className="px-5 py-2 bg-[#4D64E6] hover:bg-[#3D52D5] text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer"
+                disabled={savingPrinter}
+                onClick={() => void handleSavePrinter()}
+                className="px-5 py-2 bg-[#4D64E6] hover:bg-[#3D52D5] text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer disabled:opacity-60 disabled:cursor-wait"
               >
-                Save Printer
+                {savingPrinter ? 'Saving…' : 'Save Printer'}
               </button>
             </div>
           </div>

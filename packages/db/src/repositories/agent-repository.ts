@@ -34,6 +34,8 @@ export interface WebhookSubscriptionRecord {
   updatedAt: string;
 }
 
+const DISPATCH_ACK_LEASE_MS = 2 * 60 * 1000;
+
 export class AgentRepository {
   constructor(private db: DatabaseService) {}
 
@@ -131,61 +133,107 @@ export class AgentRepository {
   }
 
   public getPendingPrintTickets(shopId: string, agentId: string): PrintCommandTicket[] {
-    // Only RECEIVED jobs can be claimed. The conditional update below arbitrates concurrent polls.
-    const rows = this.db.query<any>(
-      `SELECT pj.id as job_id, pj.order_id, pj.order_file_id, pj.printer_id, of.id as file_id,
-              of.file_name, of.storage_key, of.print_options,
-              p.id as target_printer_id
-       FROM print_jobs pj
-       JOIN orders o ON pj.order_id = o.id
-       JOIN order_files of ON pj.order_file_id = of.id
-       LEFT JOIN printers p ON pj.printer_id = p.id
-       WHERE o.shop_id = ? AND pj.status = 'RECEIVED'
-       ORDER BY pj.created_at ASC`,
-      [shopId]
-    );
-
-    return this.db.transaction(() => rows.flatMap((r): PrintCommandTicket[] => {
-      const claimed = this.db.queryOne<any>(
-        `UPDATE print_jobs SET status = 'DISPATCHED', updated_at = ? WHERE id = ? AND status = 'RECEIVED' RETURNING id`,
-        [new Date().toISOString(), r.job_id]
+    return this.db.transaction(() => {
+      const now = new Date();
+      const nowIso = now.toISOString();
+      const leaseCutoff = new Date(now.getTime() - DISPATCH_ACK_LEASE_MS).toISOString();
+      const expired = this.db.query<any>(
+        `SELECT pa.id AS attempt_id, pj.id AS job_id
+         FROM print_attempts pa JOIN print_jobs pj ON pj.id = pa.print_job_id
+         JOIN orders o ON o.id = pj.order_id
+         WHERE o.shop_id = ? AND pa.agent_id = ? AND pj.status = 'DISPATCHED'
+           AND pa.status = 'DISPATCHED_TO_AGENT' AND pa.dispatch_acknowledged_at IS NULL
+           AND pa.created_at <= ?`,
+        [shopId, agentId, leaseCutoff]
       );
-      if (!claimed) return [];
+      for (const row of expired) {
+        const expiredAttempt = this.db.queryOne<any>(
+          `UPDATE print_attempts SET status = 'OUTPUT_UNCERTAIN', error_details = ?, updated_at = ?
+           WHERE id = ? AND status = 'DISPATCHED_TO_AGENT' AND dispatch_acknowledged_at IS NULL RETURNING id`,
+          ['Agent did not acknowledge command delivery before the dispatch lease expired; physical output is unknown.', nowIso, row.attempt_id]
+        );
+        if (expiredAttempt) {
+          this.db.execute(`UPDATE print_jobs SET status = 'OUTPUT_UNCERTAIN', updated_at = ? WHERE id = ? AND status = 'DISPATCHED'`, [nowIso, row.job_id]);
+        }
+      }
 
-      const attemptId = `att-${crypto.randomUUID()}`;
-      const commandId = `cmd-${crypto.randomUUID()}`;
+      const rows = this.db.query<any>(
+        `SELECT pj.id AS job_id, pj.order_id, pj.printer_id, pj.status AS job_status,
+                of.id AS file_id, of.file_name, of.storage_key, of.print_options,
+                p.id AS target_printer_id, pa.id AS existing_attempt_id,
+                pa.created_at AS existing_attempt_created_at
+         FROM print_jobs pj
+         JOIN orders o ON pj.order_id = o.id
+         JOIN order_files of ON pj.order_file_id = of.id
+         LEFT JOIN printers p ON pj.printer_id = p.id
+         LEFT JOIN print_attempts pa ON pa.id = (
+           SELECT pa2.id FROM print_attempts pa2 WHERE pa2.print_job_id = pj.id ORDER BY pa2.created_at DESC LIMIT 1
+         )
+         WHERE o.shop_id = ? AND (
+           pj.status = 'RECEIVED' OR
+           (pj.status = 'DISPATCHED' AND pa.status = 'DISPATCHED_TO_AGENT'
+             AND pa.agent_id = ? AND pa.dispatch_acknowledged_at IS NULL AND pa.created_at > ?)
+         )
+         ORDER BY pj.created_at ASC`,
+        [shopId, agentId, leaseCutoff]
+      );
 
-      // Insert print attempt
-      this.db.execute(
-        `INSERT INTO print_attempts (id, print_job_id, printer_id, agent_id, attempt_number, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 1, 'DISPATCHED_TO_AGENT', ?, ?)`,
-        [
+      return rows.flatMap((r): PrintCommandTicket[] => {
+        let attemptId = r.existing_attempt_id as string | null;
+        if (r.job_status === 'RECEIVED') {
+          const claimed = this.db.queryOne<any>(
+            `UPDATE print_jobs SET status = 'DISPATCHED', updated_at = ? WHERE id = ? AND status = 'RECEIVED' RETURNING id`,
+            [nowIso, r.job_id]
+          );
+          if (!claimed) return [];
+          attemptId = `att-${crypto.randomUUID()}`;
+          this.db.execute(
+            `INSERT INTO print_attempts (id, print_job_id, printer_id, agent_id, attempt_number, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 1, 'DISPATCHED_TO_AGENT', ?, ?)`,
+            [attemptId, r.job_id, r.target_printer_id || 'printer-hp-laserjet', agentId, nowIso, nowIso]
+          );
+        }
+        if (!attemptId) return [];
+
+        const cleanBase = (process.env.SERVER_BASE_URL || process.env.INKLLY_SERVER_URL || 'https://inklly.onrender.com').replace(/\/api\/v1\/?$/, '');
+        return [{
+          commandId: `cmd-${attemptId}`,
+          jobId: r.job_id,
           attemptId,
-          r.job_id,
-          r.target_printer_id || 'printer-hp-laserjet',
-          agentId,
-          new Date().toISOString(),
-          new Date().toISOString(),
-        ]
+          shopId,
+          printerId: r.target_printer_id || 'printer-hp-laserjet',
+          documentUrl: `${cleanBase}/api/v1/agent/files/${encodeURIComponent(r.file_id)}`,
+          storageKey: r.storage_key,
+          fileName: r.file_name,
+          options: JSON.parse(r.print_options),
+          expiresAt: new Date(Date.parse(r.job_status === 'RECEIVED' ? nowIso : r.existing_attempt_created_at) + DISPATCH_ACK_LEASE_MS).toISOString(),
+          correlationId: `corr-${r.order_id}`,
+        }];
+      });
+    });
+  }
+
+  public acknowledgeDispatch(commandId: string, attemptId: string, agentId: string, shopId: string): boolean {
+    if (commandId !== `cmd-${attemptId}`) return false;
+    return this.db.transaction(() => {
+      const attempt = this.db.queryOne<any>(
+        `SELECT pa.status, pa.dispatch_acknowledged_at
+         FROM print_attempts pa JOIN print_jobs pj ON pj.id = pa.print_job_id
+         JOIN orders o ON o.id = pj.order_id
+         WHERE pa.id = ? AND pa.agent_id = ? AND o.shop_id = ?`,
+        [attemptId, agentId, shopId]
       );
-
-      const cleanBase = (process.env.SERVER_BASE_URL || process.env.INKLLY_SERVER_URL || 'https://inklly.onrender.com').replace(/\/api\/v1\/?$/, '');
-      const docUrl = `${cleanBase}/api/v1/agent/files/${encodeURIComponent(r.file_id)}`;
-
-      return [{
-        commandId,
-        jobId: r.job_id,
-        attemptId,
-        shopId,
-        printerId: r.target_printer_id || 'printer-hp-laserjet',
-        documentUrl: docUrl,
-        storageKey: r.storage_key,
-        fileName: r.file_name,
-        options: JSON.parse(r.print_options),
-        expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-        correlationId: `corr-${r.order_id}`,
-      }];
-    }));
+      if (!attempt) return false;
+      if (attempt.dispatch_acknowledged_at) return true;
+      if (attempt.status !== 'DISPATCHED_TO_AGENT') return false;
+      const acknowledged = this.db.queryOne<any>(
+        `UPDATE print_attempts SET dispatch_acknowledged_at = ?, updated_at = ?
+         WHERE id = ? AND agent_id = ? AND status = 'DISPATCHED_TO_AGENT'
+           AND dispatch_acknowledged_at IS NULL AND created_at > ? RETURNING id`,
+        [new Date().toISOString(), new Date().toISOString(), attemptId, agentId, new Date(Date.now() - DISPATCH_ACK_LEASE_MS).toISOString()]
+      );
+      return Boolean(acknowledged);
+    });
   }
 
   public recordCommandResult(result: SpoolerResult, agentId: string, shopId: string): boolean {
@@ -194,7 +242,7 @@ export class AgentRepository {
     if (!['SUBMITTED_TO_SPOOLER', 'PRINT_CONFIRMED', 'OUTPUT_UNCERTAIN', 'FAILED'].includes(result.status)) return false;
     return this.db.transaction(() => {
     const ownedAttempt = this.db.queryOne<any>(
-      `SELECT pa.status AS attempt_status
+      `SELECT pa.status AS attempt_status, pa.dispatch_acknowledged_at
        FROM print_attempts pa
        JOIN print_jobs pj ON pj.id = pa.print_job_id
        JOIN orders o ON o.id = pj.order_id
@@ -202,6 +250,7 @@ export class AgentRepository {
       [result.attemptId, result.jobId, agentId, shopId]
     );
     if (!ownedAttempt) return false;
+    if (!ownedAttempt.dispatch_acknowledged_at) return false;
 
     // Map spooler result to PrintJobStatus
     let nextJobStatus: PrintJobStatus;

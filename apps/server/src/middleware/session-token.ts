@@ -78,6 +78,8 @@ export function verifySessionToken(token: string): SessionTokenPayload | 'expire
     const now = Math.floor(Date.now() / 1000);
     if (
       payload.iss !== ISSUER ||
+      typeof payload.sessionId !== 'string' ||
+      !payload.sessionId ||
       typeof payload.userId !== 'string' ||
       !payload.userId ||
       typeof payload.email !== 'string' ||
@@ -101,4 +103,8 @@ export function verifySessionToken(token: string): SessionTokenPayload | 'expire
   } catch {
     return null;
   }
+}
+
+export function hashSessionToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
 }

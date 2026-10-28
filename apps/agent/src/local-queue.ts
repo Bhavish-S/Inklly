@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { PrintCommandTicket } from '@inklly/shared';
+import { PrintCommandTicket, SpoolerResult } from '@inklly/shared';
 
 export interface QueuedCommand {
   commandId: string;
@@ -11,7 +11,9 @@ export interface QueuedCommand {
   documentUrl: string;
   fileName: string;
   options: any;
-  status: 'PENDING' | 'DISPATCHED_TO_SPOOLER' | 'COMPLETED' | 'OUTPUT_UNCERTAIN' | 'FAILED';
+  expiresAt: string;
+  status: 'PENDING' | 'DISPATCHED_TO_SPOOLER' | 'REPORT_PENDING' | 'COMPLETED' | 'OUTPUT_UNCERTAIN' | 'FAILED';
+  result?: SpoolerResult;
   errorMessage?: string;
   createdAt: string;
   updatedAt: string;
@@ -41,13 +43,22 @@ export class LocalOfflineQueue {
         document_url TEXT NOT NULL,
         file_name TEXT NOT NULL,
         options TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'PENDING',
+        result_json TEXT,
         error_message TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_local_status ON local_commands(status);
     `);
+    const columns = this.db.prepare(`PRAGMA table_info(local_commands)`).all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === 'result_json')) {
+      this.db.exec(`ALTER TABLE local_commands ADD COLUMN result_json TEXT`);
+    }
+    if (!columns.some((column) => column.name === 'expires_at')) {
+      this.db.exec(`ALTER TABLE local_commands ADD COLUMN expires_at TEXT NOT NULL DEFAULT ''`);
+    }
   }
 
   public enqueue(ticket: PrintCommandTicket): boolean {
@@ -57,8 +68,8 @@ export class LocalOfflineQueue {
     const now = new Date().toISOString();
     this.db.prepare(`
       INSERT INTO local_commands (
-        command_id, job_id, attempt_id, printer_id, document_url, file_name, options, status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)
+        command_id, job_id, attempt_id, printer_id, document_url, file_name, options, expires_at, status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)
     `).run(
       ticket.commandId,
       ticket.jobId,
@@ -67,6 +78,7 @@ export class LocalOfflineQueue {
       ticket.documentUrl,
       ticket.fileName,
       JSON.stringify(ticket.options),
+      ticket.expiresAt,
       now,
       now
     );
@@ -84,6 +96,24 @@ export class LocalOfflineQueue {
     this.db.prepare(`
       UPDATE local_commands SET status = ?, error_message = ?, updated_at = ? WHERE command_id = ?
     `).run(status, error || null, now, commandId);
+  }
+
+  public saveResult(commandId: string, result: SpoolerResult): void {
+    this.db.prepare(`UPDATE local_commands SET status = 'REPORT_PENDING', result_json = ?, updated_at = ? WHERE command_id = ?`)
+      .run(JSON.stringify(result), new Date().toISOString(), commandId);
+  }
+
+  public getPendingReports(limit: number = 50): QueuedCommand[] {
+    const rows = this.db.prepare(`SELECT * FROM local_commands WHERE status = 'REPORT_PENDING' ORDER BY updated_at ASC LIMIT ?`).all(limit) as any[];
+    return rows.map(this.mapRow);
+  }
+
+  public completeReport(commandId: string, result: SpoolerResult): void {
+    const status: QueuedCommand['status'] = result.status === 'PRINT_CONFIRMED'
+      ? 'COMPLETED'
+      : result.status === 'OUTPUT_UNCERTAIN' ? 'OUTPUT_UNCERTAIN' : 'FAILED';
+    this.db.prepare(`UPDATE local_commands SET status = ?, error_message = ?, result_json = NULL, updated_at = ? WHERE command_id = ?`)
+      .run(status, result.errorMessage || null, new Date().toISOString(), commandId);
   }
 
   public getQueueDepth(): number {
@@ -113,8 +143,10 @@ export class LocalOfflineQueue {
       documentUrl: r.document_url,
       fileName: r.file_name,
       options: JSON.parse(r.options),
+      expiresAt: r.expires_at || '',
       status: r.status,
       errorMessage: r.error_message || undefined,
+      result: r.result_json ? JSON.parse(r.result_json) as SpoolerResult : undefined,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     };

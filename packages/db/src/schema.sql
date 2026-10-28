@@ -2,6 +2,11 @@
 
 PRAGMA foreign_keys = ON;
 
+CREATE TABLE IF NOT EXISTS inklly_schema_migrations (
+    version INTEGER PRIMARY KEY,
+    applied_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS organizations (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -223,6 +228,7 @@ CREATE TABLE IF NOT EXISTS print_attempts (
     print_job_id TEXT NOT NULL,
     printer_id TEXT NOT NULL,
     agent_id TEXT,
+    dispatch_acknowledged_at TEXT,
     attempt_number INTEGER NOT NULL DEFAULT 1,
     status TEXT NOT NULL DEFAULT 'CREATED',
     error_details TEXT,

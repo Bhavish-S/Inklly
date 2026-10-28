@@ -2,6 +2,7 @@ import { describe, it, before, after } from 'node:test';
 import * as assert from 'node:assert/strict';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import * as fs from 'node:fs';
 import { LocalOfflineQueue } from '../local-queue';
 import { PrinterDiscoveryService } from '../printer-discovery';
 import { SpoolerExecutor } from '../spooler-executor';
@@ -67,6 +68,38 @@ describe('Inklly Desktop Edge Print Agent Test Suite', () => {
     assert.equal(recent[0].status, 'COMPLETED');
   });
 
+  it('persists spool outcomes for retry after the agent restarts', () => {
+    const queuePath = path.join(os.tmpdir(), `inklly-outbox-${Date.now()}-${Math.random()}.db`);
+    const firstQueue = new LocalOfflineQueue(queuePath);
+    const ticket: PrintCommandTicket = {
+      commandId: 'cmd-outbox-restart', jobId: 'job-outbox-restart', attemptId: 'att-outbox-restart',
+      shopId: 'shop-campus-1', printerId: 'printer-hp-laserjet',
+      documentUrl: 'https://storage.inklly.com/uploads/outbox.pdf', fileName: 'outbox.pdf',
+      options: { colorMode: 'bw', duplexMode: 'simplex', paperSize: 'A4', orientation: 'portrait', copies: 1, fitMode: 'fit', pagesPerSheet: 1, collation: true },
+      expiresAt: new Date(Date.now() + 60000).toISOString(), correlationId: 'corr-outbox-restart',
+    };
+    firstQueue.enqueue(ticket);
+    firstQueue.saveResult(ticket.commandId, {
+      attemptId: ticket.attemptId, jobId: ticket.jobId, status: 'FAILED',
+      errorMessage: 'Pilot printing is disabled.', timestamp: new Date().toISOString(),
+    });
+    firstQueue.close();
+
+    const restartedQueue = new LocalOfflineQueue(queuePath);
+    try {
+      const pending = restartedQueue.getPendingReports();
+      assert.equal(pending.length, 1);
+      assert.equal(pending[0].result?.attemptId, ticket.attemptId);
+      assert.equal(pending[0].result?.status, 'FAILED');
+      restartedQueue.completeReport(ticket.commandId, pending[0].result!);
+      assert.equal(restartedQueue.getPendingReports().length, 0);
+      assert.equal(restartedQueue.getRecent(1)[0].status, 'FAILED');
+    } finally {
+      restartedQueue.close();
+      fs.rmSync(queuePath, { force: true });
+    }
+  });
+
   it('Rejects remote agent endpoints over unencrypted HTTP', () => {
     const configManager = new ConfigManager(path.join(os.tmpdir(), `test-agent-url-${Date.now()}.json`));
     assert.throws(() => configManager.update({ serverUrl: 'http://example.com/api/v1' }), /must use HTTPS/i);
@@ -85,7 +118,9 @@ describe('Inklly Desktop Edge Print Agent Test Suite', () => {
     assert.ok(colorPrinter, 'Should find color multi-format printer');
   });
 
-  it('SpoolerExecutor never claims success when the host has no real printing capability', async () => {
+  it('SpoolerExecutor refuses physical printing during the pilot', async () => {
+    const previousPrintMode = process.env.INKLLY_ENABLE_PHYSICAL_PRINTING;
+    process.env.INKLLY_ENABLE_PHYSICAL_PRINTING = 'false';
     const ticket: PrintCommandTicket = {
       commandId: 'cmd-test-2',
       jobId: 'job-2',
@@ -110,8 +145,10 @@ describe('Inklly Desktop Edge Print Agent Test Suite', () => {
 
     const result = await SpoolerExecutor.executeTicket(ticket);
     assert.equal(result.status, 'FAILED');
-    assert.match(result.errorMessage || '', /no print was submitted/i);
+    assert.match(result.errorMessage || '', /physical printing is disabled for this pilot/i);
     assert.equal(result.driverJobId, undefined);
+    if (previousPrintMode === undefined) delete process.env.INKLLY_ENABLE_PHYSICAL_PRINTING;
+    else process.env.INKLLY_ENABLE_PHYSICAL_PRINTING = previousPrintMode;
   });
 
   it('Enforces Safety Invariant: Hardware paper jam triggers OUTPUT_UNCERTAIN without auto-retry', async () => {

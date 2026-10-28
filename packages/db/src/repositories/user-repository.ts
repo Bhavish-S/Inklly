@@ -342,10 +342,26 @@ export class UserRepository {
     }));
   }
 
-  public revokeUserSession(sessionId: string, userId: string) {
+  public createUserSession(session: { id: string; userId: string; tokenHash: string; deviceInfo?: string; ipAddress?: string; expiresAt: string }) {
+    const now = new Date().toISOString();
     this.db.execute(
-      `UPDATE user_sessions SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL`,
-      [new Date().toISOString(), sessionId, userId]
+      `INSERT INTO user_sessions (id, user_id, token_hash, device_info, ip_address, created_at, last_used_at, expires_at, revoked_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+      [session.id, session.userId, session.tokenHash, session.deviceInfo || null, session.ipAddress || null, now, now, session.expiresAt]
     );
+  }
+
+  public isUserSessionActive(sessionId: string, userId: string, tokenHash: string): boolean {
+    return Boolean(this.db.queryOne<any>(
+      `SELECT id FROM user_sessions WHERE id = ? AND user_id = ? AND token_hash = ? AND revoked_at IS NULL AND expires_at > ?`,
+      [sessionId, userId, tokenHash, new Date().toISOString()]
+    ));
+  }
+
+  public revokeUserSession(sessionId: string, userId: string): boolean {
+    return Boolean(this.db.queryOne<any>(
+      `UPDATE user_sessions SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL RETURNING id`,
+      [new Date().toISOString(), sessionId, userId]
+    ));
   }
 }

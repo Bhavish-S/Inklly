@@ -13,14 +13,15 @@ export function createAuthRoutes(db: DatabaseService): Router {
 
   router.post('/login', controller.login);
   router.post('/register', controller.register);
-  router.get('/me', authenticate, controller.getMe);
+  const requireAuthentication = authenticate(db);
+  router.get('/me', requireAuthentication, controller.getMe);
 
   // Appearance & Account settings
-  router.get('/preferences', authenticate, controller.getPreferences);
-  router.put('/preferences', authenticate, controller.updatePreferences);
+  router.get('/preferences', requireAuthentication, controller.getPreferences);
+  router.put('/preferences', requireAuthentication, controller.updatePreferences);
   router.post('/password-reset/request', controller.requestPasswordReset);
-  router.get('/sessions', authenticate, controller.getSessions);
-  router.delete('/sessions/:id', authenticate, controller.revokeSession);
+  router.get('/sessions', requireAuthentication, controller.getSessions);
+  router.delete('/sessions/:id', requireAuthentication, controller.revokeSession);
 
   return router;
 }

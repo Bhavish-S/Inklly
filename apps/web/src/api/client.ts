@@ -266,7 +266,9 @@ export const api = {
 
   async getPrinters() {
     const res = await fetch(`${API_BASE}/merchant/printers`, { headers: getHeaders() });
-    return res.json();
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not load printers');
+    return body;
   },
 
   async addPrinter(printerData: any) {
@@ -275,7 +277,9 @@ export const api = {
       headers: getHeaders(),
       body: JSON.stringify(printerData),
     });
-    return res.json();
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not save printer');
+    return body;
   },
 
   async createAgentPairingCode() {

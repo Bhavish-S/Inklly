@@ -76,6 +76,18 @@ export class AgentDispatchController {
     res.json(tickets);
   };
 
+  public acknowledgeCommand = (req: Request, res: Response) => {
+    const identity = (req as any).agent as { agentId: string; shopId: string };
+    const { commandId, attemptId } = req.body || {};
+    if (typeof commandId !== 'string' || typeof attemptId !== 'string') {
+      return res.status(400).json({ error: 'commandId and attemptId are required' });
+    }
+    if (!this.agentRepo.acknowledgeDispatch(commandId, attemptId, identity.agentId, identity.shopId)) {
+      return res.status(409).json({ error: 'Command is not pending acknowledgement for this agent' });
+    }
+    return res.json({ acknowledged: true, commandId, attemptId });
+  };
+
   public reportCommandResult = (req: Request, res: Response) => {
     const result: SpoolerResult = req.body;
 

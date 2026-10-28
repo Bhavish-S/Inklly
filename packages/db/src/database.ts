@@ -27,6 +27,7 @@ export class DatabaseService {
       }
       this.db = new DatabaseSync(dbTarget);
       this.initSchema();
+      this.ensureSqliteDispatchMigration();
     }
   }
 
@@ -87,7 +88,73 @@ export class DatabaseService {
 
     // Reset status to 0 (IDLE)
     Atomics.store(this.signalArray, 0, 0);
+
+    // Install the idempotent baseline schema on a fresh PostgreSQL database.
+    // SQLite runs this from initSchema(); without this step a successful PG
+    // connection still leaves every repository table missing.
+    this.ensurePostgresSchema();
     console.log('[Inklly DB] Connected to Supabase PostgreSQL successfully!');
+  }
+
+  private ensurePostgresSchema(): void {
+    this.queryPostgres(
+      `CREATE TABLE IF NOT EXISTS inklly_schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`
+    );
+    const applied = this.queryPostgres<{ version: number }>(
+      `SELECT version FROM inklly_schema_migrations WHERE version = ?`,
+      [1]
+    );
+    if (applied.length === 0) {
+      this.queryPostgres('BEGIN');
+      try {
+        for (const rawStatement of SCHEMA_SQL.split(';')) {
+          const statement = rawStatement.replace(/^(?:\s*--[^\n]*(?:\n|$))+/, '').trim();
+          if (!statement || /^PRAGMA\b/i.test(statement)) continue;
+          this.queryPostgres(statement);
+        }
+        this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [1, new Date().toISOString()]);
+        this.queryPostgres('COMMIT');
+      } catch (error) {
+        try { this.queryPostgres('ROLLBACK'); } catch { /* preserve the original migration error */ }
+        throw new Error(`[Inklly DB] PostgreSQL schema installation failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+      }
+    }
+    this.ensurePostgresDispatchMigration();
+  }
+
+  private ensureSqliteDispatchMigration(): void {
+    const versions = this.db!.prepare(`SELECT version FROM inklly_schema_migrations WHERE version = 2`).all();
+    if (versions.length > 0) return;
+    this.db!.exec('BEGIN');
+    try {
+      const columns = this.db!.prepare(`PRAGMA table_info(print_attempts)`).all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === 'dispatch_acknowledged_at')) {
+        this.db!.exec(`ALTER TABLE print_attempts ADD COLUMN dispatch_acknowledged_at TEXT`);
+      }
+      this.db!.exec(`CREATE INDEX IF NOT EXISTS idx_print_attempts_dispatch_ack ON print_attempts(status, dispatch_acknowledged_at, created_at)`);
+      this.db!.prepare(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (2, ?)`).run(new Date().toISOString());
+      this.db!.exec('COMMIT');
+    } catch (error) {
+      try { this.db!.exec('ROLLBACK'); } catch { /* preserve the original migration error */ }
+      throw error;
+    }
+  }
+
+  private ensurePostgresDispatchMigration(): void {
+    const applied = this.queryPostgres<{ version: number }>(
+      `SELECT version FROM inklly_schema_migrations WHERE version = ?`, [2]
+    );
+    if (applied.length > 0) return;
+    this.queryPostgres('BEGIN');
+    try {
+      this.queryPostgres(`ALTER TABLE print_attempts ADD COLUMN IF NOT EXISTS dispatch_acknowledged_at TEXT`);
+      this.queryPostgres(`CREATE INDEX IF NOT EXISTS idx_print_attempts_dispatch_ack ON print_attempts(status, dispatch_acknowledged_at, created_at)`);
+      this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [2, new Date().toISOString()]);
+      this.queryPostgres('COMMIT');
+    } catch (error) {
+      try { this.queryPostgres('ROLLBACK'); } catch { /* preserve the original migration error */ }
+      throw new Error(`[Inklly DB] PostgreSQL dispatch migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
   }
 
   public execute(sql: string, params: (string | number | null)[] = []): void {

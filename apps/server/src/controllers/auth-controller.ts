@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import { DatabaseService, ShopRepository, UserRepository, PricingRepository, hashPassword, verifyPassword } from '@inklly/db';
 import { UserRole, ROLE_PRESETS } from '@inklly/shared';
 import { createSessionToken } from '../middleware/session-token';
+import { hashSessionToken } from '../middleware/session-token';
+import * as crypto from 'node:crypto';
 
 export class AuthController {
   constructor(
@@ -10,6 +12,34 @@ export class AuthController {
     private pricingRepo: PricingRepository,
     private db: DatabaseService
   ) {}
+
+  private issueSessionToken(
+    user: { id: string; email: string; role: UserRole },
+    organizationId: string | undefined,
+    shopId: string | undefined,
+    permissions: string[],
+    req: Request
+  ): string {
+    const sessionId = crypto.randomUUID();
+    const token = createSessionToken({
+      sessionId,
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+      organizationId,
+      shopId,
+      permissions,
+    });
+    this.userRepo.createUserSession({
+      id: sessionId,
+      userId: user.id,
+      tokenHash: hashSessionToken(token),
+      deviceInfo: req.get('user-agent')?.slice(0, 500),
+      ipAddress: req.ip,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+    });
+    return token;
+  }
 
   public login = (req: Request, res: Response) => {
     const { email, password } = req.body;
@@ -60,14 +90,13 @@ export class AuthController {
       });
     }
 
-    const token = createSessionToken({
-      userId: userWithHash.id,
-      email: userWithHash.email,
-      role: userWithHash.role,
-      organizationId: primary?.organizationId,
-      shopId: primary?.shopId,
-      permissions: primary?.permissions || ['*'],
-    });
+    const token = this.issueSessionToken(
+      { id: userWithHash.id, email: userWithHash.email, role: userWithHash.role },
+      primary?.organizationId,
+      primary?.shopId,
+      primary?.permissions || (userWithHash.role === 'PLATFORM_OWNER' ? ['*'] : []),
+      req
+    );
 
     res.json({
       token,
@@ -274,14 +303,13 @@ export class AuthController {
     );
     });
 
-    const token = createSessionToken({
-      userId,
-      email: normalizedEmail,
-      role: 'MERCHANT_OWNER' as UserRole,
-      organizationId: orgId,
+    const token = this.issueSessionToken(
+      { id: userId, email: normalizedEmail, role: 'MERCHANT_OWNER' },
+      orgId,
       shopId,
-      permissions: ['*'],
-    });
+      ['*'],
+      req
+    );
 
     res.status(201).json({
       success: true,
@@ -375,14 +403,17 @@ export class AuthController {
   public getSessions = (req: Request, res: Response) => {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' });
-    res.json(this.userRepo.getUserSessions(userId));
+    res.json(this.userRepo.getUserSessions(userId).map((session: any) => ({
+      ...session,
+      isCurrent: session.id === req.user?.sessionId,
+    })));
   };
 
   public revokeSession = (req: Request, res: Response) => {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' });
     const sessionId = String(req.params.id);
-    this.userRepo.revokeUserSession(sessionId, userId);
+    if (!this.userRepo.revokeUserSession(sessionId, userId)) return res.status(404).json({ error: 'Session not found or already revoked.' });
     res.json({ success: true });
   };
 }

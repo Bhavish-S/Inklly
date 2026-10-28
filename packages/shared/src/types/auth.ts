@@ -19,6 +19,7 @@ export interface User {
 }
 
 export interface SessionTokenPayload {
+  sessionId: string;
   userId: string;
   email: string;
   role: UserRole;
@@ -81,5 +82,6 @@ export const ROLE_PRESETS: Record<string, StaffPermission[]> = {
     STAFF_PERMISSIONS.PRINTERS_MANAGE,
     STAFF_PERMISSIONS.BOT_TRAIN,
     STAFF_PERMISSIONS.SETTINGS_VIEW,
+    STAFF_PERMISSIONS.SETTINGS_MANAGE,
   ],
 };

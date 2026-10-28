@@ -52,6 +52,19 @@ export class SpoolerExecutor {
       };
     }
 
+    // Pilot mode must never send customer documents to a physical printer.
+    // Enabling real printer execution is a separate rollout decision after
+    // hardware, page-count, and output-reconciliation behavior is validated.
+    if (process.env.INKLLY_ENABLE_PHYSICAL_PRINTING !== 'true') {
+      return {
+        attemptId: ticket.attemptId,
+        jobId: ticket.jobId,
+        status: 'FAILED',
+        errorMessage: 'Physical printing is disabled for this pilot; no document was downloaded or submitted.',
+        timestamp,
+      };
+    }
+
     // 2. Physical Hardware Spooling (if on Windows and not in pure unit test mock mode)
     if (process.platform === 'win32' && process.env.NODE_ENV !== 'test') {
       try {

@@ -1,16 +1,25 @@
-# Current implementation evidence
+# Inklly Requirement Traceability
 
-This file records evidence for the current application workspace only. The package acceptance matrix remains the specification; historical phase checkboxes are not verification evidence.
+This table records what the current source and local tests prove. A working code path or passing test is not evidence that its production integration is configured.
 
-| Requirement | Current implementation | Evidence | Remaining gap |
-| --- | --- | --- | --- |
-| PUB-04 / PUB-T04: valid contact form submissions persist and do not falsely report success | Home and Contact forms submit to the API; server validates fields, rejects the honeypot, applies an IP rate limit, persists an idempotent request, and returns an error when persistence fails. The browser requires the new record ID/status response and fails closed against a stale backend. | `apps/server/src/controllers/enquiry-controller.ts`; `apps/server/src/middleware/enquiry-rate-limit.ts`; `apps/web/src/api/client.ts`; `apps/server/src/test/api.test.ts`; 153 workspace tests passed on 2026-10-27. | Email/WhatsApp notification and approved retention period are not configured. Rate limit is process-local. Browser visual/E2E coverage is absent. |
-| PUB-T05: duplicate submission retry does not create another request | The form reuses a request key for retries; DB uniqueness returns the original enquiry. | Enquiry API integration test submits the same `Idempotency-Key` twice and verifies identical record ID. | Multi-instance concurrency against live PostgreSQL is not yet exercised. |
-| ADM-T05 / ADM-T07: support-contact data is restricted and access recorded | Enquiry listing is under the authenticated platform owner/admin router; each list read adds an audit event with actor, address, pagination and purpose. | `apps/server/src/routes/admin-routes.ts`; `apps/server/src/controllers/admin-controller.ts`; API test verifies anonymous denial and audit record. | Dedicated least-privilege support role and user-entered reason flow are not implemented. |
-| Scope: no franchise enquiry funnel | Removed the unused franchise-only form variant from the shared public form component. | `apps/web/src/components/EnquiryForm.tsx`; only Home and Contact instantiate it. | Full public sitemap and route inventory still need end-to-end review. |
+| Requirement | Current evidence | Remaining work |
+| --- | --- | --- |
+| Customer QR order intake, document validation, quote, and order tracking | Portal and order controllers inspect uploaded bytes, calculate prices server-side in integer Paise, persist orders, and return status. API tests cover upload/order and client-supplied page-count tampering. | Browser-level visual and end-to-end verification; live private-storage verification. |
+| Tenant isolation and permissions | Authenticated routes enforce shop scope; staff pricing writes require `settings:manage`; platform permissions are checked explicitly. Tests exercise cross-tenant denial and unauthorized pricing changes. | Continue route-by-route security review as features are added. |
+| Revocable authentication | Signed session tokens carry a session ID and token hash; authentication checks the persisted active session. Tests cover revocation invalidating an issued token. | HttpOnly cookie migration, MFA, and delivered password-reset flow are not implemented. |
+| Customer payments | Per-shop Razorpay credentials are encrypted at rest. Checkout, server-side payment verification, webhook HMAC validation, amount/currency/shop binding, and idempotent ledger updates are implemented. | Live Razorpay sandbox round-trip and production account setup. |
+| Cash collection and refunds | Counter cash records payment/order/ledger changes transactionally; refund requests remain pending unless provider processing is configured. | Live provider refund workflow and settlement reconciliation. |
+| PostgreSQL persistence | PostgreSQL startup installs the baseline schema and applies versioned dispatch-ack migration. TLS verification is enabled. | Validate migrations against a clean Supabase project and a copy of the deployed schema. |
+| Private customer-file storage | Production requires Supabase Storage; startup checks the configured bucket exists and is private; upload/read/delete use authenticated server requests. | Latest Render log reports missing/invalid Supabase Storage settings. Configure Render and verify live object lifecycle/retention. |
+| Agent dispatch handoff | Poll tickets have stable IDs, are replayed until locally acknowledged, and expire to `OUTPUT_UNCERTAIN` without blind redispatch. Agent outcomes persist in a local SQLite outbox and retry after restart. Tests exercise replay, acknowledgment, expiry, and result persistence. | Validate against the deployed server and packaged agent binary. |
+| Physical printing | Disabled by default via `INKLLY_ENABLE_PHYSICAL_PRINTING`; the agent fails explicitly without downloading or submitting customer files. | Explicitly out of scope for this build pass; hardware setup and output reconciliation remain future work. |
+| Printer profiles | Merchant Save Printer persists the profile through the API; the UI reloads from server and distinguishes save from refresh failure. New profiles are offline until an agent reports connectivity. | Agent-to-printer inventory/heartbeat reporting is not yet established; the web workspace has no UI test runner. |
+| Customer order tracker | `AWAITING_PAYMENT`, processing, collection, cancelled, and attention-required states have explicit copy; pickup token is shown only when available. | Add browser component tests when the web workspace has a test framework. |
+| SaaS subscriptions and usage billing | Dashboard states pilot billing is not active; checkout endpoints fail closed. | Implement platform subscription lifecycle, configurable monthly/per-printed-side rates, idempotent usage events, and platform billing provider integration. |
+| WhatsApp | Setup scaffolding exists. | Meta OAuth, inbound webhook, and message delivery are not implemented; do not treat the current setup panel as a live integration. |
+| Developer APIs and webhooks | API docs and credential/webhook management scaffolding exist behind authentication and an external-access gate. | Confirm actual public API lifecycle, signing, delivery retries, and governance before enabling external access. |
+| Local checks | `npm run build` passes; `npm test` passes 171 tests (DB 3, shared 12, agent 8, server 148). | Configure linting and browser visual/E2E checks. |
 
-## Latest commands
+## Deployment blocker from current Render logs
 
-- `npm run build` — passed across all workspaces; Vite bundle-size warning remains.
-- `npm test` — 153 passed, 0 failed (DB 3, shared 12, agent 7, server 131).
-- `npm run lint` — command exits successfully but no workspace lint script is configured.
+The latest Render attempt successfully connected to PostgreSQL but exited during private file-storage initialization. Set `STORAGE_DRIVER=supabase`, the project HTTPS `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and an existing private `SUPABASE_STORAGE_BUCKET` in Render. Never expose the service-role key to the browser or commit it.

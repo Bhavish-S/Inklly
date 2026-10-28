@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import * as crypto from 'node:crypto';
 import { DatabaseService, seedDatabase } from '@inklly/db';
 import { createPortalRoutes } from './routes/portal-routes';
 import { createAuthRoutes } from './routes/auth-routes';
@@ -85,12 +86,15 @@ export function createApp(db?: DatabaseService): express.Express {
   app.use('/api/v1/agent', createAgentRoutes(database, fileStorage));
   app.use('/api/v1/platform', createAdminRoutes(database));
   app.use('/api/v1/developer', createDeveloperRoutes(database));
-  app.use('/api/v1/subscriptions', createSubscriptionRoutes());
+  app.use('/api/v1/subscriptions', createSubscriptionRoutes(database));
 
   // Global Error Handler
   app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-    console.error('[Inklly Server Error]:', err);
-    res.status(500).json({ error: 'Internal Server Error', message: err.message });
+    const requestId = crypto.randomUUID();
+    // Keep provider credentials, database details, and stack traces out of API
+    // responses while giving operators a stable correlation handle.
+    console.error(`[Inklly Server Error] requestId=${requestId}`, err);
+    res.status(500).json({ error: 'Internal Server Error', requestId });
   });
 
   return app;

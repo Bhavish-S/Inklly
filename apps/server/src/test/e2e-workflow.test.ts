@@ -210,6 +210,8 @@ describe('Inklly End-to-End Automated Printing & Multi-Plan Workflow Test Suite'
     const tickets = await pollRes.json() as any[];
     const ticket = tickets.find((item) => item.correlationId === `corr-${createdOrderId}`);
     assert.ok(ticket, 'Agent should receive the submitted order ticket');
+    const ackRes = await fetch(`${baseUrl}/api/v1/agent/acknowledge-command`, { method: 'POST', headers: agentHeaders, body: JSON.stringify({ commandId: ticket.commandId, attemptId: ticket.attemptId }) });
+    assert.equal(ackRes.status, 200);
     const resultRes = await fetch(`${baseUrl}/api/v1/agent/command-result`, { method: 'POST', headers: agentHeaders, body: JSON.stringify({ jobId: ticket.jobId, attemptId: ticket.attemptId, status: 'PRINT_CONFIRMED', timestamp: new Date().toISOString() }) });
     assert.equal(resultRes.status, 200);
 
