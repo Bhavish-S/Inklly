@@ -45,6 +45,51 @@ The merchant UI has a dedicated `Payment Pending` queue. It permits inspection b
 
 The current print state machine includes `OUTPUT_UNCERTAIN`. Ticket handoff uses stable attempt identifiers and acknowledgement leases. An uncertain outcome is not automatically retried. Real physical printing is explicitly disabled by default in the pilot and is outside the current release claim.
 
+Merchant release requires a shop-owned, online printer. The server assigns the selected/default target to unassigned jobs and advances order status within one database transaction. Agents receive only jobs with a live assigned printer and a payment-eligible order. Authenticated heartbeats can synchronize the actual local queue list; older agents that omit the inventory field do not erase known inventory. Discovery does not synthesize sample printers. When explicitly enabled, the Windows spooler requires an exact queue-name match and reports `SUBMITTED_TO_SPOOLER`; physical page output is not treated as confirmed.
+
+### Merchant API request pipeline
+
+```mermaid
+sequenceDiagram
+  participant Web as Merchant UI
+  participant Auth as Auth and tenant middleware
+  participant Perm as Role/permission checks
+  participant Ctrl as Merchant controller
+  participant Repo as Tenant-scoped repositories
+  participant DB as Database
+  Web->>Auth: Request with session token
+  Auth->>Auth: Verify signature, session, tenant, subscription
+  Auth->>Perm: Attach authorized shop context
+  Perm->>Perm: Validate role and route permission
+  Perm->>Ctrl: Validated request
+  Ctrl->>Repo: Check ownership and business rules
+  Repo->>DB: Parameterized tenant-scoped transaction
+  DB-->>Repo: Persisted result
+  Repo-->>Ctrl: Domain result
+  Ctrl-->>Web: Safe response without secrets or storage keys
+```
+
+### Desktop-agent print dispatch
+
+```mermaid
+sequenceDiagram
+  participant Merchant
+  participant API as Merchant API
+  participant DB as Database
+  participant Agent as Paired desktop agent
+  participant OS as Windows print queue
+  Merchant->>API: Release order with printer selection
+  API->>DB: Verify payment and queue; assign jobs + advance order atomically
+  Agent->>API: Authenticated heartbeat with local queues
+  Agent->>API: Poll eligible assigned jobs
+  API->>DB: Lease attempt and return shop-scoped file ticket
+  Agent->>Agent: Persist ticket/result in local SQLite outbox
+  Agent->>OS: Submit only when enabled and exact queue exists
+  OS-->>Agent: Spooler process outcome
+  Agent->>API: Report submitted, failed, or output-uncertain result
+  API->>DB: Persist attempt; never blindly retry uncertainty
+```
+
 ## Tenant and security boundaries
 
 - Authenticated sessions are signed and backed by revocable database session records.
@@ -83,7 +128,7 @@ The deployed API uses PostgreSQL and private Supabase Storage. Render must defin
 
 ## Known limitations
 
-- Physical printing is in product scope, but remains pilot-gated. If manually enabled, the current executor still does not reliably apply complete requested settings or prove physical output; keep `INKLLY_ENABLE_PHYSICAL_PRINTING=false` until those defects and hardware tests are complete.
+- Physical printing is in product scope, but remains pilot-gated. The executor rejects unsupported options and does not claim physical confirmation; URL/redirect security, bounded downloads, multi-agent inventory ownership, spooler crash recovery, driver capability fidelity, and hardware tests remain open. Keep `INKLLY_ENABLE_PHYSICAL_PRINTING=false` until these gates are complete.
 - The current vault APIs can manage categories and read/delete document metadata, but there is no merchant vault document-upload API or connected UI workflow. Customer order attachments remain a separate temporary-storage flow.
 - Recurring merchant subscriptions, per-printed-side billing, tax rules, and configured finishing/media surcharges are not implemented.
 - WhatsApp intake/messaging is unavailable unless an official Meta integration is configured and verified.

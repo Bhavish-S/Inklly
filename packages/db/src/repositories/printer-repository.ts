@@ -1,5 +1,6 @@
 import { DatabaseService } from '../database';
 import { PaperTray, PrinterDevice } from '@inklly/shared';
+import * as crypto from 'node:crypto';
 
 export class PrinterRepository {
   constructor(private db: DatabaseService) {}
@@ -77,5 +78,25 @@ export class PrinterRepository {
       `UPDATE printers SET is_online = ?, last_heartbeat = ?, updated_at = ? WHERE id = ?`,
       [isOnline ? 1 : 0, now, now, printerId]
     );
+  }
+
+  /** Replace a shop's live queue inventory from an authenticated desktop agent. */
+  public syncAgentInventory(shopId: string, agentId: string, queues: Array<{ name: string; driverName: string; isOnline: boolean; isDefault: boolean }>): void {
+    const now = new Date().toISOString();
+    this.db.transaction(() => {
+      this.db.execute(`UPDATE printers SET is_online = 0, updated_at = ? WHERE shop_id = ? AND agent_id = ?`, [now, shopId, agentId]);
+      for (const queue of queues) {
+        const name = queue.name.trim();
+        if (!name || name.length > 256) continue;
+        const id = `prn-${crypto.createHash('sha256').update(`${shopId}\0${agentId}\0${name}`).digest('hex').slice(0, 24)}`;
+        this.db.execute(
+          `INSERT INTO printers (id, shop_id, name, system_driver_name, is_online, is_default, supports_color, supports_duplex, last_heartbeat, created_at, updated_at, agent_id)
+           VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET name = excluded.name, system_driver_name = excluded.system_driver_name,
+             is_online = excluded.is_online, is_default = excluded.is_default, last_heartbeat = excluded.last_heartbeat, updated_at = excluded.updated_at, agent_id = excluded.agent_id`,
+          [id, shopId, name, queue.driverName.slice(0, 256), queue.isOnline ? 1 : 0, queue.isDefault ? 1 : 0, now, now, now, agentId]
+        );
+      }
+    });
   }
 }

@@ -38,7 +38,18 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
     const enrollRes = await fetch(`${baseUrl}/api/v1/agent/enroll`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shopId: 'shop-campus-1', pairingCode: pairing.pairingCode, hostname }) });
     assert.equal(enrollRes.status, 201);
     const agent = await enrollRes.json() as any;
-    return { 'Content-Type': 'application/json', 'X-Agent-Id': agent.agentId, Authorization: `Bearer ${agent.agentSecret}` };
+    const headers = { 'Content-Type': 'application/json', 'X-Agent-Id': agent.agentId, Authorization: `Bearer ${agent.agentSecret}` };
+    const heartbeat = await fetch(`${baseUrl}/api/v1/agent/heartbeat`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ status: 'ONLINE', activePrintersCount: 2, localQueueDepth: 0, printers: [
+        { name: 'HP LaserJet Pro M401dne (B&W High-Speed)', driverName: 'HP LaserJet Pro M401 PCL6', isOnline: true, isDefault: true },
+        { name: 'Canon imageRUNNER ADVANCE C3530i (Color/Multi-Format)', driverName: 'Canon Generic Plus PCL6', isOnline: true, isDefault: false },
+      ] }),
+    });
+    assert.equal(heartbeat.status, 200);
+    const printer = db.queryOne<any>(`SELECT id FROM printers WHERE agent_id = ? AND system_driver_name = ?`, [agent.agentId, 'HP LaserJet Pro M401 PCL6']);
+    assert.ok(printer);
+    return { headers, printerId: printer.id as string };
   };
 
   before(async () => {
@@ -442,8 +453,12 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
         headers: agentHeaders(),
         body: JSON.stringify({
           status: 'ONLINE',
-          activePrintersCount: 1,
+          activePrintersCount: 2,
           localQueueDepth: 0,
+          printers: [
+            { name: 'HP LaserJet Pro M401dne (B&W High-Speed)', driverName: 'HP LaserJet Pro M401 PCL6', isOnline: true, isDefault: true },
+            { name: 'Canon imageRUNNER ADVANCE C3530i (Color/Multi-Format)', driverName: 'Canon Generic Plus PCL6', isOnline: true, isDefault: false },
+          ],
         }),
       });
 
@@ -1074,6 +1089,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       const submitData = (await submitRes.json()) as any;
       const orderId = submitData.orderId;
 
+      const agentSetup = await pairTestAgent('PAIRWISE-TEST-AGENT');
       // 2. Merchant initiates print dispatch
       const printRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${orderId}/print`, {
         method: 'POST',
@@ -1081,24 +1097,23 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
           'Content-Type': 'application/json',
           Authorization: `Bearer ${merchantToken}`,
         },
-        body: JSON.stringify({ printerName: 'Canon LBP2900' }),
+        body: JSON.stringify({ printerId: agentSetup.printerId }),
       });
-      assert.equal(printRes.status, 200);
+      assert.equal(printRes.status, 200, await printRes.clone().text());
 
       // 3. Agent polls command queue
-      const agentHeaders = await pairTestAgent('PAIRWISE-TEST-AGENT');
-      const pollRes = await fetch(`${baseUrl}/api/v1/agent/poll-commands`, { headers: agentHeaders });
+      const pollRes = await fetch(`${baseUrl}/api/v1/agent/poll-commands`, { headers: agentSetup.headers });
       assert.equal(pollRes.status, 200);
       const tickets = await pollRes.json() as any[];
       const ticket = tickets.find((item) => item.correlationId === `corr-${orderId}`);
-      assert.ok(ticket);
-      const ackRes = await fetch(`${baseUrl}/api/v1/agent/acknowledge-command`, { method: 'POST', headers: agentHeaders, body: JSON.stringify({ commandId: ticket.commandId, attemptId: ticket.attemptId }) });
+      assert.ok(ticket, JSON.stringify({ tickets, printers: db.query<any>(`SELECT id, shop_id, name, is_online, agent_id FROM printers`), jobs: db.query<any>(`SELECT id, order_id, printer_id, status FROM print_jobs WHERE order_id = ?`, [orderId]) }));
+      const ackRes = await fetch(`${baseUrl}/api/v1/agent/acknowledge-command`, { method: 'POST', headers: agentSetup.headers, body: JSON.stringify({ commandId: ticket.commandId, attemptId: ticket.attemptId }) });
       assert.equal(ackRes.status, 200);
 
       // 4. Agent reports PRINT_CONFIRMED
       const confirmRes = await fetch(`${baseUrl}/api/v1/agent/command-result`, {
         method: 'POST',
-        headers: agentHeaders,
+        headers: agentSetup.headers,
         body: JSON.stringify({
           jobId: ticket.jobId,
           attemptId: ticket.attemptId,
@@ -1260,7 +1275,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
           'Content-Type': 'application/json',
           Authorization: `Bearer ${merchantToken}`,
         },
-        body: JSON.stringify({ printerName: 'Canon LBP2900' }),
+        body: JSON.stringify({ printerName: 'HP LaserJet Pro M401 PCL6' }),
       });
       assert.equal(printDispatch.status, 200);
 
@@ -1461,28 +1476,28 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       const submitData = (await submitRes.json()) as any;
       const orderId = submitData.orderId;
 
-      // 2. Dispatch to Canon printer
+      const agentSetup = await pairTestAgent('PAPER-JAM-TEST-AGENT');
+      // 2. Dispatch to the queue reported by this simulated agent.
       const printRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${orderId}/print`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
-        body: JSON.stringify({ printerName: 'Canon LBP2900' }),
+        body: JSON.stringify({ printerId: agentSetup.printerId }),
       });
       assert.equal(printRes.status, 200);
 
-      const agentHeaders = await pairTestAgent('PAPER-JAM-TEST-AGENT');
-      const pollRes = await fetch(`${baseUrl}/api/v1/agent/poll-commands`, { headers: agentHeaders });
+      const pollRes = await fetch(`${baseUrl}/api/v1/agent/poll-commands`, { headers: agentSetup.headers });
       assert.equal(pollRes.status, 200);
       const tickets = await pollRes.json() as any[];
       const ticket = tickets.find((item) => item.correlationId === `corr-${orderId}`);
       assert.ok(ticket);
-      const ackRes = await fetch(`${baseUrl}/api/v1/agent/acknowledge-command`, { method: 'POST', headers: agentHeaders, body: JSON.stringify({ commandId: ticket.commandId, attemptId: ticket.attemptId }) });
+      const ackRes = await fetch(`${baseUrl}/api/v1/agent/acknowledge-command`, { method: 'POST', headers: agentSetup.headers, body: JSON.stringify({ commandId: ticket.commandId, attemptId: ticket.attemptId }) });
       assert.equal(ackRes.status, 200);
 
       // 3. Printer experiences mechanical paper jam on page 14
       // Agent reports OUTPUT_UNCERTAIN
       const jamReport = await fetch(`${baseUrl}/api/v1/agent/command-result`, {
         method: 'POST',
-        headers: agentHeaders,
+        headers: agentSetup.headers,
         body: JSON.stringify({
           jobId: ticket.jobId,
           attemptId: ticket.attemptId,
@@ -1615,7 +1630,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
         },
         body: JSON.stringify({ autoPrintMode: 'PRINT_AFTER_PAYMENT' }),
       });
-      assert.equal(settingsRes.status, 200);
+      assert.equal(settingsRes.status, 200, await settingsRes.clone().text());
 
       // 6. Merchant adds a printer
       const printerRes = await fetch(`${baseUrl}/api/v1/merchant/printers`, {
@@ -1635,6 +1650,25 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       assert.equal(printerRes.status, 201);
       const printerData = await printerRes.json();
       assert.ok(printerData.id);
+
+      // Report a simulated local queue through the authenticated agent inventory path.
+      const pairingRes = await fetch(`${baseUrl}/api/v1/merchant/agents/pairing-code`, {
+        method: 'POST', headers: { Authorization: `Bearer ${merchantToken}` },
+      });
+      assert.equal(pairingRes.status, 201);
+      const pairing = await pairingRes.json() as any;
+      const enrollRes = await fetch(`${baseUrl}/api/v1/agent/enroll`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shopId: newShopId, pairingCode: pairing.pairingCode, hostname: 'SIMULATED-PRINT-AGENT' }),
+      });
+      assert.equal(enrollRes.status, 201);
+      const agent = await enrollRes.json() as any;
+      const agentHeaders = { 'Content-Type': 'application/json', 'X-Agent-Id': agent.agentId, Authorization: `Bearer ${agent.agentSecret}` };
+      const heartbeatRes = await fetch(`${baseUrl}/api/v1/agent/heartbeat`, {
+        method: 'POST', headers: agentHeaders,
+        body: JSON.stringify({ status: 'ONLINE', activePrintersCount: 1, localQueueDepth: 0, printers: [{ name: 'Canon LBP2900', driverName: 'Canon LBP2900', isOnline: true, isDefault: true }] }),
+      });
+      assert.equal(heartbeatRes.status, 200);
 
       // 7. Customer uploads document via QR portal
       const uploadRes = await fetch(`${baseUrl}/api/v1/portal/upload`, {

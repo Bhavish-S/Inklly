@@ -287,6 +287,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [agentConnected, setAgentConnected] = useState<boolean>(false);
   const [detectingPrinters, setDetectingPrinters] = useState<boolean>(false);
   const [detectedPrinters, setDetectedPrinters] = useState<Array<{
+    id: string;
     name: string;
     driver: string;
     port: string;
@@ -297,6 +298,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     supportsDuplex: boolean;
     tray: string;
   }>>([]);
+  const [selectedPrinterId, setSelectedPrinterId] = useState<string>('');
   const [selectedDefaultPrinter, setSelectedDefaultPrinter] = useState<string>('');
   const [selectedPaperTray, setSelectedPaperTray] = useState<string>('Auto-Select');
   const [showAddPrinterModal, setShowAddPrinterModal] = useState<boolean>(false);
@@ -458,40 +460,12 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   ]);
 
   // Business Setup: Printers
-  const [testPrintAlert, setTestPrintAlert] = useState<string | null>(null);
   const [selectedAgentPlatform, setSelectedAgentPlatform] = useState<string>('win-x64');
   const [agentLoopbackChecking, setAgentLoopbackChecking] = useState<boolean>(false);
   const [agentLoopbackStatus, setAgentLoopbackStatus] = useState<'online' | 'offline'>('online');
   const [defaultPaperTray, setDefaultPaperTray] = useState<string>('Auto-Select');
   const [idCardPrintingEnabled, setIdCardPrintingEnabled] = useState<boolean>(true);
   const [photoPrintingEnabled, setPhotoPrintingEnabled] = useState<boolean>(true);
-  const [printersList, setPrintersList] = useState([
-    {
-      id: 'p-1',
-      name: 'HP LaserJet Pro M401dne',
-      model: 'HP LaserJet Pro M401 PCL6',
-      status: 'Online',
-      lastSeen: '4s ago',
-      isDefault: true,
-      autoPrint: true,
-      color: false,
-      duplex: true,
-      trays: ['Tray 1 (A4, 250 sheets)', 'Tray 2 (A4 Manual bypass)'],
-    },
-    {
-      id: 'p-2',
-      name: 'Canon imageRUNNER ADVANCE C3530i',
-      model: 'Canon Generic Plus PCL6',
-      status: 'Online',
-      lastSeen: '8s ago',
-      isDefault: false,
-      autoPrint: false,
-      color: true,
-      duplex: true,
-      trays: ['Tray 1 (A4 Plain)', 'Tray 2 (A3 Heavy)', 'Tray 3 (Photo 4x6 / 5x7)'],
-    },
-  ]);
-
   // Business Setup: Pricing
   const [pricingProfile, setPricingProfile] = useState<'default' | 'hp_m401' | 'canon_c3530'>('default');
   const [pricingPaperSize, setPricingPaperSize] = useState<'A4' | 'A3' | 'Legal'>('A4');
@@ -866,7 +840,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     const targetId = order?.rawId || orderId;
 
     try {
-      await api.dispatchPrint(targetId);
+      await api.dispatchPrint(targetId, selectedPrinterId || undefined);
       setOrderActionToast(`Order #${orderId} was queued for the shop print agent.`);
       await fetchLiveOrdersFromApi();
     } catch (e) {
@@ -1057,6 +1031,10 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       setDetectingPrinters(false);
     }
   };
+
+  useEffect(() => {
+    if (activeView === 'live_print' || activeView === 'orders') void handleRefreshPrinters(false);
+  }, [activeView]);
 
   const handleSavePrinter = async () => {
     if (savingPrinter) return;
@@ -2144,6 +2122,17 @@ start "Inklly Agent" "InkllyAgent.exe"
               </div>
 
               <div className="flex items-center gap-4 sm:gap-6 text-right">
+                <select
+                  aria-label="Printer for released orders"
+                  value={selectedPrinterId}
+                  onChange={(event) => setSelectedPrinterId(event.target.value)}
+                  className="max-w-56 px-2.5 py-1.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs"
+                >
+                  <option value="">Use one online default</option>
+                  {detectedPrinters.filter((printer) => printer.status === 'Ready').map((printer) => (
+                    <option key={printer.id} value={printer.id}>{printer.name}{printer.isDefault ? ' · default' : ''}</option>
+                  ))}
+                </select>
                 <button
                   type="button"
                   onClick={fetchLiveOrdersFromApi}
@@ -2663,13 +2652,11 @@ start "Inklly Agent" "InkllyAgent.exe"
                 </select>
                 <button
                   type="button"
-                  onClick={() => {
-                    setOrderActionToast('Printers & Spoolers polled on port 8765: 2 active devices online.');
-                    setTimeout(() => setOrderActionToast(null), 3000);
-                  }}
+                  onClick={() => void handleRefreshPrinters()}
+                  disabled={detectingPrinters}
                   className="px-3.5 py-1.5 border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer"
                 >
-                  🔄 Refresh
+                  {detectingPrinters ? 'Loading…' : '↻ Refresh'}
                 </button>
               </div>
             </div>
@@ -2677,31 +2664,31 @@ start "Inklly Agent" "InkllyAgent.exe"
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="p-5 rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-xs">
                 <span className="text-[10px] font-bold uppercase text-gray-400 block mb-1">WORKING PRINTERS</span>
-                <span className={`text-3xl font-extrabold ${screenshotEmptyMode ? 'text-gray-900 dark:text-white' : 'text-green-600'}`}>
-                  {screenshotEmptyMode ? 0 : 2}
+                <span className={`text-3xl font-extrabold ${detectedPrinters.some((printer) => printer.status === 'Ready') ? 'text-green-600' : 'text-gray-900 dark:text-white'}`}>
+                  {detectedPrinters.filter((printer) => printer.status === 'Ready').length}
                 </span>
                 <span className="text-[10px] text-gray-400 block mt-1">
-                  {screenshotEmptyMode ? '0 of 0 connected' : '2 of 2 connected on Inklly Agent'}
+                  {`${detectedPrinters.filter((printer) => printer.status === 'Ready').length} of ${detectedPrinters.length} reported online`}
                 </span>
               </div>
               <div className="p-5 rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-xs">
                 <span className="text-[10px] font-bold uppercase text-gray-400 block mb-1">PRINTING NOW</span>
-                <span className={`text-3xl font-extrabold ${screenshotEmptyMode ? 'text-gray-900 dark:text-white' : 'text-blue-600'}`}>
-                  {screenshotEmptyMode ? 0 : printingOrders.length}
+                <span className={`text-3xl font-extrabold ${printingOrders.length ? 'text-blue-600' : 'text-gray-900 dark:text-white'}`}>
+                  {printingOrders.length}
                 </span>
-                <span className="text-[10px] text-gray-400 block mt-1">Active jobs in hardware buffer</span>
+                <span className="text-[10px] text-gray-400 block mt-1">Orders marked in progress</span>
               </div>
               <div className="p-5 rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-xs">
                 <span className="text-[10px] font-bold uppercase text-gray-400 block mb-1">WAITING TO PRINT</span>
                 <span className="text-3xl font-extrabold text-gray-900 dark:text-white">
-                  {screenshotEmptyMode ? 0 : pendingOrders.length + processingOrders.length}
+                  {pendingOrders.length + processingOrders.length}
                 </span>
                 <span className="text-[10px] text-gray-400 block mt-1">Pending approval & spooling</span>
               </div>
             </div>
 
             {/* Offline or Empty State Card */}
-            {screenshotEmptyMode ? (
+            {detectedPrinters.length === 0 ? (
               <div className="p-8 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-3xl text-center shadow-xs">
                 <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 flex items-center justify-center text-amber-600 text-2xl">
                   ⚠️
@@ -2710,7 +2697,7 @@ start "Inklly Agent" "InkllyAgent.exe"
                   No working printers online
                 </h3>
                 <p className="text-xs text-gray-500 dark:text-gray-400 max-w-md mx-auto mb-5 leading-relaxed">
-                  Start desktop agent: The Inklly desktop agent runs locally on your PC to connect to physical printers. No working printers detected on your network or Inklly Agent. Please verify the Inklly Agent is running and connected.
+                  No printer queues have been reported by a paired desktop agent yet. Install and pair the agent, then refresh this view to load its current queues.
                 </p>
                 <div className="flex justify-center gap-3">
                   <button
@@ -2725,16 +2712,62 @@ start "Inklly Agent" "InkllyAgent.exe"
                   </button>
                   <button
                     type="button"
-                    onClick={() => setScreenshotEmptyMode(false)}
+                    onClick={() => void handleRefreshPrinters()}
                     className="px-4 py-2 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-xl text-xs font-bold cursor-pointer"
                   >
-                    Toggle Demo Printers
+                    Refresh printer queues
                   </button>
                 </div>
               </div>
             ) : (
               <>
-                {/* Connected Printers Hardware Cards */}
+                {/* Live inventory reported by paired desktop agents. */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {detectedPrinters
+                    .filter((printer: any) => {
+                      const query = livePrintSearch.trim().toLowerCase();
+                      const matchesQuery = !query || `${printer.name} ${printer.driver}`.toLowerCase().includes(query);
+                      const matchesFilter = livePrintFilter === 'all'
+                        || (livePrintFilter === 'working' && printer.status === 'Ready')
+                        || (livePrintFilter === 'alerts' && printer.status === 'Offline');
+                      return matchesQuery && matchesFilter;
+                    })
+                    .map((printer: any) => (
+                      <div key={printer.id || printer.name} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-5 shadow-xs space-y-3">
+                        <div className="flex justify-between items-start gap-3">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${printer.status === 'Ready' ? 'bg-green-500' : printer.status === 'Printing' ? 'bg-blue-500' : 'bg-gray-400'}`} />
+                              <h3 className="font-extrabold text-sm text-[#172031] dark:text-white truncate">{printer.name}</h3>
+                              {printer.isDefault && <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">DEFAULT</span>}
+                            </div>
+                            <p className="text-[11px] text-gray-400 mt-1">{printer.driver} · Reported by paired desktop agent</p>
+                          </div>
+                          <span className={`text-xs font-bold shrink-0 ${printer.status === 'Ready' ? 'text-green-600' : printer.status === 'Printing' ? 'text-blue-600' : 'text-gray-500'}`}>{printer.status}</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-xs pt-1">
+                          <div className="p-2.5 bg-gray-50 dark:bg-gray-700/50 rounded-xl">
+                            <span className="text-[10px] text-gray-400 font-bold block">COLOR CAPABILITY</span>
+                            <div className="font-bold mt-0.5">{printer.supportsColor ? 'Reported supported' : 'Not verified'}</div>
+                          </div>
+                          <div className="p-2.5 bg-gray-50 dark:bg-gray-700/50 rounded-xl">
+                            <span className="text-[10px] text-gray-400 font-bold block">DUPLEX CAPABILITY</span>
+                            <div className="font-bold mt-0.5">{printer.supportsDuplex ? 'Reported supported' : 'Not verified'}</div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  {detectedPrinters.length > 0 && detectedPrinters.filter((printer: any) => {
+                    const query = livePrintSearch.trim().toLowerCase();
+                    const matchesQuery = !query || `${printer.name} ${printer.driver}`.toLowerCase().includes(query);
+                    const matchesFilter = livePrintFilter === 'all'
+                      || (livePrintFilter === 'working' && printer.status === 'Ready')
+                      || (livePrintFilter === 'alerts' && printer.status === 'Offline');
+                    return matchesQuery && matchesFilter;
+                  }).length === 0 && <p className="col-span-full p-6 text-center text-sm text-gray-500">No printers match these filters.</p>}
+                </div>
+
+                {/* Active Spool Queue Table */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-5 shadow-xs space-y-3">
                     <div className="flex justify-between items-start">
@@ -2848,7 +2881,7 @@ start "Inklly Agent" "InkllyAgent.exe"
                   <div className="p-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center">
                     <h3 className="font-extrabold text-sm text-[#172031] dark:text-white">Active Print Buffer</h3>
                     <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-                      {printingOrders.length} Spooling · {pendingOrders.length} Queued
+                      {printingOrders.length} orders in progress · {pendingOrders.length} awaiting release
                     </span>
                   </div>
                   {printingOrders.length > 0 || processingOrders.length > 0 ? (
@@ -2857,9 +2890,8 @@ start "Inklly Agent" "InkllyAgent.exe"
                         <tr>
                           <th className="py-3 px-4">TICKET</th>
                           <th className="py-3 px-4">DOCUMENT & CUSTOMER</th>
-                          <th className="py-3 px-4">PRINTER ASSIGNED</th>
-                          <th className="py-3 px-4">PROGRESS</th>
-                          <th className="py-3 px-4 text-right">ACTIONS</th>
+                          <th className="py-3 px-4">ORDER STATE</th>
+                          <th className="py-3 px-4 text-right">ACTION</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
@@ -2870,22 +2902,17 @@ start "Inklly Agent" "InkllyAgent.exe"
                               <div className="font-bold">{ord.document}</div>
                               <div className="text-[10px] text-gray-400">{ord.customer} · {ord.pages}p</div>
                             </td>
-                            <td className="py-3 px-4 text-gray-600 dark:text-gray-300 font-medium">
-                              HP LaserJet Pro M401dne
-                            </td>
                             <td className="py-3 px-4">
-                              <div className="w-40 bg-gray-200 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
-                                <div className="bg-purple-600 h-2 rounded-full animate-pulse w-3/4" />
-                              </div>
-                              <span className="text-[10px] text-purple-600 font-bold block mt-1">Printing Page 3 of {ord.pages}</span>
+                              <span className="font-bold text-blue-700 dark:text-blue-300">{ord.rawStatus || 'IN_PROGRESS'}</span>
+                              <span className="block text-[10px] text-gray-400 mt-1">Spooler page progress is not reported by this agent.</span>
                             </td>
                             <td className="py-3 px-4 text-right">
                               <button
                                 type="button"
-                                onClick={() => handleRejectOrder(ord.id)}
-                                className="px-2.5 py-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg text-xs font-bold"
+                                onClick={() => setSelectedOrder(ord)}
+                                className="px-2.5 py-1 text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950/40 rounded-lg text-xs font-bold"
                               >
-                                Cancel Spool
+                                View order
                               </button>
                             </td>
                           </tr>
@@ -2894,7 +2921,7 @@ start "Inklly Agent" "InkllyAgent.exe"
                     </table>
                   ) : (
                     <div className="p-8 text-center text-xs text-gray-400">
-                      All printer spool queues are idle. Incoming print jobs will appear here in real-time.
+                      No orders are currently marked in progress.
                     </div>
                   )}
                 </div>

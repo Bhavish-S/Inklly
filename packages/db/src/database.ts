@@ -28,6 +28,8 @@ export class DatabaseService {
       this.db = new DatabaseSync(dbTarget);
       this.initSchema();
       this.ensureSqliteDispatchMigration();
+      this.ensureSqliteMerchantVaultMigration();
+      this.ensureSqliteAgentPrinterMigration();
     }
   }
 
@@ -120,6 +122,8 @@ export class DatabaseService {
       }
     }
     this.ensurePostgresDispatchMigration();
+    this.ensurePostgresMerchantVaultMigration();
+    this.ensurePostgresAgentPrinterMigration();
   }
 
   private ensureSqliteDispatchMigration(): void {
@@ -154,6 +158,69 @@ export class DatabaseService {
     } catch (error) {
       try { this.queryPostgres('ROLLBACK'); } catch { /* preserve the original migration error */ }
       throw new Error(`[Inklly DB] PostgreSQL dispatch migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+
+  private ensureSqliteMerchantVaultMigration(): void {
+    const applied = this.db!.prepare(`SELECT version FROM inklly_schema_migrations WHERE version = 3`).get();
+    if (applied) return;
+    this.db!.exec('BEGIN');
+    try {
+      this.db!.exec(MERCHANT_VAULT_SCHEMA_SQL);
+      this.db!.prepare(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (3, ?)`).run(new Date().toISOString());
+      this.db!.exec('COMMIT');
+    } catch (error) {
+      try { this.db!.exec('ROLLBACK'); } catch { /* preserve the original migration error */ }
+      throw error;
+    }
+  }
+
+  private ensurePostgresMerchantVaultMigration(): void {
+    const applied = this.queryPostgres<{ version: number }>(
+      `SELECT version FROM inklly_schema_migrations WHERE version = ?`, [3]
+    );
+    if (applied.length > 0) return;
+    this.queryPostgres('BEGIN');
+    try {
+      for (const statement of MERCHANT_VAULT_SCHEMA_SQL.split(';').map((sql) => sql.trim()).filter(Boolean)) {
+        this.queryPostgres(statement);
+      }
+      this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [3, new Date().toISOString()]);
+      this.queryPostgres('COMMIT');
+    } catch (error) {
+      try { this.queryPostgres('ROLLBACK'); } catch { /* preserve the original migration error */ }
+      throw new Error(`[Inklly DB] PostgreSQL merchant vault migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+
+  private ensureSqliteAgentPrinterMigration(): void {
+    const applied = this.db!.prepare(`SELECT version FROM inklly_schema_migrations WHERE version = 4`).get();
+    if (applied) return;
+    this.db!.exec('BEGIN');
+    try {
+      const columns = this.db!.prepare(`PRAGMA table_info(printers)`).all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === 'agent_id')) this.db!.exec(`ALTER TABLE printers ADD COLUMN agent_id TEXT`);
+      this.db!.exec(`CREATE INDEX IF NOT EXISTS idx_printers_agent ON printers(agent_id, shop_id, is_online)`);
+      this.db!.prepare(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (4, ?)`).run(new Date().toISOString());
+      this.db!.exec('COMMIT');
+    } catch (error) {
+      try { this.db!.exec('ROLLBACK'); } catch { /* preserve the original migration error */ }
+      throw error;
+    }
+  }
+
+  private ensurePostgresAgentPrinterMigration(): void {
+    const applied = this.queryPostgres<{ version: number }>(`SELECT version FROM inklly_schema_migrations WHERE version = ?`, [4]);
+    if (applied.length > 0) return;
+    this.queryPostgres('BEGIN');
+    try {
+      this.queryPostgres(`ALTER TABLE printers ADD COLUMN IF NOT EXISTS agent_id TEXT`);
+      this.queryPostgres(`CREATE INDEX IF NOT EXISTS idx_printers_agent ON printers(agent_id, shop_id, is_online)`);
+      this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [4, new Date().toISOString()]);
+      this.queryPostgres('COMMIT');
+    } catch (error) {
+      try { this.queryPostgres('ROLLBACK'); } catch { /* preserve the original migration error */ }
+      throw new Error(`[Inklly DB] PostgreSQL agent printer migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
     }
   }
 
@@ -244,3 +311,33 @@ export class DatabaseService {
     }
   }
 }
+
+const MERCHANT_VAULT_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS storage_categories (
+  id TEXT PRIMARY KEY,
+  shop_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  document_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  UNIQUE (shop_id, id),
+  UNIQUE (shop_id, name),
+  FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_storage_categories_shop ON storage_categories(shop_id, created_at);
+CREATE TABLE IF NOT EXISTS storage_documents (
+  id TEXT PRIMARY KEY,
+  shop_id TEXT NOT NULL,
+  category_id TEXT,
+  file_name TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  file_size_bytes INTEGER NOT NULL,
+  page_count INTEGER NOT NULL DEFAULT 1,
+  storage_key TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE,
+  FOREIGN KEY (shop_id, category_id) REFERENCES storage_categories(shop_id, id) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_storage_documents_shop_created ON storage_documents(shop_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_storage_documents_category ON storage_documents(category_id);
+`;

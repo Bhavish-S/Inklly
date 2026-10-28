@@ -3,6 +3,8 @@
 > **PURPOSE OF THIS FILE:**  
 > This file is the **master memory and operational context** for Antigravity CLI, AI pair programmers, and autonomous agents. When this codebase is unzipped onto any computer, drive, or VM, reading this single document gives the agent complete situational awareness: what this project is, what has already been built, strict architectural rules, how to build/run/test, and exactly how to continue.
 
+> **Current evidence override (2026-10-28):** The historical “100% interactive” and complete-feature inventory later in this file is not a verified release statement. UI controls, simulations, demo fixtures, provider credentials, printer status, billing, and integrations must be verified from current source/tests before being described as live. `npm run build` passes and `npm test` passes 178 tests locally. See `BUILD_AND_TEST_RESULTS.md`, `IMPLEMENTATION_STATUS.md`, and `REMAINING_ISSUES.md` for current evidence. Physical output is not verified and remains disabled by default.
+
 ---
 
 ## 📌 1. Project Overview & Identity

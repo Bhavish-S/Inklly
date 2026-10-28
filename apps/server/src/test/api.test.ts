@@ -525,13 +525,17 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
         status: 'ONLINE',
         activePrintersCount: 2,
         localQueueDepth: 0,
+        printers: [{ name: 'API Test Queue', driverName: 'API Test Driver', isOnline: true, isDefault: true }],
       }),
     });
     assert.equal(hbRes.status, 200);
 
+    const livePrinter = db.queryOne<any>(`SELECT id FROM printers WHERE agent_id = ? AND name = ?`, [enrollData.agentId, 'API Test Queue']);
+    assert.ok(livePrinter);
     const dispatchRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${cashOrderId}/print`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${merchantToken}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+      body: JSON.stringify({ printerId: livePrinter.id }),
     });
     assert.equal(dispatchRes.status, 200);
 
@@ -570,11 +574,13 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
 
     // A command that never receives an acknowledgement is made uncertain when its lease expires, never reprinted blindly.
     const fileRow = db.queryOne<any>(`SELECT order_file_id FROM print_jobs WHERE id = ?`, [targetJob.id]);
+    const printerRow = db.queryOne<any>(`SELECT id FROM printers WHERE agent_id = ? AND name = ?`, [enrollData.agentId, 'API Test Queue']);
+    assert.ok(printerRow, 'heartbeat inventory should be persisted to this paired agent');
     const expiredJobId = `job-expired-ack-${crypto.randomUUID()}`;
     const now = new Date().toISOString();
     db.execute(
-      `INSERT INTO print_jobs (id, order_id, order_file_id, status, created_at, updated_at) VALUES (?, ?, ?, 'RECEIVED', ?, ?)`,
-      [expiredJobId, cashOrderId, fileRow.order_file_id, now, now]
+      `INSERT INTO print_jobs (id, order_id, order_file_id, printer_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'RECEIVED', ?, ?)`,
+      [expiredJobId, cashOrderId, fileRow.order_file_id, printerRow.id, now, now]
     );
     const issuedRes = await fetch(`${baseUrl}/api/v1/agent/poll-commands`, { headers: agentHeaders });
     const issued = await issuedRes.json() as Array<{ jobId: string; attemptId: string }>;

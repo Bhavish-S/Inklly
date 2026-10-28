@@ -106,16 +106,11 @@ describe('Inklly Desktop Edge Print Agent Test Suite', () => {
     assert.equal(configManager.update({ serverUrl: 'http://127.0.0.1:4000/api/v1' }).serverUrl, 'http://127.0.0.1:4000/api/v1');
   });
 
-  it('Discovers local printer capabilities including duplex and color', async () => {
+  it('reports only locally discovered printers and does not invent live hardware', async () => {
     const printers = await PrinterDiscoveryService.discoverPrinters();
-    assert.ok(printers.length >= 2, 'Should discover at least 2 printers');
-
-    const bwPrinter = printers.find((p) => !p.supportsColor);
-    assert.ok(bwPrinter, 'Should find high-speed B&W printer');
-    assert.equal(bwPrinter.supportsDuplex, true);
-
-    const colorPrinter = printers.find((p) => p.supportsColor);
-    assert.ok(colorPrinter, 'Should find color multi-format printer');
+    assert.ok(printers.every((p) => p.name && p.driverName), 'Every result must come from a local queue');
+    assert.equal(printers.some((p) => /HP LaserJet Pro M401dne|Canon imageRUNNER ADVANCE C3530i/.test(p.name)), false);
+    if (process.platform !== 'win32') assert.deepEqual(printers, []);
   });
 
   it('SpoolerExecutor refuses physical printing during the pilot', async () => {

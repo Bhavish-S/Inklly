@@ -13,6 +13,7 @@ describe('Inklly End-to-End Automated Printing & Multi-Plan Workflow Test Suite'
   let adminToken: string;
   let createdOrderId: string;
   let uploadedStorageKey: string;
+  let agentHeaders: Record<string, string>;
 
   before(async () => {
     db = new DatabaseService(':memory:');
@@ -174,6 +175,22 @@ describe('Inklly End-to-End Automated Printing & Multi-Plan Workflow Test Suite'
   // STEP 4: AUTOMATED PRINT SPOOLING TO CANON LBP2900
   // ─────────────────────────────────────────────────────────────
   it('Step 4: System dispatches automated print command transitioning order status to IN_PROGRESS', async () => {
+    const pairingRes = await fetch(`${baseUrl}/api/v1/merchant/agents/pairing-code`, { method: 'POST', headers: { Authorization: `Bearer ${merchantToken}` } });
+    assert.equal(pairingRes.status, 201);
+    const pairing = await pairingRes.json() as any;
+    const enrollRes = await fetch(`${baseUrl}/api/v1/agent/enroll`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopId: 'shop-campus-1', pairingCode: pairing.pairingCode, hostname: 'SIMULATED-E2E-AGENT' }),
+    });
+    assert.equal(enrollRes.status, 201);
+    const agent = await enrollRes.json() as any;
+    agentHeaders = { 'Content-Type': 'application/json', 'X-Agent-Id': agent.agentId, Authorization: `Bearer ${agent.agentSecret}` };
+    const heartbeatRes = await fetch(`${baseUrl}/api/v1/agent/heartbeat`, {
+      method: 'POST', headers: agentHeaders,
+      body: JSON.stringify({ status: 'ONLINE', activePrintersCount: 1, localQueueDepth: 0, printers: [{ name: 'Canon LBP2900 (High-Speed USB Laser)', driverName: 'Canon LBP2900', isOnline: true, isDefault: true }] }),
+    });
+    assert.equal(heartbeatRes.status, 200);
+
     const printRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${createdOrderId}/print`, {
       method: 'POST',
       headers: {
@@ -195,15 +212,6 @@ describe('Inklly End-to-End Automated Printing & Multi-Plan Workflow Test Suite'
   // STEP 5: EDGE PRINT AGENT QUEUE POLLING & LIFECYCLE
   // ─────────────────────────────────────────────────────────────
   it('Step 5: Edge Print Agent polls queue and updates order to READY_FOR_COLLECTION and COLLECTED', async () => {
-    // Pair a real agent and authenticate its queue poll.
-    const pairingRes = await fetch(`${baseUrl}/api/v1/merchant/agents/pairing-code`, { method: 'POST', headers: { Authorization: `Bearer ${merchantToken}` } });
-    assert.equal(pairingRes.status, 201);
-    const pairing = await pairingRes.json() as any;
-    const enrollRes = await fetch(`${baseUrl}/api/v1/agent/enroll`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shopId: 'shop-campus-1', pairingCode: pairing.pairingCode, hostname: 'E2E-AGENT' }) });
-    assert.equal(enrollRes.status, 201);
-    const agent = await enrollRes.json() as any;
-    const agentHeaders = { 'Content-Type': 'application/json', 'X-Agent-Id': agent.agentId, Authorization: `Bearer ${agent.agentSecret}` };
-
     // 5a. Authenticated agent polls pending tickets
     const pollRes = await fetch(`${baseUrl}/api/v1/agent/poll-commands`, { headers: agentHeaders });
     assert.equal(pollRes.status, 200);

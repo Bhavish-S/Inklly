@@ -160,7 +160,7 @@ export class AgentRepository {
       const rows = this.db.query<any>(
         `SELECT pj.id AS job_id, pj.order_id, pj.printer_id, pj.status AS job_status,
                 of.id AS file_id, of.file_name, of.storage_key, of.print_options,
-                p.id AS target_printer_id, pa.id AS existing_attempt_id,
+                p.id AS target_printer_id, p.name AS target_printer_name, pa.id AS existing_attempt_id,
                 pa.created_at AS existing_attempt_created_at
          FROM print_jobs pj
          JOIN orders o ON pj.order_id = o.id
@@ -170,6 +170,7 @@ export class AgentRepository {
            SELECT pa2.id FROM print_attempts pa2 WHERE pa2.print_job_id = pj.id ORDER BY pa2.created_at DESC LIMIT 1
          )
          WHERE o.shop_id = ?
+           AND p.id IS NOT NULL AND p.is_online = 1 AND p.agent_id = ?
            AND o.status IN ('READY_FOR_PRINT', 'IN_PROGRESS')
            AND (o.payment_method <> 'ONLINE_RAZORPAY' OR o.payment_status = 'VERIFIED')
            AND (
@@ -178,7 +179,7 @@ export class AgentRepository {
              AND pa.agent_id = ? AND pa.dispatch_acknowledged_at IS NULL AND pa.created_at > ?)
          )
          ORDER BY pj.created_at ASC`,
-        [shopId, agentId, leaseCutoff]
+        [shopId, agentId, agentId, leaseCutoff]
       );
 
       return rows.flatMap((r): PrintCommandTicket[] => {
@@ -193,7 +194,7 @@ export class AgentRepository {
           this.db.execute(
             `INSERT INTO print_attempts (id, print_job_id, printer_id, agent_id, attempt_number, status, created_at, updated_at)
              VALUES (?, ?, ?, ?, 1, 'DISPATCHED_TO_AGENT', ?, ?)`,
-            [attemptId, r.job_id, r.target_printer_id || 'printer-hp-laserjet', agentId, nowIso, nowIso]
+            [attemptId, r.job_id, r.target_printer_id, agentId, nowIso, nowIso]
           );
         }
         if (!attemptId) return [];
@@ -204,7 +205,7 @@ export class AgentRepository {
           jobId: r.job_id,
           attemptId,
           shopId,
-          printerId: r.target_printer_id || 'printer-hp-laserjet',
+          printerId: r.target_printer_name,
           documentUrl: `${cleanBase}/api/v1/agent/files/${encodeURIComponent(r.file_id)}`,
           storageKey: r.storage_key,
           fileName: r.file_name,

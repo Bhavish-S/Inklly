@@ -67,6 +67,23 @@ export class AgentDispatchController {
       sqliteCacheHealthy: Boolean(sqliteCacheHealthy ?? true),
     });
 
+    // Older agents may not report inventory. Only replace it when the field is
+    // present; an explicit empty list means this agent currently sees no queues.
+    if (Array.isArray(req.body?.printers)) {
+      const reportedPrinters = req.body.printers;
+      if (reportedPrinters.length > 100) return res.status(400).json({ error: 'Agent may report at most 100 printer queues.' });
+      const inventory = reportedPrinters.filter((printer: any) =>
+        printer && typeof printer.name === 'string' && typeof printer.driverName === 'string'
+        && typeof printer.isOnline === 'boolean' && typeof printer.isDefault === 'boolean'
+      ).map((printer: any) => ({
+        name: printer.name,
+        driverName: printer.driverName,
+        isOnline: printer.isOnline,
+        isDefault: printer.isDefault,
+      }));
+      this.printerRepo.syncAgentInventory(identity.shopId, identity.agentId, inventory);
+    }
+
     res.json({ acknowledged: true, serverTime: new Date().toISOString() });
   };
 

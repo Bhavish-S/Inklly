@@ -208,16 +208,41 @@ export class MerchantController {
       return res.status(409).json({ error: 'Online payment must be verified before print dispatch.' });
     }
 
+    const requestedPrinter = req.body?.printerId || req.body?.printerName;
+    const onlinePrinters = this.printerRepo.getPrintersByShop(order.shopId).filter((candidate) => candidate.isOnline);
+    const defaults = onlinePrinters.filter((candidate) => candidate.isDefault);
+    const printer = typeof requestedPrinter === 'string' && requestedPrinter.trim()
+      ? onlinePrinters.find((candidate) => candidate.id === requestedPrinter || candidate.name === requestedPrinter || candidate.systemDriverName === requestedPrinter)
+      : defaults.length === 1 ? defaults[0] : undefined;
+    if (!printer || !printer.isOnline) {
+      return res.status(409).json({ error: 'Choose an online printer, or set exactly one online default printer before releasing this order. No print job was released.' });
+    }
+
     try {
-      // Transition from AWAITING_REVIEW -> READY_FOR_PRINT -> IN_PROGRESS
-      if (order.status === 'AWAITING_REVIEW' || order.status === 'SUBMITTED') {
-        this.orderRepo.updateOrderStatus(id, 'READY_FOR_PRINT');
-      }
-      this.orderRepo.updateOrderStatus(id, 'IN_PROGRESS');
+      // Assignment and order-state changes must commit together so an agent
+      // cannot see an in-progress order without a real, shop-owned target.
+      this.db.transaction(() => {
+        const jobs = this.db.query<any>(`SELECT id, printer_id, status FROM print_jobs WHERE order_id = ?`, [id]);
+        if (!jobs.length || jobs.some((job) => job.status !== 'RECEIVED' || job.printer_id)) {
+          throw new Error('PRINT_DISPATCH_CONFLICT: no unassigned jobs are available; inspect the existing print state.');
+        }
+        for (const job of jobs) {
+          this.db.execute(`UPDATE print_jobs SET printer_id = ?, updated_at = ? WHERE id = ? AND status = 'RECEIVED' AND printer_id IS NULL`, [printer.id, new Date().toISOString(), job.id]);
+        }
+        const assignedJobs = this.db.query<any>(`SELECT id FROM print_jobs WHERE order_id = ? AND printer_id = ? AND status = 'RECEIVED'`, [id, printer.id]);
+        if (assignedJobs.length !== jobs.length) throw new Error('PRINT_DISPATCH_CONFLICT: another release changed the printer assignment.');
+        if (order.status === 'AWAITING_REVIEW' || order.status === 'SUBMITTED') {
+          this.orderRepo.updateOrderStatus(id, 'READY_FOR_PRINT');
+        }
+        this.orderRepo.updateOrderStatus(id, 'IN_PROGRESS');
+      });
 
       const updated = this.orderRepo.getOrderById(id);
-      res.json({ success: true, message: 'Print dispatch initiated', order: updated });
+      res.json({ success: true, message: `Print jobs queued for ${printer.name}.`, printerId: printer.id, order: updated });
     } catch (err: any) {
+      if (typeof err?.message === 'string' && err.message.startsWith('PRINT_DISPATCH_CONFLICT:')) {
+        return res.status(409).json({ error: err.message.slice('PRINT_DISPATCH_CONFLICT:'.length).trim() });
+      }
       res.status(422).json({ error: err.message });
     }
   };

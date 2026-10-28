@@ -124,6 +124,12 @@ export class AgentDaemon {
           shopId: config.shopId,
           status: 'ONLINE',
           activePrintersCount: this.printers.filter((p) => p.isOnline).length,
+          printers: this.printers.map((printer) => ({
+            name: printer.name,
+            driverName: printer.driverName,
+            isOnline: printer.isOnline,
+            isDefault: printer.isDefault,
+          })),
           localQueueDepth: this.queue.getQueueDepth(),
           sqliteCacheHealthy: true,
         }),

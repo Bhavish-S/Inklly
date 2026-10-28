@@ -17,7 +17,7 @@ export class PrinterDiscoveryService {
 
     if (process.platform === 'win32') {
       try {
-        const cmd = `powershell -NoProfile -NonInteractive -Command "Get-Printer | Select-Object Name,DriverName,PrinterStatus,Shared | ConvertTo-Json"`;
+        const cmd = `powershell -NoProfile -NonInteractive -Command "Get-CimInstance Win32_Printer | Select-Object Name,DriverName,PrinterStatus,DetectedErrorState,WorkOffline,Default | ConvertTo-Json"`;
         const stdout = execSync(cmd, { encoding: 'utf-8', timeout: 4000 });
         const parsed = JSON.parse(stdout.trim());
         const list = Array.isArray(parsed) ? parsed : [parsed];
@@ -26,59 +26,26 @@ export class PrinterDiscoveryService {
           const p = list[idx];
           const name = p.Name || `Printer ${idx + 1}`;
           // Standard windows drivers like Microsoft Print to PDF support color
-          const isColor = /color|pdf|c3530|xerox|epson|inkjet|laser/i.test(name) || /pdf/i.test(p.DriverName || '');
-          const isDuplex = !/label|receipt|fax/i.test(name);
+          // Do not infer device capabilities from marketing names. Windows printer
+          // metadata does not reliably expose color/duplex support; report unknown
+          // conservatively until the driver capability query is implemented.
+          const isColor = false;
+          const isDuplex = false;
 
           discovered.push({
             name,
             driverName: p.DriverName || 'Generic PostScript / PCL',
-            isOnline: true,
-            isDefault: idx === 0,
+            isOnline: !Boolean(p.WorkOffline) && ![6, 7].includes(Number(p.PrinterStatus))
+              && ![3, 4, 5, 6].includes(Number(p.DetectedErrorState)),
+            isDefault: Boolean(p.Default),
             supportsColor: isColor,
             supportsDuplex: isDuplex,
-            trays: [
-              { id: `tray-${idx}-1`, name: 'Tray 1 (A4 Standard)', supportedSizes: ['A4', 'PLAIN'], isDefault: true },
-              { id: `tray-${idx}-2`, name: 'Tray 2 (A3 Multi-purpose)', supportedSizes: ['A3', 'PHOTO_4X6'], isDefault: false },
-            ],
+            trays: [],
           });
         }
       } catch {
         // Fallback
       }
-    }
-
-    // If no printers or if we need standard production shop devices, merge standard profiles
-    const hasColor = discovered.some((p) => p.supportsColor);
-    const hasBw = discovered.some((p) => !p.supportsColor);
-
-    if (discovered.length === 0 || !hasColor || !hasBw) {
-      discovered.push(
-        {
-          name: 'HP LaserJet Pro M401dne (B&W High-Speed)',
-          driverName: 'HP LaserJet Pro M401 PCL6',
-          isOnline: true,
-          isDefault: discovered.length === 0,
-          supportsColor: false,
-          supportsDuplex: true,
-          trays: [
-            { id: 'tray-hp-1', name: 'Tray 1 (A4 Standard)', supportedSizes: ['A4', 'PLAIN'], isDefault: true },
-            { id: 'tray-hp-2', name: 'Tray 2 (Manual Bypass)', supportedSizes: ['A4', 'PLAIN'], isDefault: false },
-          ],
-        },
-        {
-          name: 'Canon imageRUNNER ADVANCE C3530i (Color/Multi-Format)',
-          driverName: 'Canon Generic Plus PCL6',
-          isOnline: true,
-          isDefault: false,
-          supportsColor: true,
-          supportsDuplex: true,
-          trays: [
-            { id: 'tray-c1', name: 'Tray 1 (A4 Plain)', supportedSizes: ['A4', 'PLAIN'], isDefault: true },
-            { id: 'tray-c2', name: 'Tray 2 (A3 Heavy)', supportedSizes: ['A3', 'PLAIN'], isDefault: false },
-            { id: 'tray-c3', name: 'Tray 3 (Photo 4x6 / 5x7)', supportedSizes: ['PHOTO_4X6', 'PHOTO_5X7', 'GLOSSY'], isDefault: false },
-          ],
-        }
-      );
     }
 
     return discovered;
@@ -110,9 +77,9 @@ export class PrinterDiscoveryService {
           jamFault,
         };
       } catch {
-        // Fallback for mock environments
+        return { ready: false, status: 'Printer health could not be verified', paperFault: false, jamFault: false };
       }
     }
-    return { ready: true, status: 'Ready for Spooling', paperFault: false, jamFault: false };
+    return { ready: false, status: 'Printer health checks are unavailable on this operating system', paperFault: false, jamFault: false };
   }
 }

@@ -198,10 +198,11 @@ export const api = {
     return res.json();
   },
 
-  async dispatchPrint(orderId: string) {
+  async dispatchPrint(orderId: string, printerId?: string) {
     const res = await fetch(`${API_BASE}/merchant/orders/${orderId}/print`, {
       method: 'POST',
       headers: getHeaders(),
+      body: JSON.stringify(printerId ? { printerId } : {}),
     });
     if (!res.ok) {
       const err = await res.json();

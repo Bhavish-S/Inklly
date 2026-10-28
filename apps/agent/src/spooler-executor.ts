@@ -113,23 +113,36 @@ export class SpoolerExecutor {
     const sumatraExe = possibleBinPaths.find((p) => fs.existsSync(p));
     if (!sumatraExe) throw new Error('SumatraPDF.exe is not installed with the agent.');
 
-    // Determine target printer name dynamically (supports Canon, HP, Epson, Brother, PDF, etc.)
-    let targetPrinter = printerOverride || ticket.printerId;
+    // Resolve only the explicitly assigned Windows queue. Guessing another
+    // printer risks sending a customer's document to the wrong device.
+    const requestedPrinter = printerOverride || ticket.printerId;
+    let targetPrinter = '';
     try {
       const detected: DiscoveredPrinter[] = await PrinterDiscoveryService.discoverPrinters();
-      const match = detected.find((p: DiscoveredPrinter) => p.name.toLowerCase() === (targetPrinter || '').toLowerCase());
-      if (match) {
-        targetPrinter = match.name;
-      } else {
-        const canon = detected.find((p: DiscoveredPrinter) => /canon/i.test(p.name));
-        const physical = detected.find((p: DiscoveredPrinter) => !/pdf|xps|onenote|fax/i.test(p.name));
-        const defaultP = detected.find((p: DiscoveredPrinter) => p.isDefault);
-        targetPrinter = canon?.name || physical?.name || defaultP?.name || (detected[0]?.name || 'Canon LBP2900');
-      }
+      const match = detected.find((p: DiscoveredPrinter) => p.name === requestedPrinter);
+      if (match?.isOnline) targetPrinter = match.name;
     } catch {
-      if (!targetPrinter || targetPrinter.startsWith('printer-')) {
-        targetPrinter = 'Canon LBP2900';
-      }
+      // Discovery failure means no safe target is known.
+    }
+    if (!targetPrinter) {
+      return {
+        attemptId: ticket.attemptId,
+        jobId: ticket.jobId,
+        status: 'FAILED',
+        errorMessage: 'The assigned printer queue is not present and online on this agent; no document was submitted.',
+        timestamp,
+      };
+    }
+
+    const printOptions = ticket.options;
+    if (printOptions.colorMode === 'mixed' || printOptions.duplexMode === 'duplex_manual' || printOptions.pagesPerSheet !== 1) {
+      return {
+        attemptId: ticket.attemptId,
+        jobId: ticket.jobId,
+        status: 'FAILED',
+        errorMessage: 'This agent cannot safely apply mixed-color, manual-duplex, or multi-page-per-sheet settings; no document was submitted.',
+        timestamp,
+      };
     }
 
     // Prepare printable PDF document
@@ -179,12 +192,22 @@ export class SpoolerExecutor {
       };
     }
 
-    // SumatraPDF print settings: strictly print 1 page only during test/evaluation to conserve physical paper
-    const requestedRange = ticket.options?.pageRange && ticket.options.pageRange !== 'All'
-      ? ticket.options.pageRange
-      : '1';
-    const copies = 1;
-    const settings = `${copies}x,${requestedRange},fit`;
+    const copies = Number(printOptions.copies);
+    if (!Number.isInteger(copies) || copies < 1 || copies > 99) {
+      return { attemptId: ticket.attemptId, jobId: ticket.jobId, status: 'FAILED', errorMessage: 'Invalid copy count; no document was submitted.', timestamp };
+    }
+    const settingsParts: string[] = [`${copies}x`, printOptions.colorMode === 'bw' ? 'monochrome' : 'color'];
+    if (printOptions.pageRange && printOptions.pageRange !== 'All') settingsParts.push(printOptions.pageRange);
+    if (printOptions.fitMode === 'fit') settingsParts.push('fit');
+    if (printOptions.orientation === 'portrait' || printOptions.orientation === 'landscape') settingsParts.push(printOptions.orientation);
+    if (printOptions.duplexMode === 'duplex_auto') settingsParts.push('duplex');
+    else settingsParts.push('simplex');
+    settingsParts.push(printOptions.collation ? 'collate' : 'nocollate');
+    if (printOptions.paperSize === 'A4' || printOptions.paperSize === 'A3') settingsParts.push(`paper=${printOptions.paperSize}`);
+    else if (printOptions.paperSize !== 'PLAIN') {
+      return { attemptId: ticket.attemptId, jobId: ticket.jobId, status: 'FAILED', errorMessage: 'This agent cannot verify the requested paper size/type; no document was submitted.', timestamp };
+    }
+    const settings = settingsParts.join(',');
 
     console.log(`[Inklly Spooler] Spooling ${filePath} to physical printer "${targetPrinter}" via ${sumatraExe}...`);
 
@@ -203,9 +226,7 @@ export class SpoolerExecutor {
       return {
         attemptId: ticket.attemptId,
         jobId: ticket.jobId,
-        status: 'PRINT_CONFIRMED',
-        driverJobId: Math.floor(1000 + Math.random() * 9000),
-        pagesPrinted: copies,
+        status: 'SUBMITTED_TO_SPOOLER',
         timestamp,
       };
     } finally {
