@@ -14,6 +14,7 @@ export class AgentDaemon {
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private pollInterval: NodeJS.Timeout | null = null;
   private workerInterval: NodeJS.Timeout | null = null;
+  private workerPromise: Promise<void> | null = null;
 
   constructor(configManager?: ConfigManager, queue?: LocalOfflineQueue) {
     this.configManager = configManager || new ConfigManager();
@@ -53,8 +54,7 @@ export class AgentDaemon {
     this.heartbeatInterval = setInterval(() => this.sendHeartbeat(), config.heartbeatIntervalMs);
     this.pollInterval = setInterval(() => this.pollServerCommands(), config.pollIntervalMs);
     this.workerInterval = setInterval(() => {
-      void this.processPendingReports();
-      void this.processNextQueueItem();
+      this.runWorkerCycle();
     }, 2000);
 
     // Initial immediate run
@@ -62,14 +62,30 @@ export class AgentDaemon {
     this.pollServerCommands();
   }
 
-  public stop(): void {
+  public async stop(): Promise<void> {
     this.isRunning = false;
     if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
     if (this.pollInterval) clearInterval(this.pollInterval);
     if (this.workerInterval) clearInterval(this.workerInterval);
-    if (this.server) this.server.close();
+    if (this.workerPromise) await this.workerPromise;
+    if (this.server) {
+      await new Promise<void>((resolve) => this.server!.close(() => resolve()));
+      this.server = null;
+    }
     this.queue.close();
     console.log('[Inklly Agent] Daemon stopped cleanly.');
+  }
+
+  private runWorkerCycle(): void {
+    if (!this.isRunning || this.workerPromise) return;
+    this.workerPromise = (async () => {
+      await this.processPendingReports();
+      if (this.isRunning) await this.processNextQueueItem();
+    })().catch((err: unknown) => {
+      console.error('[Inklly Agent] Queue worker cycle failed; the command will not be blindly retried:', err);
+    }).finally(() => {
+      this.workerPromise = null;
+    });
   }
 
   public async enrollWithServer(shopId?: string, _secretKey?: string): Promise<boolean> {
@@ -119,6 +135,7 @@ export class AgentDaemon {
       await fetch(`${config.serverUrl}/agent/heartbeat`, {
         method: 'POST',
         headers: this.agentHeaders(config),
+        signal: AbortSignal.timeout(10_000),
         body: JSON.stringify({
           agentId: config.agentId,
           shopId: config.shopId,
@@ -144,18 +161,22 @@ export class AgentDaemon {
     if (!config.agentId || !config.secretKey) return 0;
 
     try {
-      const res = await fetch(`${config.serverUrl}/agent/poll-commands`, { headers: this.agentHeaders(config) });
-      if (!res.ok) return 0;
+      const res = await fetch(`${config.serverUrl}/agent/poll-commands`, {
+        headers: this.agentHeaders(config), signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok || !this.isRunning) return 0;
 
       const tickets = (await res.json()) as PrintCommandTicket[];
       let enqueued = 0;
       for (const ticket of tickets) {
+        if (!this.isRunning) break;
         // Persist into local SQLite before acknowledging. If the response or
         // acknowledgement is lost, the next poll replays the same stable ID.
         if (this.queue.enqueue(ticket)) enqueued++;
         await fetch(`${config.serverUrl}/agent/acknowledge-command`, {
           method: 'POST',
           headers: this.agentHeaders(config),
+          signal: AbortSignal.timeout(10_000),
           body: JSON.stringify({ commandId: ticket.commandId, attemptId: ticket.attemptId }),
         });
       }
@@ -194,13 +215,20 @@ export class AgentDaemon {
       ? {
           attemptId: item.attemptId,
           jobId: item.jobId,
-          status: 'OUTPUT_UNCERTAIN' as const,
-          errorMessage: 'The server print ticket expired before local execution; output requires operator reconciliation.',
+          status: 'FAILED' as const,
+          errorMessage: 'The server print ticket expired before local execution; no print was submitted.',
           timestamp: new Date().toISOString(),
         }
       : await SpoolerExecutor.executeTicket(ticket, {
+          downloadServerUrl: config.serverUrl,
           downloadHeaders: this.agentHeaders(config),
-        });
+        }).catch((err: unknown) => ({
+          attemptId: item.attemptId,
+          jobId: item.jobId,
+          status: 'OUTPUT_UNCERTAIN' as const,
+          errorMessage: `The print worker failed unexpectedly after dispatch began. Inspect the printer before retrying. ${err instanceof Error ? err.message : 'Unknown execution error'}`,
+          timestamp: new Date().toISOString(),
+        }));
 
     // Persist the outcome before network I/O so a restart can retry server reporting.
     this.queue.saveResult(item.commandId, result);
@@ -222,6 +250,7 @@ export class AgentDaemon {
       const response = await fetch(`${config.serverUrl}/agent/command-result`, {
         method: 'POST',
         headers: this.agentHeaders(config),
+        signal: AbortSignal.timeout(10_000),
         body: JSON.stringify(result),
       });
       return response.ok;

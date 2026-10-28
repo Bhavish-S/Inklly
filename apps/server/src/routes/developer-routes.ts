@@ -3,10 +3,15 @@ import { DeveloperController } from '../controllers/developer-controller';
 import { DatabaseService, AgentRepository } from '@inklly/db';
 import { authenticate, requireRole } from '../middleware/auth';
 import { Request, Response, NextFunction } from 'express';
+import { encryptWebhookSecret } from '../services/webhook-secrets';
 
 export function createDeveloperRoutes(db: DatabaseService): Router {
   const router = Router();
   const agentRepo = new AgentRepository(db);
+  // Existing webhook rows predate secret-at-rest encryption. Migrate before the
+  // routes become available; if old plaintext exists and key configuration is
+  // invalid, fail closed rather than continue serving the secret in cleartext.
+  agentRepo.migrateLegacyWebhookSecrets(encryptWebhookSecret);
   const controller = new DeveloperController(agentRepo);
 
   // OpenAPI spec is public

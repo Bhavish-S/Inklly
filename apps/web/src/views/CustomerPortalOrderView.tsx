@@ -141,46 +141,38 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
   onOrderSubmitted,
 }) => {
   // Live Shop Metadata
-  const [shop, setShop] = useState<any>({
-    id: 'shop-campus-1',
-    shopCode: 'campus1',
-    name: 'Campus Print Express',
-    tagline: 'High Speed Quality Printing & Photocopying',
-    counter: 'Counter #1 · Main University Plaza',
-    rates: {
-      bw_simplex: 2.0,
-      bw_duplex: 1.5,
-      color_simplex: 10.0,
-      color_duplex: 9.0,
-    },
-    onlinePaymentAvailable: false,
-    rateRules: [],
-  });
+  const [shop, setShop] = useState<any>(null);
+  const [shopLoading, setShopLoading] = useState(true);
+  const [shopError, setShopError] = useState('');
 
   useEffect(() => {
+    let active = true;
+    setShop(null);
+    setShopError('');
+    setShopLoading(true);
     api.getShop(shopCode)
       .then((data) => {
-        if (data && data.name) {
-          setShop({
-            id: data.id || 'shop-campus-1',
-            shopCode: data.shopCode || shopCode,
-            name: data.name,
-            tagline: data.tagline || 'High Speed Quality Printing & Photocopying',
-            counter: data.address || 'Main Counter',
-            rates: data.rates || {
-              bw_simplex: 2.0,
-              bw_duplex: 1.5,
-              color_simplex: 10.0,
-              color_duplex: 9.0,
-            },
-            onlinePaymentAvailable: Boolean(data.onlinePaymentAvailable),
-            rateRules: data.rates?.ratesList || [],
-          });
+        if (!active) return;
+        if (!data || typeof data.id !== 'string' || typeof data.name !== 'string' || !Array.isArray(data.rates?.ratesList) || data.rates.ratesList.length === 0) {
+          throw new Error('This shop has not finished setting up print prices. Please contact the shop.');
         }
+        setShop({
+          id: data.id,
+          shopCode: data.shopCode || shopCode,
+          name: data.name,
+          tagline: data.tagline || '',
+          counter: data.address || '',
+          rates: data.rates,
+          onlinePaymentAvailable: Boolean(data.onlinePaymentAvailable),
+          rateRules: data.rates.ratesList,
+        });
       })
       .catch((err) => {
-        console.warn('Failed to fetch live shop:', err);
-      });
+        if (!active) return;
+        setShopError(err instanceof Error ? err.message : 'This shop is currently unavailable. Please try again later.');
+      })
+      .finally(() => { if (active) setShopLoading(false); });
+    return () => { active = false; };
   }, [shopCode]);
 
   // State - Initialized empty for real customer uploads
@@ -189,6 +181,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const quoteRequestSequence = useRef(0);
+  const orderAttemptRef = useRef<{ fingerprint: string; key: string } | null>(null);
 
   const [activeDocIndex, setActiveDocIndex] = useState<number>(0);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
@@ -280,7 +273,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
           fileName: file.name,
           fileData: dataUrl,
           mimeType: file.type || 'application/octet-stream',
-          shopId: shop.id || 'shop-campus-1',
+          shopId: shop.id,
           pageCount: detectedPages,
         });
         if (typeof upload?.storageKey !== 'string' || !upload.storageKey) {
@@ -396,7 +389,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
     const requiredModes = activeDoc?.options.colorMode === 'mixed'
       ? ['bw', 'color']
       : [activeDoc?.options.colorMode || 'bw'];
-    return requiredModes.every((colorMode) => (shop.rateRules || []).some((rule: any) =>
+    return requiredModes.every((colorMode) => (shop?.rateRules || []).some((rule: any) =>
       rule.paperSize === paperSize && rule.colorMode === colorMode &&
       (activeDoc?.options.duplexMode === 'simplex' ? rule.duplexMode === 'simplex' : rule.duplexMode !== 'simplex')
     ));
@@ -418,7 +411,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
     setQuoteLoading(true);
     setQuoteError(null);
     const quoteRequest = {
-      shopId: shop.id || 'shop-campus-1',
+      shopId: shop?.id,
       files: documents.map((document) => ({
         fileName: document.fileName,
         pageCount: document.pageCount,
@@ -455,7 +448,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
       active = false;
       window.clearTimeout(timer);
     };
-  }, [documents, globalCopies, shop.id]);
+  }, [documents, globalCopies, shop?.id]);
 
   // Generate an A4 raster sheet from the selected originals, then upload the
   // exact generated output through the same private storage path as any upload.
@@ -784,8 +777,8 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
       let order = pendingOnlineOrder;
       let totalAmountPaise = pendingOnlineOrder?.totalAmountPaise ?? serverQuote.totalPaise;
       if (!order) {
-        const data = await api.submitOrder({
-          shopId: shop.id || 'shop-campus-1',
+        const orderPayload = {
+          shopId: shop.id,
           customerName: customerName.trim(),
           customerPhone: normalizedPhone,
           paymentMethod,
@@ -808,7 +801,12 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
               collation: true,
             },
           })),
-        });
+        };
+        const fingerprint = JSON.stringify(orderPayload);
+        if (!orderAttemptRef.current || orderAttemptRef.current.fingerprint !== fingerprint) {
+          orderAttemptRef.current = { fingerprint, key: crypto.randomUUID() };
+        }
+        const data = await api.submitOrder(orderPayload, orderAttemptRef.current.key);
 
         if (!data?.orderId || !data?.orderNumber || !Number.isSafeInteger(data.totalAmountPaise)) {
           throw new Error('The order service did not confirm an exact order total. Please try again.');
@@ -858,6 +856,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
         paymentMode: onlineCheckout ? 'ONLINE' : 'CASH',
       });
       setPendingOnlineOrder(null);
+      orderAttemptRef.current = null;
       setReviewModalOpen(false);
     } catch (err) {
       const changedQuote = err instanceof Error ? (err as Error & { currentQuote?: any }).currentQuote : undefined;
@@ -1021,6 +1020,20 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
     );
   }
 
+  if (shopLoading || !shop) {
+    return (
+      <main className="min-h-screen bg-[#F5F6FA] px-4 py-16 flex items-center justify-center">
+        <section className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-7 text-center shadow-sm" aria-live="polite">
+          <InkllyMark size={38} />
+          <h1 className="mt-4 text-lg font-extrabold text-slate-900">{shopLoading ? 'Loading shop details…' : 'Shop ordering unavailable'}</h1>
+          <p className="mt-2 text-sm text-slate-600">{shopLoading ? 'We are checking the shop and its current print prices.' : (shopError || 'The shop could not be loaded. No order has been placed.')}</p>
+          {!shopLoading && <button type="button" onClick={() => window.location.reload()} className="mt-5 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white">Try again</button>}
+          {onNavigateHome && <button type="button" onClick={onNavigateHome} className="mt-5 block w-full text-sm font-semibold text-indigo-700">Back to Inklly Home</button>}
+        </section>
+      </main>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#F5F6FA] text-slate-800 pb-28">
       {/* 1. TOP HEADER BAR WITH GRADIENT (Matching Part 2 Video) */}
@@ -1048,8 +1061,8 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
 
           <div className="text-right">
             <span className="inline-flex items-center gap-1 text-[11px] font-semibold bg-emerald-500/25 border border-emerald-300/30 text-emerald-100 px-2 py-0.5 rounded-full">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-300 animate-pulse"></span>
-              Printer Ready
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-300"></span>
+              Order intake open
             </span>
           </div>
         </div>

@@ -44,6 +44,22 @@ describe('Relational Database & Multi-Tenancy Tests', () => {
     assert.deepEqual(tables.map((table) => table.name).sort(), ['storage_categories', 'storage_documents']);
   });
 
+  it('applies the portal order idempotency migration without changing existing orders', () => {
+    const before = Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM orders`)?.count);
+    assert.ok(before > 0, 'seed data includes existing orders for migration preservation');
+    db.execute(`DROP TABLE portal_order_idempotency`);
+    db.execute(`DELETE FROM inklly_schema_migrations WHERE version = 7`);
+
+    (db as any).ensureSqlitePortalOrderIdempotencyMigration();
+
+    const after = Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM orders`)?.count);
+    const table = db.queryOne<any>(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'portal_order_idempotency'`);
+    const migration = db.queryOne<any>(`SELECT version FROM inklly_schema_migrations WHERE version = 7`);
+    assert.equal(after, before);
+    assert.equal(table?.name, 'portal_order_idempotency');
+    assert.equal(migration?.version, 7);
+  });
+
   it('synchronizes only agent-reported printer queues and marks disappeared queues offline', () => {
     printerRepo.syncAgentInventory('shop-campus-1', 'agent-a', [
       { name: 'Test OS Queue', driverName: 'Test Driver', isOnline: true, isDefault: true },

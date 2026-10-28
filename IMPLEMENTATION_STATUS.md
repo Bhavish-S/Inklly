@@ -5,7 +5,7 @@
 **Started:** 2026-10-25 (Asia/Kolkata)  
 **Current Phase:** Productization and workflow hardening (not release-ready)
 
-> **Verified snapshot (2026-10-28):** Most phase checklists below are historical feature inventory, not proof that every UI control is production-connected. Current local verification is 178 tests passing (database 5, shared 13, agent 8, server 152). Merchant printing assigns orders only to online shop printers, and agent polling is scoped to the reporting agent's queues; actual hardware output remains unverified and disabled by default. See `BUILD_AND_TEST_RESULTS.md` and `REMAINING_ISSUES.md` for current evidence and blockers.
+> **Verified snapshot (2026-10-28):** Most phase checklists below are historical feature inventory, not proof that every UI control is production-connected. Current local verification is 197 tests passing (database 6, shared 13, agent 12, server 166); `npm run build` passes and `npm audit --audit-level=high` reports zero vulnerabilities. Merchant printing assigns orders only to fresh online shop printers, and agent polling is scoped to the reporting agent's queues; ticket downloads are paired-origin restricted, bounded, and redirect-blocked; unexpected agent execution exceptions are persisted as `OUTPUT_UNCERTAIN`, worker cycles serialize, and shutdown drains active work; merchant permissions use current membership data. Developer webhook secrets are encrypted at rest and legacy rows are migrated. Platform tenant onboarding uses a single-use owner setup flow; the admin fleet uses persisted agent records and heartbeat-derived status; financial summaries use available source data; retention metrics and purge actions use database/storage results with audit records. Actual webhook delivery, PostgreSQL migration, and hardware output remain unverified. See `BUILD_AND_TEST_RESULTS.md` and `REMAINING_ISSUES.md` for current evidence and blockers.
 
 **Implemented and tested in source:**
 
@@ -88,7 +88,7 @@
   - [x] Scoped API key generator (`ink_live_...`, `ink_test_...`) with revocation.
   - [x] Webhook event dispatch simulator for external integrations.
 - [x] **Phase 9: Quality, Security & Production Readiness (historical checklist; not a readiness certification)**
-  - [x] Historical automated-test counts are not current evidence; latest verified 2026-10-28 run passes 178 tests (DB 5, shared 13, agent 8, server 152).
+  - [x] Historical automated-test counts are not current evidence; latest verified 2026-10-28 run passes 184 tests (DB 5, shared 13, agent 11, server 155).
   - [ ] Linting is not configured as a working project check.
   - [x] Zero external native C++ dependency requirements (`node:sqlite` DatabaseSync used throughout).
   - [x] Vite production build generated for web frontend.

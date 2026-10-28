@@ -53,8 +53,48 @@ export function authenticate(db: DatabaseService) {
     res.status(401).json({ error: 'Session has expired or was revoked. Please sign in again.' });
     return;
   }
+  const currentUser = db.queryOne<any>(`SELECT id, email, role, is_active FROM users WHERE id = ?`, [session.userId]);
+  if (!currentUser || !currentUser.is_active) {
+    db.execute(`UPDATE user_sessions SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`, [new Date().toISOString(), session.sessionId]);
+    res.status(401).json({ error: 'Account is inactive. Please contact your organization administrator.' });
+    return;
+  }
+
+  let currentClaims: AuthenticatedUser;
+  if (currentUser.role === 'PLATFORM_OWNER' || currentUser.role === 'PLATFORM_ADMIN') {
+    // Never let an old token retain platform privilege after the persisted role changes.
+    if (session.role !== currentUser.role) {
+      res.status(401).json({ error: 'Account permissions changed. Please sign in again.' });
+      return;
+    }
+    currentClaims = { ...session, email: currentUser.email, role: currentUser.role, shopId: undefined, organizationId: undefined,
+      permissions: currentUser.role === 'PLATFORM_OWNER' ? ['*'] : session.permissions };
+  } else if (currentUser.role === 'DEVELOPER' && !session.organizationId && !session.shopId) {
+    // Unaffiliated developer accounts may use identity-only routes, but have no
+    // tenant scope or tenant permissions until an organization membership exists.
+    currentClaims = { ...session, email: currentUser.email, role: 'DEVELOPER', permissions: [] };
+  } else {
+    // Tenant scope, role, and permissions are refreshed from the current membership
+    // on every request. A signed but stale JWT is not a durable authorization grant.
+    const membership = db.queryOne<any>(
+      `SELECT role, permissions FROM memberships WHERE user_id = ? AND organization_id = ? AND shop_id = ?`,
+      [session.userId, session.organizationId || '', session.shopId || '']
+    );
+    if (!membership) {
+      res.status(401).json({ error: 'Shop membership is no longer active. Please sign in again.' });
+      return;
+    }
+    let permissions: string[];
+    try {
+      const parsed = JSON.parse(membership.permissions);
+      permissions = Array.isArray(parsed) && parsed.every((item) => typeof item === 'string') ? parsed : [];
+    } catch {
+      permissions = [];
+    }
+    currentClaims = { ...session, email: currentUser.email, role: membership.role as UserRole, permissions };
+  }
   db.execute(`UPDATE user_sessions SET last_used_at = ? WHERE id = ?`, [new Date().toISOString(), session.sessionId]);
-  req.user = session;
+  req.user = currentClaims;
   next();
   };
 }

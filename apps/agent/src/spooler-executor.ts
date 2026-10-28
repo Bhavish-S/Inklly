@@ -11,7 +11,74 @@ const execFileAsync = promisify(execFile);
 export interface SpoolerExecutionOptions {
   simulateFailure?: 'TIMEOUT' | 'PAPER_JAM_UNCERTAIN' | 'SPOOLER_CRASH';
   targetPrinterOverride?: string;
+  downloadServerUrl?: string;
   downloadHeaders?: Record<string, string>;
+}
+
+const MAX_PRINT_FILE_BYTES = 35 * 1024 * 1024;
+const ALLOWED_DOWNLOAD_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/tiff']);
+
+/** Download only an agent-file route on the paired API origin. The ticket URL is untrusted input. */
+export async function downloadTicketDocument(
+  documentUrl: string,
+  serverUrl: string,
+  headers: Record<string, string> = {}
+): Promise<string> {
+  const expectedBase = new URL(serverUrl);
+  const target = new URL(documentUrl);
+  const expectedPath = `${expectedBase.pathname.replace(/\/$/, '')}/agent/files/`;
+  const fileId = target.pathname.startsWith(expectedPath) ? target.pathname.slice(expectedPath.length) : '';
+  if (target.origin !== expectedBase.origin || target.username || target.password || target.search || target.hash ||
+      target.pathname !== `${expectedPath}${fileId}` || !/^[A-Za-z0-9_-]{1,128}$/.test(fileId) ||
+      (target.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(target.hostname))) {
+    throw new Error('Print document URL does not match the paired Inklly server.');
+  }
+
+  const response = await fetch(target, { headers, redirect: 'manual', signal: AbortSignal.timeout(30_000) });
+  if (response.status >= 300 && response.status < 400) throw new Error('Print document server redirects are not allowed.');
+  if (!response.ok) throw new Error(`Print document download failed (HTTP ${response.status}).`);
+  const length = Number(response.headers.get('content-length'));
+  if (Number.isFinite(length) && length > MAX_PRINT_FILE_BYTES) throw new Error('Print document exceeds the 35 MiB download limit.');
+  const contentType = (response.headers.get('content-type') || '').split(';', 1)[0].trim().toLowerCase();
+  if (!ALLOWED_DOWNLOAD_TYPES.has(contentType)) throw new Error('Print document has an unsupported content type.');
+  if (!response.body) throw new Error('Print document response is empty.');
+
+  const chunks: Buffer[] = [];
+  let total = 0;
+  const reader = response.body.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_PRINT_FILE_BYTES) {
+        await reader.cancel();
+        throw new Error('Print document exceeds the 35 MiB download limit.');
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const body = Buffer.concat(chunks, total);
+  const isPdf = body.subarray(0, 5).toString('ascii') === '%PDF-';
+  const isJpeg = body[0] === 0xff && body[1] === 0xd8 && body[2] === 0xff;
+  const isPng = body.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  const isTiff = body.subarray(0, 4).toString('ascii') === 'II*\\0' || body.subarray(0, 4).toString('ascii') === 'MM\\0*';
+  if (!body.length || !((contentType === 'application/pdf' && isPdf) || (contentType === 'image/jpeg' && isJpeg) ||
+      (contentType === 'image/png' && isPng) || (contentType === 'image/tiff' && isTiff))) {
+    throw new Error('Print document content does not match its declared type.');
+  }
+
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'inklly-print-'));
+  const filePath = path.join(tempDir, 'document');
+  try {
+    await fs.promises.writeFile(filePath, body, { flag: 'wx', mode: 0o600 });
+    return filePath;
+  } catch (error) {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 export class SpoolerExecutor {
@@ -68,7 +135,7 @@ export class SpoolerExecutor {
     // 2. Physical Hardware Spooling (if on Windows and not in pure unit test mock mode)
     if (process.platform === 'win32' && process.env.NODE_ENV !== 'test') {
       try {
-        const result = await this.spoolToWindowsPrinter(ticket, options?.targetPrinterOverride, options?.downloadHeaders);
+        const result = await this.spoolToWindowsPrinter(ticket, options?.targetPrinterOverride, options?.downloadServerUrl, options?.downloadHeaders);
         if (result) return result;
       } catch (err: any) {
         console.error('[SpoolerExecutor] Windows physical spool error:', err);
@@ -98,6 +165,7 @@ export class SpoolerExecutor {
   private static async spoolToWindowsPrinter(
     ticket: PrintCommandTicket,
     printerOverride?: string,
+    downloadServerUrl?: string,
     downloadHeaders?: Record<string, string>
   ): Promise<SpoolerResult | null> {
     if (process.env.NODE_ENV === 'test') {
@@ -146,51 +214,8 @@ export class SpoolerExecutor {
     }
 
     // Prepare printable PDF document
-    let filePath = ticket.documentUrl;
+    let filePath = '';
     let isTempFile = false;
-
-    // Check if authentic uploaded document exists on disk via storageKey or uploads folder
-    const customKey = (ticket as any).storageKey as string | undefined;
-    const candidatePaths = [
-      customKey ? path.join(process.cwd(), customKey) : '',
-    ].filter(Boolean);
-
-    for (const cp of candidatePaths) {
-      if (fs.existsSync(cp)) {
-        filePath = cp;
-        console.log(`[Inklly Spooler] Located authentic uploaded document on disk: ${filePath}`);
-        break;
-      }
-    }
-
-    // Download remote document if URL provided
-    if ((!filePath || !fs.existsSync(filePath)) && ticket.documentUrl && (ticket.documentUrl.startsWith('http://') || ticket.documentUrl.startsWith('https://'))) {
-      try {
-        const tempDir = path.join(process.cwd(), 'temp');
-        if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
-        const localPath = path.join(tempDir, `${ticket.jobId}-${ticket.fileName || 'job.pdf'}`);
-        const res = await fetch(ticket.documentUrl, { headers: downloadHeaders });
-        if (res.ok) {
-          const buffer = Buffer.from(await res.arrayBuffer());
-          fs.writeFileSync(localPath, buffer);
-          filePath = localPath;
-          isTempFile = true;
-          console.log(`[Inklly Spooler] Successfully downloaded customer document: ${localPath}`);
-        }
-      } catch (err) {
-        console.warn('[Inklly Spooler] Could not download remote document, fallback to receipt:', err);
-      }
-    }
-
-    if (!filePath || !fs.existsSync(filePath)) {
-      return {
-        attemptId: ticket.attemptId,
-        jobId: ticket.jobId,
-        status: 'FAILED',
-        errorMessage: 'The customer document is unavailable; no substitute document was printed.',
-        timestamp: new Date().toISOString(),
-      };
-    }
 
     const copies = Number(printOptions.copies);
     if (!Number.isInteger(copies) || copies < 1 || copies > 99) {
@@ -208,6 +233,32 @@ export class SpoolerExecutor {
       return { attemptId: ticket.attemptId, jobId: ticket.jobId, status: 'FAILED', errorMessage: 'This agent cannot verify the requested paper size/type; no document was submitted.', timestamp };
     }
     const settings = settingsParts.join(',');
+
+    // The ticket may contain a customer filename or a hostile URL. Never use either
+    // as a filesystem path or send paired credentials outside the configured API origin.
+    if (ticket.documentUrl && downloadServerUrl) {
+      try {
+        filePath = await downloadTicketDocument(ticket.documentUrl, downloadServerUrl, downloadHeaders);
+      } catch (err: any) {
+        return {
+          attemptId: ticket.attemptId,
+          jobId: ticket.jobId,
+          status: 'FAILED',
+          errorMessage: `The customer document could not be validated or downloaded; no print was submitted. ${err?.message || 'Download failed.'}`,
+          timestamp: new Date().toISOString(),
+        };
+      }
+      isTempFile = true;
+    }
+    if (!filePath || !fs.existsSync(filePath)) {
+      return {
+        attemptId: ticket.attemptId,
+        jobId: ticket.jobId,
+        status: 'FAILED',
+        errorMessage: 'The customer document is unavailable; no substitute document was printed.',
+        timestamp: new Date().toISOString(),
+      };
+    }
 
     console.log(`[Inklly Spooler] Spooling ${filePath} to physical printer "${targetPrinter}" via ${sumatraExe}...`);
 
@@ -231,11 +282,8 @@ export class SpoolerExecutor {
       };
     } finally {
       if (isTempFile && fs.existsSync(filePath)) {
-        setTimeout(() => {
-          try {
-            if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-          } catch {}
-        }, 15000);
+        const tempDir = path.dirname(filePath);
+        setTimeout(() => { void fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => undefined); }, 15000);
       }
     }
   }

@@ -80,6 +80,20 @@ export class PrinterRepository {
     );
   }
 
+  /** Set exactly one shop-owned printer as the preferred queue. */
+  public setDefaultPrinter(shopId: string, printerId: string): boolean {
+    let updated = false;
+    this.db.transaction(() => {
+      const printer = this.db.queryOne<any>(`SELECT id FROM printers WHERE id = ? AND shop_id = ?`, [printerId, shopId]);
+      if (!printer) return;
+      const now = new Date().toISOString();
+      this.db.execute(`UPDATE printers SET is_default = 0, updated_at = ? WHERE shop_id = ?`, [now, shopId]);
+      this.db.execute(`UPDATE printers SET is_default = 1, updated_at = ? WHERE id = ? AND shop_id = ?`, [now, printerId, shopId]);
+      updated = true;
+    });
+    return updated;
+  }
+
   /** Replace a shop's live queue inventory from an authenticated desktop agent. */
   public syncAgentInventory(shopId: string, agentId: string, queues: Array<{ name: string; driverName: string; isOnline: boolean; isDefault: boolean }>): void {
     const now = new Date().toISOString();

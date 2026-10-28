@@ -3,7 +3,7 @@
 > **PURPOSE OF THIS FILE:**  
 > This file is the **master memory and operational context** for Antigravity CLI, AI pair programmers, and autonomous agents. When this codebase is unzipped onto any computer, drive, or VM, reading this single document gives the agent complete situational awareness: what this project is, what has already been built, strict architectural rules, how to build/run/test, and exactly how to continue.
 
-> **Current evidence override (2026-10-28):** The historical “100% interactive” and complete-feature inventory later in this file is not a verified release statement. UI controls, simulations, demo fixtures, provider credentials, printer status, billing, and integrations must be verified from current source/tests before being described as live. `npm run build` passes and `npm test` passes 178 tests locally. See `BUILD_AND_TEST_RESULTS.md`, `IMPLEMENTATION_STATUS.md`, and `REMAINING_ISSUES.md` for current evidence. Physical output is not verified and remains disabled by default.
+> **Current evidence override (2026-10-28):** The historical “100% interactive” and complete-feature inventory later in this file is not a verified release statement. UI controls, simulations, demo fixtures, provider credentials, printer status, billing, and integrations must be verified from current source/tests before being described as live. Latest local verification: `npm run build` passes, `npm test` passes 197 tests, and `npm audit --audit-level=high` reports zero vulnerabilities. Platform tenant onboarding now creates persisted tenant data with a hashed, expiring one-time owner invitation; stale printer records are not dispatchable; and the agent safely persists ambiguous exceptions. See `BUILD_AND_TEST_RESULTS.md`, `IMPLEMENTATION_STATUS.md`, and `REMAINING_ISSUES.md` for current evidence. PostgreSQL migration execution and physical output are not verified.
 
 ---
 
@@ -273,61 +273,27 @@ Or start manually in separate terminals:
 - **Agent:** `npm run dev:agent` (Port 8765)
 - **Web:** `npm run dev:web` (Port 3000)
 
-### Step 5: Windows Counter Agent Setup & Diagnostics
-For Windows counter terminals, double-click `install-agent-windows.bat`:
-- Tests Windows Print Spooler (`winspool.drv`)
-- Queries hardware printers via native PowerShell (`Get-Printer`)
-- Binds to loopback port `8765` and initiates offline SQLite queue (`agent_queue.db`)
+### Step 5: Desktop Agent Status
 
----
+The local source workspace can start the agent with `npm run dev:agent`. This is a development workflow only. The repository does not currently contain a verified, signed production installer, and the agent download endpoint returns `503` with `installerAvailable: false`.
 
-## 🖨️ 6. Windows Drivers & Desktop Agent Architecture (Static Analysis Summary)
+The agent serves read-only local diagnostics on `127.0.0.1:8765`. A health response proves only that the local process answered; it does not prove cloud connectivity, printer readiness, or physical output. Do not distribute pairing scripts with embedded credentials. Windows protection for locally stored agent credentials and a signed installer remain release blockers.
 
-- **Competitor Artifact Audit (`D:\helolo\`):**
-  - `PrintCatalyst-1.6.1-win-x64.msi` (128 MB): Unsigned WiX MSI packaging full Chromium/Electron runtime (85 files, >150 MB RAM). Replaced by lightweight Inklly Agent (<25 MB RAM).
-  - `PrintCatalystLegacyAgent-1.5.51-windows7-x64.msi` (9.2 MB) & `x86.msi` (9.1 MB): Unsigned legacy agents packaging external `SumatraPDF-3.4.6-32.exe` and autostart Run-keys.
-  - `usb-autorun-creator-2-installer.exe` (2.1 MB): Softonic download wrapper with obsolete USB autorun vectors. **Permanently excluded** from Inklly for security.
-- **Inklly Native Spooler Integration:**
-  - Interfaces directly with Windows Print Spooler (`winspool.drv`), utilizing existing manufacturer OEM drivers (HP, Canon, Epson, Brother, Ricoh, Xerox).
-  - Multi-architecture platform selector in Merchant UI (`/merchant` $\rightarrow$ Business Setup $\rightarrow$ Printers): Windows 10/11 x64, Windows 7/8 Legacy x64, Windows 7/8 Legacy x86, macOS, Linux.
-  - Real browser download of `Inklly-Agent-Setup-{platform}.bat` dynamically configured with merchant shopCode and pairing credentials.
-  - Server endpoints: `/api/v1/agent/download`, `/api/v1/agent/driver-matrix`, `/api/v1/agent/diagnostics`.
-  - Full technical report: [WINDOWS_DRIVERS_AND_INSTALLER_AUDIT.md](file:///D:/Inkly/Source%20Code/WINDOWS_DRIVERS_AND_INSTALLER_AUDIT.md).
+## 🖨️ 6. Desktop Agent and Windows Print Verification
 
----
+- Windows printer discovery reports operating-system queue metadata only. Color/duplex capability is unknown and trays are not reported.
+- Physical printing is disabled by default and must remain disabled until installer integrity, credential protection, hardware capability checks, and output reconciliation are verified on supported Windows devices.
+- The current executor rejects settings it cannot verify, and reports spooler submission rather than confirmed physical output. Ambiguous output is recorded as `OUTPUT_UNCERTAIN` and is never blindly retried.
+- The local SQLite queue is implemented, but offline operation and crash recovery require release-level validation with real network and spooler failures.
+- See [WINDOWS_DRIVERS_AND_INSTALLER_AUDIT.md](./WINDOWS_DRIVERS_AND_INSTALLER_AUDIT.md), [BUILD_AND_TEST_RESULTS.md](./BUILD_AND_TEST_RESULTS.md), and [REMAINING_ISSUES.md](./REMAINING_ISSUES.md) for current source-backed status.
 
-## 🧭 7. Original Product Codebase Audit & Feature Parity Analysis (`C:\Users\user\Desktop\printcatalyst.in (1)`)
-
-- **Codebase Discovery & Decompilation:**
-  - Full analysis of `C:\Users\user\Desktop\printcatalyst.in (1)` including all 39 dynamic code chunks (`SuperAdminPanel`, `PortalPage`, `Dashboard3Panel`, `DocumentStudio`, `FinancialReportPanel`, `StaffApp`, `SubscriptionModal`, etc.).
-- **Capabilities Extracted & Built into Inklly:**
-  1. **Customer Self-Service Ordering Portal (`apps/web/src/views/CustomerPortalOrderView.tsx`):**
-     - **4 Specialized Intake Modes:**
-       - `📄 Standard Documents`: Multi-page PDFs, Word, PowerPoint, TXT, Images with automatic page count extraction.
-       - `🪪 ID Card 2-in-1 Studio`: Front & Back upload, Stacked or Side-by-Side layout on a single A4 sheet, automatic cutting outlines, and live preview.
-       - `📸 Passport Photo Studio`: 1-photo upload, 8-photo grid (4×6 photo paper) or 16-photo grid (A4), background tint selector (Studio White, Visa Sky Blue, Off-White), cutting guidelines, and instant preview.
-       - `💬 WhatsApp Drop Link`: Instant lookup by 10-digit mobile number or 4-digit pickup code to load an existing chat order into the browser.
-     - **Paper Grades & GSM Selection:** Standard 75 GSM, Bond 85 GSM (+₹0.50), Executive 100 GSM (+₹1.50), Glossy Photo Paper 180 GSM (+₹12.00), Card Stock 250 GSM (+₹8.00).
-     - **Finishing & Post-Print Binding:** No Finishing (₹0), Corner Staple (+₹2.00), Spiral Binding (+₹35.00), Thermal Soft Binding (+₹60.00), Lamination (+₹25.00).
-  2. **Platform Owner / Superadmin Console (`apps/web/src/views/PlatformAdminView.tsx`):**
-     - 10 Enterprise Tabs: Fleet Overview, Merchants Directory, Windows Agent Builds, Plans & Quotas, Financial Ledger, Edge Spoolers Fleet, Incident Response, Storage & Retention, Audit Logs, Runtime Rules.
-     - Windows Agent Builds Distribution: Download links for `Inklly-Agent-1.6.1-win-x64.msi`, `Inklly-LegacyAgent-1.5.5-win7-x86.msi`, and `Inklly-Agent-Setup.bat`.
-     - Storage Retention Engine: Telemetry of cached vs expired files, one-click retention purge to enforce zero-knowledge document privacy.
-     - CSV Browser Downloads: Merchants Directory CSV, Platform Financial Ledger CSV, and Audit Trail CSV.
-  3. **Developer & Integration Hub (`apps/web/src/views/DeveloperPortalView.tsx`):**
-     - Real-time API Explorer against Local `:4000` with latency timer, HTTP status badges, and formatted JSON output.
-     - Scoped API Key Manager with 1-time secret reveal modal and revocation.
-     - Webhook Event Simulator with HMAC-SHA256 signature generator (`X-Inklly-Signature-256`).
-     - Multi-language SDK snippets (cURL, TypeScript/Node.js, Python, C# .NET).
-     - OpenAPI 3.0 Contract with interactive schema tree and 1-click download (`Inklly-OpenAPI-v1.json`).
-
----
+Historical prototype inventories and external product comparisons are not implementation evidence. Use current routes, controller logic, schema, tests, and runtime checks for all feature claims. Do not carry forward unverified hardware, payment, storage, analytics, or integration claims from older notes.
 
 ## 🧭 8. Instructions for Future AI Agents
 
 When opening this codebase to add features, fix bugs, or expand capabilities:
 1. **Always read this file first (`BRAIN.md`)** to preserve project scope and invariants.
-2. **Never break the 33 automated tests:** Always run `npm test` after making modifications.
+2. **Preserve regression coverage:** Run `npm test` after meaningful source changes and record the observed result in `BUILD_AND_TEST_RESULTS.md`.
 3. **Keep Node dependencies clean:** We use Node 20+ native `node:sqlite`. Do NOT install heavy native packages like `better-sqlite3` or Python-dependent C++ build tools.
 4. **Preserve Integer Paise Math:** Any price calculation must use `packages/shared/src/pricing-engine/calculator.ts` or integer Paise arithmetic.
 5. **Preserve Inklly Branding:** Under no circumstances use any competitor brand names.

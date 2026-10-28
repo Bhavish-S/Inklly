@@ -58,6 +58,7 @@ export function createMerchantRoutes(db: DatabaseService, fileStorage: PrivateFi
 
   router.get('/printers', requirePermission('printers:view'), controller.getPrinters);
   router.post('/printers', requirePermission('printers:manage'), controller.addPrinter);
+  router.put('/printers/:id/default', requirePermission('printers:manage'), controller.setDefaultPrinter);
 
   router.get('/settings', requirePermission('settings:view'), controller.getSettings);
   router.put('/settings', requireRole('MERCHANT_OWNER', 'SHOP_MANAGER'), controller.updateSettings);

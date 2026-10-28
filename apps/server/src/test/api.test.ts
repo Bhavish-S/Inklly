@@ -1,11 +1,12 @@
 import { describe, it, before, after } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { createApp } from '../index';
-import { DatabaseService } from '@inklly/db';
+import { AgentRepository, DatabaseService } from '@inklly/db';
 import * as http from 'node:http';
 import * as crypto from 'node:crypto';
 import { makeTestPdf } from './test-pdf';
-import { createSessionToken, hashSessionToken } from '../middleware/session-token';
+import { createSessionToken, hashSessionToken, verifySessionToken } from '../middleware/session-token';
+import { decryptWebhookSecret, encryptWebhookSecret } from '../services/webhook-secrets';
 
 describe('Inklly Backend API Integration Test Suite', { concurrency: false }, () => {
   let server: http.Server;
@@ -224,7 +225,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
 
     const res = await fetch(`${baseUrl}/api/v1/portal/orders`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'order-test-cash-00000001' },
       body: JSON.stringify(submitReq),
     });
 
@@ -254,7 +255,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
 
     const orderRes = await fetch(`${baseUrl}/api/v1/portal/orders`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'order-test-pages-000001' },
       body: JSON.stringify({
         shopId: 'shop-campus-1',
         paymentMethod: 'CASH_ON_COLLECTION',
@@ -295,7 +296,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     const staleQuote = { ...quote, totalPaise: quote.totalPaise + 1 };
     const staleOrderRes = await fetch(`${baseUrl}/api/v1/portal/orders`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'order-test-stale-000001' },
       body: JSON.stringify({
         shopId: 'shop-campus-1', paymentMethod: 'CASH_ON_COLLECTION', quote: staleQuote,
         files: [{ ...file, storageKey: upload.storageKey }],
@@ -307,7 +308,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
 
     const acceptedOrderRes = await fetch(`${baseUrl}/api/v1/portal/orders`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'order-test-quote-000001' },
       body: JSON.stringify({
         shopId: 'shop-campus-1', paymentMethod: 'CASH_ON_COLLECTION', quote,
         files: [{ ...file, storageKey: upload.storageKey }],
@@ -316,6 +317,56 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(acceptedOrderRes.status, 201);
     const acceptedOrder = await acceptedOrderRes.json() as any;
     assert.equal(acceptedOrder.totalAmountPaise, quote.totalPaise);
+  });
+
+  it('deduplicates customer order retries and rejects reuse of a key for changed order data', async () => {
+    const uploadRes = await fetch(`${baseUrl}/api/v1/portal/upload`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopId: 'shop-campus-1', fileName: 'retry.pdf', fileData: makeTestPdf(1).toString('base64') }),
+    });
+    assert.equal(uploadRes.status, 201);
+    const upload = await uploadRes.json() as any;
+    const file = {
+      fileName: 'retry.pdf', pageCount: upload.pageCount, storageKey: upload.storageKey,
+      options: { colorMode: 'bw', duplexMode: 'simplex', paperSize: 'A4', copies: 1 },
+    };
+    const quoteRes = await fetch(`${baseUrl}/api/v1/portal/quote`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopId: 'shop-campus-1', files: [{ ...file, storageKey: undefined }] }),
+    });
+    assert.equal(quoteRes.status, 200);
+    const quote = await quoteRes.json() as any;
+    const key = 'order-idempotency-test-000001';
+    const payload = {
+      shopId: 'shop-campus-1', customerName: 'Retry Customer', customerPhone: '+91 98765 43210',
+      paymentMethod: 'CASH_ON_COLLECTION', quote, files: [file],
+    };
+    const countBefore = Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM orders WHERE shop_id = ?`, ['shop-campus-1'])?.count);
+    const first = await fetch(`${baseUrl}/api/v1/portal/orders`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify(payload),
+    });
+    assert.equal(first.status, 201, await first.clone().text());
+    const firstOrder = await first.json() as any;
+    const retry = await fetch(`${baseUrl}/api/v1/portal/orders`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify(payload),
+    });
+    assert.equal(retry.status, 200);
+    const retryOrder = await retry.json() as any;
+    assert.equal(retryOrder.orderId, firstOrder.orderId);
+    assert.equal(retryOrder.idempotentReplay, true);
+
+    const conflict = await fetch(`${baseUrl}/api/v1/portal/orders`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
+      body: JSON.stringify({ ...payload, customerName: 'Different Customer' }),
+    });
+    assert.equal(conflict.status, 409);
+    const countAfter = Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM orders WHERE shop_id = ?`, ['shop-campus-1'])?.count);
+    assert.equal(countAfter, countBefore + 1);
+
+    const missingKey = await fetch(`${baseUrl}/api/v1/portal/orders`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'bad' }, body: JSON.stringify(payload),
+    });
+    assert.equal(missingKey.status, 400);
   });
 
   it('Authenticates merchant owner and returns JWT session payload', async () => {
@@ -330,6 +381,25 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.ok(loginBody.token);
     assert.equal(loginBody.user.role, 'MERCHANT_OWNER');
     merchantToken = loginBody.token;
+  });
+
+  it('does not create a simulated WhatsApp pairing or save unencrypted Meta settings', async () => {
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` };
+    const setup = await fetch(`${baseUrl}/api/v1/merchant/whatsapp/setup`, { headers });
+    assert.equal(setup.status, 200);
+    const setupBody = await setup.json() as any;
+    assert.equal(setupBody.available, false);
+    assert.equal(setupBody.hasConnection, false);
+    assert.deepEqual(setupBody.accounts, []);
+
+    const pairing = await fetch(`${baseUrl}/api/v1/merchant/whatsapp/qr-pairing`, { method: 'POST', headers });
+    assert.equal(pairing.status, 503);
+    assert.equal((await pairing.json() as any).pairingCode, undefined);
+
+    const save = await fetch(`${baseUrl}/api/v1/merchant/whatsapp/setup`, {
+      method: 'POST', headers, body: JSON.stringify({ connectionType: 'existing_business_number', metaAppSecret: 'must-not-be-stored' }),
+    });
+    assert.equal(save.status, 503);
   });
 
   it('persists merchant storage categories in the tenant-scoped database', async () => {
@@ -406,6 +476,39 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(revokeRes.status, 200);
     const afterRevoke = await fetch(`${baseUrl}/api/v1/merchant/dashboard`, { headers: { Authorization: `Bearer ${staffToken}` } });
     assert.equal(afterRevoke.status, 401);
+  });
+
+  it('refreshes merchant authorization from the active account and membership instead of JWT claims', async () => {
+    const sessionId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const token = createSessionToken({
+      sessionId,
+      userId: 'user-staff-1',
+      email: 'operator@campusprint.in',
+      role: 'SHOP_STAFF',
+      organizationId: 'org-campus-network',
+      shopId: 'shop-campus-1',
+      permissions: ['printers:view', 'orders:view'],
+    });
+    db.execute(
+      `INSERT INTO user_sessions (id, user_id, token_hash, created_at, last_used_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      [sessionId, 'user-staff-1', hashSessionToken(token), now, now, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()]
+    );
+    const membership = db.queryOne<any>(`SELECT permissions FROM memberships WHERE user_id = ? AND shop_id = ?`, ['user-staff-1', 'shop-campus-1']);
+    const wasActive = db.queryOne<any>(`SELECT is_active FROM users WHERE id = ?`, ['user-staff-1'])?.is_active;
+    try {
+      db.execute(`UPDATE memberships SET permissions = ? WHERE user_id = ? AND shop_id = ?`, [JSON.stringify(['orders:view']), 'user-staff-1', 'shop-campus-1']);
+      const changedPermission = await fetch(`${baseUrl}/api/v1/merchant/printers`, { headers: { Authorization: `Bearer ${token}` } });
+      assert.equal(changedPermission.status, 403, 'old JWT permission must not survive a membership change');
+
+      db.execute(`UPDATE users SET is_active = 0 WHERE id = ?`, ['user-staff-1']);
+      const inactive = await fetch(`${baseUrl}/api/v1/merchant/dashboard`, { headers: { Authorization: `Bearer ${token}` } });
+      assert.equal(inactive.status, 401, 'inactive users must lose active sessions immediately');
+    } finally {
+      db.execute(`UPDATE memberships SET permissions = ? WHERE user_id = ? AND shop_id = ?`, [membership.permissions, 'user-staff-1', 'shop-campus-1']);
+      db.execute(`UPDATE users SET is_active = ? WHERE id = ?`, [wasActive, 'user-staff-1']);
+      db.execute(`UPDATE user_sessions SET revoked_at = ? WHERE id = ?`, [new Date().toISOString(), sessionId]);
+    }
   });
 
   it('Retrieves merchant dashboard stats and orders queue', async () => {
@@ -617,17 +720,23 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(scriptRes.status, 410);
 
     // Metadata must report the missing verified installer rather than a fabricated checksum.
-    const metaRes = await fetch(`${baseUrl}/api/v1/agent/download?platform=win-legacy-x86&shopCode=campus1&format=json`);
+    const metaRes = await fetch(`${baseUrl}/api/v1/agent/download?platform=win-x64&shopCode=campus1&format=json`);
     assert.equal(metaRes.status, 503);
     const metaJson = await metaRes.json();
     assert.equal(metaJson.installerAvailable, false);
+    const legacyRes = await fetch(`${baseUrl}/api/v1/agent/download?platform=win-legacy-x86&shopCode=campus1&format=msi`);
+    assert.equal(legacyRes.status, 503, 'unverified legacy installers must never be served');
 
     // 3. Driver matrix
     const matrixRes = await fetch(`${baseUrl}/api/v1/agent/driver-matrix`);
     assert.equal(matrixRes.status, 200);
     const matrix = await matrixRes.json();
-    assert.ok(matrix.manufacturers.some((m: any) => m.brand === 'HP'));
-    assert.ok(matrix.manufacturers.some((m: any) => m.brand === 'Canon'));
+    assert.equal(matrix.capabilityStatus, 'NOT_VERIFIED');
+    assert.equal(matrix.physicalPrintingEnabledByDefault, false);
+    assert.equal(matrix.colorSupport, 'UNKNOWN');
+    assert.equal(matrix.duplexSupport, 'UNKNOWN');
+    assert.equal(matrix.traySupport, 'NOT_REPORTED');
+    assert.equal('manufacturers' in matrix, false);
 
     // 4. Diagnostics
     const diagRes = await fetch(`${baseUrl}/api/v1/agent/diagnostics`);
@@ -664,6 +773,30 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.ok(overview.metrics.totalOrganizations >= 1);
     assert.ok(overview.metrics.totalShops >= 1);
     assert.equal(overview.health.apiStatus, 'HEALTHY');
+    const ledgerTotal = db.queryOne<any>(`SELECT SUM(amount_paise) as total FROM ledger_entries WHERE domain = 'CUSTOMER_PRINT_PAYMENT'`);
+    assert.equal(overview.metrics.platformGMVPaise, Number(ledgerTotal?.total ?? 0));
+    assert.equal(overview.metrics.platformMRRPaise, null, 'MRR stays unavailable while subscription billing is not configured');
+    assert.equal(overview.health.databaseEngine, 'SQLite');
+
+    const freshId = `agt-admin-fresh-${crypto.randomUUID()}`;
+    const staleId = `agt-admin-stale-${crypto.randomUUID()}`;
+    const now = new Date().toISOString();
+    db.execute(
+      `INSERT INTO agent_registrations (id, shop_id, secret_key_hash, hostname, os_platform, os_version, agent_version, is_active, last_heartbeat, created_at, updated_at)
+       VALUES (?, 'shop-campus-1', ?, 'FRESH-AGENT', 'win32', 'Windows 11', 'test', 1, ?, ?, ?),
+              (?, 'shop-campus-1', ?, 'STALE-AGENT', 'win32', 'Windows 10', 'test', 1, ?, ?, ?)`,
+      [freshId, 'hash-fresh', now, now, now, staleId, 'hash-stale', new Date(Date.now() - 60_000).toISOString(), now, now]
+    );
+    try {
+      const agentsRes = await fetch(`${baseUrl}/api/v1/platform/agents`, { headers: { Authorization: `Bearer ${adminToken}` } });
+      assert.equal(agentsRes.status, 200);
+      const agents = await agentsRes.json() as any[];
+      assert.equal(agents.find((agent) => agent.agentId === freshId)?.status, 'ONLINE');
+      assert.equal(agents.find((agent) => agent.agentId === staleId)?.status, 'STALE');
+      assert.equal('secretKey' in agents.find((agent) => agent.agentId === freshId), false);
+    } finally {
+      db.execute(`DELETE FROM agent_registrations WHERE id IN (?, ?)`, [freshId, staleId]);
+    }
 
     const enquiriesRes = await fetch(`${baseUrl}/api/v1/platform/enquiries`, {
       headers: { Authorization: `Bearer ${adminToken}` },
@@ -677,6 +810,208 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     });
     const audit = await auditRes.json() as any[];
     assert.ok(audit.some((entry) => entry.action === 'VIEW_PUBLIC_ENQUIRIES'));
+  });
+
+  it('onboards a merchant transactionally and accepts a hashed, single-use owner invitation', async () => {
+    const anonymous = await fetch(`${baseUrl}/api/v1/platform/merchants`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ organizationName: 'Invite Test Shop', ownerName: 'Invite Owner', ownerEmail: 'invite-owner@example.test', planTier: 'STARTER' }),
+    });
+    assert.equal(anonymous.status, 401);
+
+    const merchantAttempt = await fetch(`${baseUrl}/api/v1/platform/merchants`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+      body: JSON.stringify({ organizationName: 'Forbidden Shop', ownerName: 'Forbidden Owner', ownerEmail: 'forbidden@example.test', planTier: 'STARTER' }),
+    });
+    assert.equal(merchantAttempt.status, 403);
+    const invalidPlan = await fetch(`${baseUrl}/api/v1/platform/merchants`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ organizationName: 'Invalid Tier', ownerName: 'Invalid Owner', ownerEmail: 'invalid-tier@example.test', planTier: 'UNKNOWN' }),
+    });
+    assert.equal(invalidPlan.status, 400);
+    assert.equal(db.queryOne<any>(`SELECT id FROM users WHERE email = ?`, ['invalid-tier@example.test']), null);
+
+    const onboard = await fetch(`${baseUrl}/api/v1/platform/merchants`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ organizationName: 'Invite Test Shop', shopCode: 'invite-test-shop', ownerName: 'Invite Owner', ownerEmail: 'INVITE-OWNER@example.test', planTier: 'STARTER' }),
+    });
+    assert.equal(onboard.status, 201);
+    const body = await onboard.json() as any;
+    assert.equal(body.merchant.planStatus, 'TRIAL');
+    assert.equal(body.merchant.owner.email, 'invite-owner@example.test');
+    assert.ok(body.invitationToken);
+
+    const owner = db.queryOne<any>(`SELECT id, is_active FROM users WHERE email = ?`, ['invite-owner@example.test']);
+    assert.equal(owner.is_active, 0);
+    const invitation = db.queryOne<any>(`SELECT token_hash, expires_at FROM account_invitations WHERE user_id = ?`, [owner.id]);
+    assert.notEqual(invitation.token_hash, body.invitationToken);
+    assert.equal(invitation.token_hash, crypto.createHash('sha256').update(body.invitationToken).digest('hex'));
+    assert.ok(Date.parse(invitation.expires_at) > Date.now());
+    assert.equal(db.queryOne<any>(`SELECT status FROM subscriptions WHERE organization_id = ?`, [body.merchant.id]).status, 'TRIALING');
+    assert.equal(db.queryOne<any>(`SELECT COUNT(*) AS count FROM rate_rules WHERE shop_id = ?`, [body.merchant.shopId]).count, 4);
+    const audit = db.queryOne<any>(`SELECT actor_user_id, outcome FROM audit_events WHERE action = 'PLATFORM_MERCHANT_ONBOARDED' AND target_id = ?`, [body.merchant.id]);
+    assert.equal(audit.actor_user_id, adminToken ? db.queryOne<any>(`SELECT id FROM users WHERE email = 'admin@inklly.com'`).id : null);
+    assert.equal(audit.outcome, 'SUCCESS');
+
+    const weak = await fetch(`${baseUrl}/api/v1/auth/invitations/accept`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: body.invitationToken, password: 'weak-password-123' }),
+    });
+    assert.equal(weak.status, 400);
+    const accepted = await fetch(`${baseUrl}/api/v1/auth/invitations/accept`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: body.invitationToken, password: 'StrongInvitePassword123!' }),
+    });
+    assert.equal(accepted.status, 200);
+    assert.equal((await accepted.json() as any).success, true);
+    assert.equal(db.queryOne<any>(`SELECT is_active FROM users WHERE id = ?`, [owner.id]).is_active, 1);
+
+    const replay = await fetch(`${baseUrl}/api/v1/auth/invitations/accept`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: body.invitationToken, password: 'AnotherStrongPassword123!' }),
+    });
+    assert.equal(replay.status, 400);
+    const login = await fetch(`${baseUrl}/api/v1/auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'invite-owner@example.test', password: 'StrongInvitePassword123!' }),
+    });
+    assert.equal(login.status, 200);
+
+    const expiredOnboard = await fetch(`${baseUrl}/api/v1/platform/merchants`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ organizationName: 'Expired Invite Shop', shopCode: 'expired-invite', ownerName: 'Expired Owner', ownerEmail: 'expired-invite@example.test', planTier: 'GROWTH' }),
+    });
+    assert.equal(expiredOnboard.status, 201);
+    const expiredBody = await expiredOnboard.json() as any;
+    db.execute(`UPDATE account_invitations SET expires_at = ? WHERE token_hash = ?`, [new Date(Date.now() - 1000).toISOString(), crypto.createHash('sha256').update(expiredBody.invitationToken).digest('hex')]);
+    const expiredAccept = await fetch(`${baseUrl}/api/v1/auth/invitations/accept`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: expiredBody.invitationToken, password: 'StrongInvitePassword123!' }),
+    });
+    assert.equal(expiredAccept.status, 400);
+    assert.equal(db.queryOne<any>(`SELECT is_active FROM users WHERE email = ?`, ['expired-invite@example.test']).is_active, 0);
+  });
+
+  it('invites staff with scoped preset permissions and a single-use activation token', async () => {
+    const staffPayload = {
+      fullName: 'Asha Staff', email: `asha-${crypto.randomUUID()}@example.test`,
+      rolePreset: 'Order Handler', phone: '+91 97654 32100',
+    };
+    const wrongShop = await fetch(`${baseUrl}/api/v1/merchant/staff`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}`, 'x-shop-id': 'shop-starter-99' },
+      body: JSON.stringify(staffPayload),
+    });
+    assert.equal(wrongShop.status, 403);
+
+    const staffSessionId = crypto.randomUUID();
+    const staffSessionNow = new Date().toISOString();
+    const existingStaffToken = createSessionToken({
+      sessionId: staffSessionId, userId: 'user-staff-1', email: 'operator@campusprint.in', role: 'SHOP_STAFF',
+      organizationId: 'org-campus-network', shopId: 'shop-campus-1', permissions: ['orders:view'],
+    });
+    db.execute(
+      `INSERT INTO user_sessions (id, user_id, token_hash, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`,
+      [staffSessionId, 'user-staff-1', hashSessionToken(existingStaffToken), staffSessionNow, new Date(Date.now() + 60_000).toISOString()]
+    );
+    const nonOwner = await fetch(`${baseUrl}/api/v1/merchant/staff`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${existingStaffToken}` },
+      body: JSON.stringify(staffPayload),
+    });
+    assert.equal(nonOwner.status, 403);
+    db.execute(`UPDATE user_sessions SET revoked_at = ? WHERE id = ?`, [new Date().toISOString(), staffSessionId]);
+    for (const invalid of [
+      { ...staffPayload, email: 'bad-email' },
+      { ...staffPayload, fullName: 'A' },
+      { ...staffPayload, phone: 'not-a-phone' },
+      { ...staffPayload, rolePreset: 'Platform Owner' },
+    ]) {
+      const response = await fetch(`${baseUrl}/api/v1/merchant/staff`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+        body: JSON.stringify(invalid),
+      });
+      assert.equal(response.status, 400);
+    }
+
+    const created = await fetch(`${baseUrl}/api/v1/merchant/staff`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+      body: JSON.stringify(staffPayload),
+    });
+    assert.equal(created.status, 201);
+    const result = await created.json() as any;
+    assert.equal(result.success, true);
+    assert.equal(result.staff.rolePreset, 'Order Handler');
+    assert.ok(result.invitationToken);
+    assert.ok(Date.parse(result.invitationExpiresAt) > Date.now());
+
+    const staff = db.queryOne<any>(`SELECT id, email, phone, is_active, password_hash FROM users WHERE id = ?`, [result.staff.userId]);
+    assert.equal(staff.email, staffPayload.email);
+    assert.equal(staff.phone, '+919765432100');
+    assert.equal(staff.is_active, 0);
+    assert.ok(staff.password_hash.startsWith('scrypt$'));
+    const membership = db.queryOne<any>(`SELECT organization_id, shop_id, role, permissions FROM memberships WHERE user_id = ?`, [staff.id]);
+    assert.equal(membership.organization_id, 'org-campus-network');
+    assert.equal(membership.shop_id, 'shop-campus-1');
+    assert.equal(membership.role, 'SHOP_STAFF');
+    assert.deepEqual(JSON.parse(membership.permissions), ['orders:view', 'orders:process', 'live_print:manage', 'shop_qr:view', 'storage:view']);
+    const invite = db.queryOne<any>(`SELECT token_hash FROM account_invitations WHERE user_id = ?`, [staff.id]);
+    assert.equal(invite.token_hash, crypto.createHash('sha256').update(result.invitationToken).digest('hex'));
+    assert.notEqual(invite.token_hash, result.invitationToken);
+    const audit = db.queryOne<any>(`SELECT actor_user_id, shop_id, organization_id, action FROM audit_events WHERE target_id = ?`, [staff.id]);
+    assert.equal(audit.actor_user_id, db.queryOne<any>(`SELECT id FROM users WHERE email = 'owner@campusprint.in'`).id);
+    assert.equal(audit.shop_id, 'shop-campus-1');
+    assert.equal(audit.organization_id, 'org-campus-network');
+    assert.equal(audit.action, 'MERCHANT_STAFF_INVITED');
+
+    const duplicate = await fetch(`${baseUrl}/api/v1/merchant/staff`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+      body: JSON.stringify(staffPayload),
+    });
+    assert.equal(duplicate.status, 409);
+
+    const weakPassword = await fetch(`${baseUrl}/api/v1/auth/invitations/accept`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: result.invitationToken, password: 'weakpassword123' }),
+    });
+    assert.equal(weakPassword.status, 400);
+    const accepted = await fetch(`${baseUrl}/api/v1/auth/invitations/accept`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: result.invitationToken, password: 'StrongStaffPassword123!' }),
+    });
+    assert.equal(accepted.status, 200);
+    assert.equal(db.queryOne<any>(`SELECT is_active FROM users WHERE id = ?`, [staff.id]).is_active, 1);
+    const replay = await fetch(`${baseUrl}/api/v1/auth/invitations/accept`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: result.invitationToken, password: 'AnotherStrongPassword123!' }),
+    });
+    assert.equal(replay.status, 400);
+
+    const login = await fetch(`${baseUrl}/api/v1/auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: staffPayload.email, password: 'StrongStaffPassword123!' }),
+    });
+    assert.equal(login.status, 200);
+    const loginBody = await login.json() as any;
+    assert.equal(loginBody.user.role, 'SHOP_STAFF');
+    assert.equal(loginBody.shopId, 'shop-campus-1');
+    const loginSession = verifySessionToken(loginBody.token);
+    assert.ok(loginSession && loginSession !== 'expired');
+    assert.deepEqual((loginSession as any).permissions, JSON.parse(membership.permissions));
+
+    const expiredPayload = { ...staffPayload, email: `expired-staff-${crypto.randomUUID()}@example.test` };
+    const expiredCreate = await fetch(`${baseUrl}/api/v1/merchant/staff`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+      body: JSON.stringify(expiredPayload),
+    });
+    const expiredBody = await expiredCreate.json() as any;
+    assert.equal(expiredCreate.status, 201);
+    db.execute(`UPDATE account_invitations SET expires_at = ? WHERE user_id = ?`, [new Date(Date.now() - 1000).toISOString(), expiredBody.staff.userId]);
+    const expiredAccept = await fetch(`${baseUrl}/api/v1/auth/invitations/accept`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: expiredBody.invitationToken, password: 'StrongStaffPassword123!' }),
+    });
+    assert.equal(expiredAccept.status, 400);
+    assert.equal(db.queryOne<any>(`SELECT is_active FROM users WHERE id = ?`, [expiredBody.staff.userId]).is_active, 0);
   });
 
   it('Developer Portal generates OpenAPI spec and creates scoped API keys', async () => {
@@ -703,6 +1038,96 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(keyRes.status, 201);
     const keyData = await keyRes.json();
     assert.ok(keyData.apiKeySecret.startsWith('ink_test_'));
+    assert.equal('secretHash' in keyData.key, false, 'one-time key creation must not expose the stored verifier');
+    const listedKeysRes = await fetch(`${baseUrl}/api/v1/developer/keys`, { headers: { Authorization: `Bearer ${merchantToken}` } });
+    assert.equal(listedKeysRes.status, 200);
+    const listedKeys = await listedKeysRes.json() as any[];
+    assert.ok(listedKeys.length > 0);
+    assert.ok(listedKeys.every((key) => !('secretHash' in key)), 'key listing must never expose stored verifiers');
+
+    const invalidScopes = await fetch(`${baseUrl}/api/v1/developer/keys`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+      body: JSON.stringify({ keyName: 'Invalid scope key', environment: 'TEST', scopes: ['admin:*'] }),
+    });
+    assert.equal(invalidScopes.status, 400);
+
+    const invalidEnvironment = await fetch(`${baseUrl}/api/v1/developer/keys`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+      body: JSON.stringify({ keyName: 'Invalid env key', environment: 'ROOT', scopes: ['orders:read'] }),
+    });
+    assert.equal(invalidEnvironment.status, 400);
+  });
+
+  it('encrypts webhook secrets at rest and migrates legacy plaintext without exposing stored values', async () => {
+    const oldKey = process.env.RAZORPAY_CREDENTIALS_ENCRYPTION_KEY;
+    try {
+      const orgId = db.queryOne<any>(`SELECT id FROM organizations LIMIT 1`)?.id;
+      assert.ok(orgId);
+      const repo = new AgentRepository(db);
+
+      delete process.env.RAZORPAY_CREDENTIALS_ENCRYPTION_KEY;
+      const unavailable = await fetch(`${baseUrl}/api/v1/developer/webhooks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+        body: JSON.stringify({ targetUrl: 'https://hooks.example.com/inklly', eventTypes: ['order.created'] }),
+      });
+      assert.equal(unavailable.status, 503, 'webhook creation must fail closed without the encryption key');
+
+      process.env.RAZORPAY_CREDENTIALS_ENCRYPTION_KEY = Buffer.alloc(32, 42).toString('base64');
+      for (const unsafeUrl of ['http://hooks.example.com/callback', 'https://localhost/hook', 'https://127.0.0.1/hook', 'https://[::1]/hook']) {
+        const rejected = await fetch(`${baseUrl}/api/v1/developer/webhooks`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+          body: JSON.stringify({ targetUrl: unsafeUrl, eventTypes: ['order.created'] }),
+        });
+        assert.equal(rejected.status, 400, `unsafe webhook target must be rejected: ${unsafeUrl}`);
+      }
+      const unsupportedEvent = await fetch(`${baseUrl}/api/v1/developer/webhooks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+        body: JSON.stringify({ targetUrl: 'https://hooks.example.com/inklly', eventTypes: ['admin.secret_export'] }),
+      });
+      assert.equal(unsupportedEvent.status, 400);
+
+      const legacyId = `whk-legacy-${crypto.randomUUID()}`;
+      const now = new Date().toISOString();
+      db.execute(
+        `INSERT INTO webhook_subscriptions (id, organization_id, target_url, secret, event_types, is_active, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+        [legacyId, orgId, 'https://hooks.example.com/callback', 'whsec_legacy_plaintext', JSON.stringify(['order.created']), now, now]
+      );
+      assert.equal(repo.migrateLegacyWebhookSecrets(encryptWebhookSecret), 1);
+      assert.equal(repo.migrateLegacyWebhookSecrets(encryptWebhookSecret), 0, 'legacy migration must be idempotent');
+      const migrated = db.queryOne<any>(`SELECT secret FROM webhook_subscriptions WHERE id = ?`, [legacyId]);
+      assert.match(migrated.secret, /^inklly:enc:v1:webhook:/);
+      assert.equal(decryptWebhookSecret(migrated.secret), 'whsec_legacy_plaintext');
+      const originalKey = process.env.RAZORPAY_CREDENTIALS_ENCRYPTION_KEY;
+      process.env.RAZORPAY_CREDENTIALS_ENCRYPTION_KEY = Buffer.alloc(32, 43).toString('base64');
+      assert.throws(() => decryptWebhookSecret(migrated.secret));
+      process.env.RAZORPAY_CREDENTIALS_ENCRYPTION_KEY = originalKey;
+
+      const created = await fetch(`${baseUrl}/api/v1/developer/webhooks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+        body: JSON.stringify({ targetUrl: 'https://hooks.example.com/inklly', eventTypes: ['order.created'] }),
+      });
+      assert.equal(created.status, 201);
+      const createdBody = await created.json() as any;
+      assert.match(createdBody.webhookSecret, /^whsec_[a-f0-9]{64}$/);
+      const stored = db.queryOne<any>(`SELECT secret FROM webhook_subscriptions WHERE id = ?`, [createdBody.id]);
+      assert.match(stored.secret, /^inklly:enc:v1:webhook:/);
+      assert.equal(decryptWebhookSecret(stored.secret), createdBody.webhookSecret);
+
+      const listed = await fetch(`${baseUrl}/api/v1/developer/webhooks`, { headers: { Authorization: `Bearer ${merchantToken}` } });
+      assert.equal(listed.status, 200);
+      const subscriptions = await listed.json() as any[];
+      assert.ok(subscriptions.every((item) => !('secret' in item) && !('webhookSecret' in item)));
+    } finally {
+      if (oldKey === undefined) delete process.env.RAZORPAY_CREDENTIALS_ENCRYPTION_KEY;
+      else process.env.RAZORPAY_CREDENTIALS_ENCRYPTION_KEY = oldKey;
+    }
   });
 
   // ─── MILESTONE 1: ONBOARDING, AUTHENTICATION & TENANT ISOLATION ───
@@ -1205,7 +1630,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
 
     const bigOrderRes = await fetch(`${baseUrl}/api/v1/portal/orders`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'order-test-large-00001' },
       body: JSON.stringify({
         shopId: 'shop-campus-1',
         customerName: 'Big Order Customer',

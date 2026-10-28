@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import * as crypto from 'node:crypto';
 import * as path from 'node:path';
-import { DatabaseService } from '@inklly/db';
+import { DatabaseService, hashPassword } from '@inklly/db';
 import {
   ShopRepository,
   OrderRepository,
@@ -14,6 +14,7 @@ import {
 import { OrderStatus, ROLE_PRESETS } from '@inklly/shared';
 import { ShopPaymentCredentialsService } from '../services/shop-payment-credentials';
 import { PrivateFileStorage } from '../services/private-file-storage';
+import { getPrinterHealthStatus, hasFreshOnlinePrinterEvidence } from '../services/printer-health';
 
 export class MerchantController {
   constructor(
@@ -92,7 +93,7 @@ export class MerchantController {
     // alone is not evidence that a cash or online payment was received.
     const totalRevenuePaise = this.ledgerRepo.calculateBalancePaise(shopId, 'CUSTOMER_PRINT_PAYMENT');
 
-    const onlinePrinters = printers.filter((p) => p.isOnline).length;
+    const onlinePrinters = printers.filter((p) => getPrinterHealthStatus(p.isOnline, p.lastHeartbeat) === 'ONLINE').length;
 
     res.json({
       shopId,
@@ -113,9 +114,42 @@ export class MerchantController {
 
   public getOrders = (req: Request, res: Response) => {
     const shopId = this.getShopId(req);
-    const status = req.query.status as OrderStatus | 'ALL' | undefined;
-    const orders = this.orderRepo.getOrdersByShop(shopId, status || 'ALL');
-    res.json(orders.map((order) => this.presentOrder(order)));
+    const supportedStatuses: OrderStatus[] = ['DRAFT', 'SUBMITTED', 'AWAITING_PAYMENT', 'AWAITING_REVIEW', 'READY_FOR_PRINT', 'IN_PROGRESS', 'READY_FOR_COLLECTION', 'COLLECTED', 'PRINT_FAILED', 'PRINT_UNCONFIRMED', 'PENDING_RELEASE', 'PENDING_AGENT_SPOOL', 'CANCEL_REQUESTED', 'CANCELLED', 'ON_HOLD', 'FAILED_REQUIRES_SUPPORT'];
+    const status = req.query.status === undefined ? 'ALL' : req.query.status;
+    if (typeof status !== 'string') return res.status(400).json({ error: 'Provide order status filters as a comma-separated list.' });
+    const statusFilters = status === 'ALL' || !status ? [] : status.split(',').map((value) => value.trim()).filter(Boolean);
+    if (statusFilters.some((filter) => !supportedStatuses.includes(filter as OrderStatus)) || new Set(statusFilters).size !== statusFilters.length) {
+      return res.status(400).json({ error: 'Unsupported order status filter.' });
+    }
+    const paginationRequested = statusFilters.length > 1 || ['page', 'pageSize', 'search', 'sortBy', 'sortOrder'].some((key) => req.query[key] !== undefined);
+    if (!paginationRequested) {
+      const orders = this.orderRepo.getOrdersByShop(shopId, (statusFilters[0] as OrderStatus) || 'ALL');
+      return res.json(orders.map((order) => this.presentOrder(order)));
+    }
+    const parsePositiveInteger = (value: unknown, fallback: number): number | null => {
+      if (value === undefined) return fallback;
+      if (typeof value !== 'string' || !/^\d+$/.test(value)) return null;
+      const parsed = Number(value);
+      return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+    };
+    const page = parsePositiveInteger(req.query.page, 1);
+    const requestedPageSize = parsePositiveInteger(req.query.pageSize, 25);
+    const search = req.query.search === undefined ? '' : req.query.search;
+    const sortBy = req.query.sortBy === undefined ? 'createdAt' : req.query.sortBy;
+    const sortOrder = req.query.sortOrder === undefined ? 'desc' : req.query.sortOrder;
+    const validSorts = ['createdAt', 'totalAmountPaise', 'status', 'orderNumber'];
+    if (page === null || page > 1_000_000 || requestedPageSize === null || requestedPageSize > 100 ||
+        typeof search !== 'string' || search.length > 100 ||
+        typeof sortBy !== 'string' || !validSorts.includes(sortBy) ||
+        typeof sortOrder !== 'string' || !['asc', 'desc'].includes(sortOrder)) {
+      return res.status(400).json({ error: 'Invalid order page, page size, search, or sort parameters.' });
+    }
+    const result = this.orderRepo.getOrdersPageByShop(shopId, {
+      statuses: statusFilters as OrderStatus[], search, page, pageSize: requestedPageSize,
+      sortBy: sortBy as 'createdAt' | 'totalAmountPaise' | 'status' | 'orderNumber',
+      sortOrder: sortOrder as 'asc' | 'desc',
+    });
+    return res.json({ ...result, orders: result.orders.map((order) => this.presentOrder(order)) });
   };
 
   public getOrderById = (req: Request, res: Response) => {
@@ -209,7 +243,8 @@ export class MerchantController {
     }
 
     const requestedPrinter = req.body?.printerId || req.body?.printerName;
-    const onlinePrinters = this.printerRepo.getPrintersByShop(order.shopId).filter((candidate) => candidate.isOnline);
+    const onlinePrinters = this.printerRepo.getPrintersByShop(order.shopId)
+      .filter((candidate) => hasFreshOnlinePrinterEvidence(candidate.isOnline, candidate.lastHeartbeat));
     const defaults = onlinePrinters.filter((candidate) => candidate.isDefault);
     const printer = typeof requestedPrinter === 'string' && requestedPrinter.trim()
       ? onlinePrinters.find((candidate) => candidate.id === requestedPrinter || candidate.name === requestedPrinter || candidate.systemDriverName === requestedPrinter)
@@ -271,6 +306,12 @@ export class MerchantController {
       return res.status(400).json({ error: 'Missing required rate rule parameters' });
     }
 
+    if (printerId !== undefined && printerId !== null && printerId !== '') {
+      const printerIsOwned = typeof printerId === 'string' &&
+        this.printerRepo.getPrintersByShop(shopId).some((printer) => printer.id === printerId);
+      if (!printerIsOwned) return res.status(400).json({ error: 'Rate rules can only target a printer registered to this shop.' });
+    }
+
     const ruleId = id || `rate-${shopId}-${paperSize}-${colorMode}-${duplexMode}`;
     this.pricingRepo.setRateRule({
       id: ruleId,
@@ -309,7 +350,22 @@ export class MerchantController {
   public getPrinters = (req: Request, res: Response) => {
     const shopId = this.getShopId(req);
     const printers = this.printerRepo.getPrintersByShop(shopId);
-    res.json(printers);
+    res.json(printers.map((printer) => ({
+      ...printer,
+      healthStatus: getPrinterHealthStatus(printer.isOnline, printer.lastHeartbeat),
+    })));
+  };
+
+  public setDefaultPrinter = (req: Request, res: Response) => {
+    const shopId = this.getShopId(req);
+    const printerId = typeof req.params.id === 'string' ? req.params.id.trim() : '';
+    if (!printerId || printerId.length > 128) return res.status(400).json({ error: 'A valid printer ID is required.' });
+    if (!this.printerRepo.setDefaultPrinter(shopId, printerId)) return res.status(404).json({ error: 'Printer not found for this shop.' });
+    const printers = this.printerRepo.getPrintersByShop(shopId).map((printer) => ({
+      ...printer,
+      healthStatus: getPrinterHealthStatus(printer.isOnline, printer.lastHeartbeat),
+    }));
+    return res.json({ success: true, printers });
   };
 
   public addPrinter = (req: Request, res: Response) => {
@@ -452,55 +508,85 @@ export class MerchantController {
   public getStaff = (req: Request, res: Response) => {
     const shopId = this.getShopId(req);
     const staff = this.userRepo.getStaffByShop(shopId);
-    res.json(staff);
+    res.json(staff.map((entry) => ({
+      ...entry,
+      rolePreset: entry.membership.role === 'SHOP_STAFF'
+        ? Object.entries(ROLE_PRESETS).find(([, permissions]) =>
+          permissions.length === entry.membership.permissions.length &&
+          permissions.every((permission) => entry.membership.permissions.includes(permission))
+        )?.[0] || null
+        : null,
+    })));
   };
 
   public addStaff = (req: Request, res: Response) => {
-    const shopId = this.getShopId(req);
-    const { email, fullName, rolePreset, phone } = req.body;
-
-    if (!email || !fullName) {
-      return res.status(400).json({ error: 'Email and full name are required' });
+    const shopId = req.user?.shopId;
+    const organizationId = req.user?.organizationId;
+    if (!shopId || !organizationId || req.user?.role !== 'MERCHANT_OWNER') {
+      return res.status(403).json({ error: 'Only the organization owner can invite staff for this shop.' });
+    }
+    const { email, fullName, rolePreset, phone } = req.body || {};
+    const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    const normalizedName = typeof fullName === 'string' ? fullName.trim() : '';
+    const preset = typeof rolePreset === 'string' ? rolePreset.trim() : '';
+    const normalizedPhone = typeof phone === 'string' ? phone.trim().replace(/[\s()-]/g, '') : '';
+    if (!normalizedEmail || normalizedEmail.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail) ||
+        normalizedName.length < 2 || normalizedName.length > 120 || /[\u0000-\u001f\u007f]/.test(normalizedName) ||
+        !Object.prototype.hasOwnProperty.call(ROLE_PRESETS, preset) || preset === 'Custom' ||
+        (phone !== undefined && (typeof phone !== 'string' || !/^\+?[1-9]\d{7,14}$/.test(normalizedPhone)))) {
+      return res.status(400).json({ error: 'Provide a valid email, full name, phone number, and supported staff role preset.' });
+    }
+    if (this.userRepo.getUserByEmail(normalizedEmail)) {
+      return res.status(409).json({ error: 'An account with this email already exists.' });
+    }
+    const scope = this.db.queryOne<any>(
+      `SELECT s.id, o.id AS organization_id, o.owner_user_id
+       FROM shops s JOIN organizations o ON o.id = s.organization_id
+       WHERE s.id = ? AND s.organization_id = ?`,
+      [shopId, organizationId]
+    );
+    if (!scope || scope.owner_user_id !== req.user.userId) {
+      return res.status(403).json({ error: 'The authenticated owner does not own this shop and organization.' });
     }
 
-    const permissions = ROLE_PRESETS[rolePreset] || ROLE_PRESETS['Print Operator'];
     const now = new Date().toISOString();
-    const userId = `usr-staff-${Date.now().toString(36)}`;
-
-    this.userRepo.createUser(
-      {
-        id: userId,
-        email: email.toLowerCase().trim(),
-        phone,
-        fullName,
-        role: 'SHOP_STAFF',
-        isActive: true,
-        createdAt: now,
-        updatedAt: now,
-      },
-      'hash_staff_default'
-    );
-
-    this.userRepo.createMembership({
-      id: `mem-${userId}`,
-      userId,
-      organizationId: req.user?.organizationId || 'org-campus-network',
-      shopId,
-      role: 'SHOP_STAFF',
-      permissions,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    res.status(201).json({
+    const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+    const userId = crypto.randomUUID();
+    const invitationToken = crypto.randomBytes(32).toString('base64url');
+    const tokenHash = crypto.createHash('sha256').update(invitationToken).digest('hex');
+    const permissions = ROLE_PRESETS[preset];
+    try {
+      this.db.transaction(() => {
+        this.userRepo.createUser({
+          id: userId, email: normalizedEmail, phone: normalizedPhone || undefined, fullName: normalizedName,
+          role: 'SHOP_STAFF', isActive: false, createdAt: now, updatedAt: now,
+        }, hashPassword(crypto.randomBytes(48).toString('base64url')));
+        this.userRepo.createMembership({
+          id: crypto.randomUUID(), userId, organizationId, shopId, role: 'SHOP_STAFF', permissions,
+          createdAt: now, updatedAt: now,
+        });
+        this.db.execute(
+          `INSERT INTO account_invitations (id, token_hash, user_id, organization_id, shop_id, expires_at, accepted_at, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`,
+          [crypto.randomUUID(), tokenHash, userId, organizationId, shopId, expiresAt, now]
+        );
+        this.userRepo.logAuditEvent({
+          id: crypto.randomUUID(), actorUserId: req.user!.userId, actorRole: req.user!.role,
+          organizationId, shopId, action: 'MERCHANT_STAFF_INVITED', targetType: 'USER', targetId: userId,
+          outcome: 'SUCCESS', ipAddress: req.ip, details: { email: normalizedEmail, rolePreset: preset, permissions }, createdAt: now,
+        });
+      });
+    } catch (error) {
+      if (/unique|duplicate/i.test(error instanceof Error ? error.message : '')) {
+        return res.status(409).json({ error: 'An account with this email already exists.' });
+      }
+      throw error;
+    }
+    return res.status(201).json({
       success: true,
-      staff: {
-        userId,
-        email,
-        fullName,
-        rolePreset: rolePreset || 'Print Operator',
-        permissions,
-      },
+      staff: { userId, email: normalizedEmail, fullName: normalizedName, rolePreset: preset, permissions },
+      invitationToken,
+      invitationExpiresAt: expiresAt,
     });
   };
 
@@ -715,163 +801,29 @@ export class MerchantController {
   // WhatsApp Setup
   public getWhatsAppSetup = (req: Request, res: Response) => {
     const shopId = this.getShopId(req);
-
-    const accounts = this.db.query<any>(
-      `SELECT * FROM whatsapp_accounts WHERE shop_id = ? ORDER BY created_at DESC`,
-      [shopId]
-    );
-
-    const events = this.db.query<any>(
-      `SELECT * FROM whatsapp_events WHERE shop_id = ? ORDER BY created_at DESC LIMIT 50`,
-      [shopId]
-    );
-
-    const hasConnection = accounts.some((a) => a.status === 'CONNECTED');
-
     res.json({
       shopId,
       provider: 'meta_whatsapp_cloud',
-      recommendedConnection: 'existing_business_number',
-      connectionOptions: [
-        { id: 'existing_business_number', label: 'Existing business number', requires: ['Meta business verification', 'WhatsApp business phone number ID'] },
-        { id: 'display_name', label: 'Display name', requires: ['Meta app registration', 'Phone number verification'] },
-        { id: 'qr_pairing', label: 'Link by QR', requires: ['WhatsApp mobile app', 'Linked devices screen'] },
-      ],
-      accounts: accounts.map((a) => ({
-        id: a.id,
-        wabaId: a.waba_id,
-        phoneNumberId: a.phone_number_id,
-        displayName: a.display_name,
-        status: a.status, // OFFLINE, ONLINE, PAIRING, EXPIRED, ERROR
-        accountsUsed: a.accounts_used,
-        maxAccounts: a.max_accounts,
-        qrExpiresAt: a.qr_expires_at,
-        createdAt: a.created_at,
-      })),
-      events: events.map((e) => ({
-        id: e.id,
-        eventType: e.event_type,
-        message: e.message,
-        createdAt: e.created_at,
-      })),
-      hasConnection,
-      canPair: !hasConnection,
+      status: 'UNAVAILABLE',
+      available: false,
+      accounts: [],
+      events: [],
+      hasConnection: false,
+      canPair: false,
+      message: 'WhatsApp Cloud API onboarding and message delivery are not configured for this deployment.',
     });
   };
 
   public saveWhatsAppSetup = (req: Request, res: Response) => {
-    const shopId = this.getShopId(req);
-    const { connectionType, businessPhoneNumber, displayName, metaAppId, metaAppSecret } = req.body;
-
-    if (!connectionType || !['existing_business_number', 'display_name', 'qr_pairing'].includes(connectionType)) {
-      return res.status(400).json({ error: 'Invalid connection type.' });
-    }
-
-    const now = new Date().toISOString();
-    const id = `wa-${crypto.randomUUID()}`;
-
-    this.db.execute(
-      `INSERT INTO whatsapp_accounts (id, shop_id, connection_type, business_phone_number, display_name, meta_app_id, status, accounts_used, max_accounts, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'OFFLINE', 0, 1, ?, ?)`,
-      [id, shopId, connectionType, businessPhoneNumber || null, displayName || null, metaAppId || null, now, now]
-    );
-
-    this.db.execute(
-      `INSERT INTO whatsapp_events (id, shop_id, event_type, message, created_at)
-       VALUES (?, ?, 'SETUP_SAVED', 'WhatsApp setup saved. Connection is OFFLINE until paired.', ?)`,
-      [`wa-evt-${crypto.randomUUID()}`, shopId, now]
-    );
-
-    res.status(201).json({
-      success: true,
-      accountId: id,
-      connectionType,
-      status: 'OFFLINE',
-      message: 'WhatsApp setup saved. Use QR pairing to connect your Meta WhatsApp Business account.',
-    });
+    res.status(503).json({ error: 'WhatsApp setup is unavailable until secure Meta onboarding and credential storage are configured.' });
   };
 
   public generateWhatsAppQrPairing = (req: Request, res: Response) => {
-    const shopId = this.getShopId(req);
-
-    const existingPairing = this.db.queryOne<any>(
-      `SELECT * FROM whatsapp_accounts WHERE shop_id = ? AND status = 'PAIRING' ORDER BY created_at DESC LIMIT 1`,
-      [shopId]
-    );
-    if (existingPairing) {
-      return res.status(409).json({ error: 'A QR pairing session is already active. Wait for it to expire or refresh.' });
-    }
-
-    const accounts = this.db.query<any>(
-      `SELECT * FROM whatsapp_accounts WHERE shop_id = ? AND status = 'CONNECTED'`,
-      [shopId]
-    );
-    if (accounts.length > 0) {
-      return res.status(409).json({ error: 'A WhatsApp account is already connected. Remove it before pairing a new one.' });
-    }
-
-    const now = new Date().toISOString();
-    const expiresAt = new Date(Date.now() + 60 * 1000).toISOString(); // 60-second countdown
-    const id = `wa-${crypto.randomUUID()}`;
-    const pairingCode = `WA-${Math.floor(100000 + Math.random() * 900000)}`;
-
-    this.db.execute(
-      `INSERT INTO whatsapp_accounts (id, shop_id, connection_type, status, accounts_used, max_accounts, qr_expires_at, pairing_code, created_at, updated_at)
-       VALUES (?, ?, 'qr_pairing', 'PAIRING', 0, 1, ?, ?, ?, ?)`,
-      [id, shopId, expiresAt, pairingCode, now, now]
-    );
-
-    this.db.execute(
-      `INSERT INTO whatsapp_events (id, shop_id, event_type, message, created_at)
-       VALUES (?, ?, 'QR_PAIRING_STARTED', 'QR pairing session started. Scan with WhatsApp mobile app. Expires in 60 seconds.', ?)`,
-      [`wa-evt-${crypto.randomUUID()}`, shopId, now]
-    );
-
-    res.json({
-      success: true,
-      pairingId: id,
-      pairingCode,
-      status: 'PAIRING',
-      qrExpiresAt: expiresAt,
-      countdownSeconds: 60,
-      instructions: 'Open WhatsApp → Linked devices → Link a device, then scan this QR code.',
-    });
+    res.status(503).json({ error: 'WhatsApp device pairing is unavailable. No pairing session was created.' });
   };
 
   public refreshWhatsAppQrPairing = (req: Request, res: Response) => {
-    const shopId = this.getShopId(req);
-
-    const activePairing = this.db.queryOne<any>(
-      `SELECT id FROM whatsapp_accounts WHERE shop_id = ? AND status = 'PAIRING' ORDER BY created_at DESC LIMIT 1`,
-      [shopId]
-    );
-    if (!activePairing) {
-      return res.status(404).json({ error: 'No active QR pairing session to refresh.' });
-    }
-
-    const now = new Date().toISOString();
-    const expiresAt = new Date(Date.now() + 60 * 1000).toISOString();
-    const pairingCode = `WA-${Math.floor(100000 + Math.random() * 900000)}`;
-
-    this.db.execute(
-      `UPDATE whatsapp_accounts SET qr_expires_at = ?, pairing_code = ?, updated_at = ? WHERE id = ?`,
-      [expiresAt, pairingCode, now, activePairing.id]
-    );
-
-    this.db.execute(
-      `INSERT INTO whatsapp_events (id, shop_id, event_type, message, created_at)
-       VALUES (?, ?, 'QR_PAIRING_REFRESHED', 'QR pairing session refreshed. New 60-second countdown started.', ?)`,
-      [`wa-evt-${crypto.randomUUID()}`, shopId, now]
-    );
-
-    res.json({
-      success: true,
-      pairingId: activePairing.id,
-      pairingCode,
-      status: 'PAIRING',
-      qrExpiresAt: expiresAt,
-      countdownSeconds: 60,
-    });
+    res.status(503).json({ error: 'WhatsApp device pairing is unavailable. No pairing session was refreshed.' });
   };
 
   public removeWhatsAppAccount = (req: Request, res: Response) => {

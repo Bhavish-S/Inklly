@@ -6,6 +6,14 @@ import { ShopPaymentCredentialsService } from '../services/shop-payment-credenti
 import { PrivateFileStorage } from '../services/private-file-storage';
 import { inspectDocument } from '../services/document-page-count';
 
+function stableJson(value: any): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
 export class PortalController {
   constructor(
     private db: DatabaseService,
@@ -43,9 +51,12 @@ export class PortalController {
 
     const rates = this.pricingRepo.getRateRules(shop.id);
     const paymentStatus = this.paymentCredentials.getRazorpayStatus(shop.id);
-    const bwSimplex = rates.find((r) => r.paperSize === 'A4' && r.colorMode === 'bw' && r.duplexMode === 'simplex')?.pricePerPrintedSidePaise || 200;
-    const bwDuplex = rates.find((r) => r.paperSize === 'A4' && r.colorMode === 'bw' && r.duplexMode === 'duplex_auto')?.pricePerPrintedSidePaise || 150;
-    const colorSimplex = rates.find((r) => r.paperSize === 'A4' && r.colorMode === 'color' && r.duplexMode === 'simplex')?.pricePerPrintedSidePaise || 1000;
+    const bwSimplex = rates.find((r) => r.paperSize === 'A4' && r.colorMode === 'bw' && r.duplexMode === 'simplex')?.pricePerPrintedSidePaise;
+    const bwDuplex = rates.find((r) => r.paperSize === 'A4' && r.colorMode === 'bw' && r.duplexMode === 'duplex_auto')?.pricePerPrintedSidePaise;
+    const colorSimplex = rates.find((r) => r.paperSize === 'A4' && r.colorMode === 'color' && r.duplexMode === 'simplex')?.pricePerPrintedSidePaise;
+    const configuredPaperSizes = [...new Set(rates.map((rule) => rule.paperSize))];
+    const configuredColorModes = [...new Set(rates.map((rule) => rule.colorMode))];
+    const configuredSides = [...new Set(rates.map((rule) => rule.duplexMode))];
 
     res.json({
       id: shop.id,
@@ -58,13 +69,13 @@ export class PortalController {
       paymentGateway: shop.paymentGateway,
       acceptCashOnCollection: shop.acceptCashOnCollection,
       onlinePaymentAvailable: shop.currency === 'INR' && paymentStatus.configured && paymentStatus.webhookConfigured,
-      enabledPaperFormats: ['A4', 'A3', 'PHOTO_4X6', 'PHOTO_5X7'],
-      enabledColorModes: ['bw', 'color'],
-      enabledSides: ['simplex', 'duplex_auto'],
+      enabledPaperFormats: configuredPaperSizes,
+      enabledColorModes: configuredColorModes,
+      enabledSides: configuredSides,
       rates: {
-        bw_simplex: bwSimplex / 100,
-        bw_duplex: bwDuplex / 100,
-        color_simplex: colorSimplex / 100,
+        bw_simplex: bwSimplex === undefined ? null : bwSimplex / 100,
+        bw_duplex: bwDuplex === undefined ? null : bwDuplex / 100,
+        color_simplex: colorSimplex === undefined ? null : colorSimplex / 100,
         ratesList: rates,
       },
     });
@@ -123,12 +134,41 @@ export class PortalController {
     if (!shop || !Array.isArray(files) || files.length === 0 || files.length > 20) {
       return res.status(400).json({ error: 'Incomplete order submission payload' });
     }
+    const suppliedIdempotencyKey = req.get('Idempotency-Key');
+    if (suppliedIdempotencyKey !== undefined && !/^[A-Za-z0-9_-]{16,128}$/.test(suppliedIdempotencyKey)) {
+      return res.status(400).json({ error: 'Idempotency-Key must contain 16 to 128 letters, numbers, underscores, or hyphens.' });
+    }
+    // Preserve compatibility for older API clients while ensuring all first-party
+    // customer submissions send a stable key that the server can safely replay.
+    const idempotencyKey = suppliedIdempotencyKey || crypto.randomUUID();
+    const normalizedPaymentMethod = paymentMethod || 'CASH_ON_COLLECTION';
+    const requestHash = crypto.createHash('sha256').update(stableJson({
+      shopId: shop.id,
+      customerName: typeof customerName === 'string' && customerName.trim() ? customerName.trim() : 'Counter Customer',
+      customerPhone: customerPhone || null,
+      customerEmail: customerEmail || null,
+      paymentMethod: normalizedPaymentMethod,
+      quote: submittedQuote || null,
+      files: files.map((file: any) => ({ fileName: file?.fileName, storageKey: file?.storageKey, options: file?.options })),
+    })).digest('hex');
+    const existingOrder = this.orderRepo.findIdempotentOrder(shop.id, idempotencyKey, requestHash);
+    if (existingOrder?.conflict) {
+      return res.status(409).json({ error: 'This Idempotency-Key was already used for a different order. Start a new order to submit changed details.' });
+    }
+    if (existingOrder) {
+      const prior = this.orderRepo.getOrderById(existingOrder.orderId);
+      if (!prior) return res.status(503).json({ error: 'The original order record is temporarily unavailable.' });
+      return res.status(200).json({
+        success: true, orderId: prior.id, orderNumber: prior.orderNumber, tokenNumber: prior.tokenNumber,
+        status: prior.status, paymentStatus: prior.paymentStatus,
+        totalAmountPaise: prior.totalAmountPaise, currency: prior.currency, idempotentReplay: true,
+      });
+    }
     if (!shop.isActive || !this.hasShopAccess(shop.organizationId)) {
       return res.status(402).json({ error: 'This shop is not currently accepting orders.' });
     }
     const shopId = shop.id;
 
-    const normalizedPaymentMethod = paymentMethod || 'CASH_ON_COLLECTION';
     if (!['CASH_ON_COLLECTION', 'ONLINE_RAZORPAY'].includes(normalizedPaymentMethod)) {
       return res.status(400).json({ error: 'Unsupported payment method.' });
     }
@@ -250,7 +290,19 @@ export class PortalController {
       updatedAt: now,
     };
 
-    this.orderRepo.createOrder(order);
+    const idempotentResult = this.orderRepo.createOrderIdempotently(order, idempotencyKey, requestHash);
+    if (idempotentResult.conflict) {
+      return res.status(409).json({ error: 'This Idempotency-Key was already used for a different order. Start a new order to submit changed details.' });
+    }
+    if (idempotentResult.replayed) {
+      const prior = this.orderRepo.getOrderById(idempotentResult.orderId);
+      if (!prior) return res.status(503).json({ error: 'The original order record is temporarily unavailable.' });
+      return res.status(200).json({
+        success: true, orderId: prior.id, orderNumber: prior.orderNumber, tokenNumber: prior.tokenNumber,
+        status: prior.status, paymentStatus: prior.paymentStatus,
+        totalAmountPaise: prior.totalAmountPaise, currency: prior.currency, idempotentReplay: true,
+      });
+    }
 
     res.status(201).json({
       success: true,

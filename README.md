@@ -91,7 +91,7 @@ npm run dev:web
 ## 🪟 Windows One-Click Launchers
 For Windows users where PowerShell script execution is restricted (`PSSecurityException`), run the batch files directly:
 - `start-all.bat`: Launches Server, Desktop Agent, and Web App concurrently in separate windows.
-- `run-tests.bat`: Runs all 33 automated tests.
+- `run-tests.bat`: Runs the current npm workspace test suite.
 - `start-server.bat`: Runs port 4000 backend API server.
 - `start-agent.bat`: Runs port 8765 edge spooler daemon.
 - `start-web.bat`: Runs port 3000 web application.

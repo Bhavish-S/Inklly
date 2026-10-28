@@ -48,6 +48,8 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
   const [newOwnerName, setNewOwnerName] = useState('');
   const [newOwnerEmail, setNewOwnerEmail] = useState('');
   const [newPlanTier, setNewPlanTier] = useState('GROWTH');
+  const [isOnboarding, setIsOnboarding] = useState(false);
+  const [provisionedInvitationLink, setProvisionedInvitationLink] = useState('');
 
   // Incidents Mock State
   const [incidents, setIncidents] = useState([
@@ -83,37 +85,7 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
     },
   ]);
 
-  // Edge Agents Mock Fleet State
-  const [agentFleet, setAgentFleet] = useState([
-    {
-      agentId: 'agt-campus1-win11',
-      shopCode: 'campus1',
-      shopName: 'Campus Print Express',
-      hostname: 'DESKTOP-COUNTER-POS1',
-      osPlatform: 'Microsoft Windows 11 · x64',
-      agentVersion: 'v1.0.0',
-      port: 8765,
-      status: 'ONLINE',
-      lastHeartbeat: '3s ago',
-      connectedPrinters: 2,
-      queueDepth: 0,
-      sqliteDbPath: 'C:\\ProgramData\\Inklly\\agent_queue.db',
-    },
-    {
-      agentId: 'agt-viman2-win10',
-      shopCode: 'viman-nagar',
-      shopName: 'Viman Xerox & Graphics',
-      hostname: 'POS-TERMINAL-WIN10',
-      osPlatform: 'Microsoft Windows 10 · x64',
-      agentVersion: 'v1.0.0',
-      port: 8765,
-      status: 'ONLINE',
-      lastHeartbeat: '9s ago',
-      connectedPrinters: 3,
-      queueDepth: 1,
-      sqliteDbPath: 'C:\\Users\\Merchant\\InkllyStorage\\agent_queue.db',
-    },
-  ]);
+  const [agentFleet, setAgentFleet] = useState<any[]>([]);
 
   // SaaS Plans Catalog
   const [plansCatalog, setPlansCatalog] = useState([
@@ -164,18 +136,22 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
   const loadPlatformData = async () => {
     try {
       setLoading(true);
-      const [ovData, merData, ledData, audData, enquiryData] = await Promise.all([
+      const [ovData, merData, ledData, audData, enquiryData, agentData, retentionData] = await Promise.all([
         api.getPlatformOverview(),
         api.getPlatformMerchants(),
         api.getPlatformLedger(selectedDomain === 'ALL' ? undefined : selectedDomain),
         api.getAuditLogs(),
         api.getPlatformEnquiries(),
+        api.getPlatformAgents(),
+        api.getPlatformRetentionStats(),
       ]);
       setOverview(ovData);
       setMerchants(merData);
       setLedgerEntries(ledData);
       setAuditLogs(audData);
       setEnquiries(enquiryData);
+      setAgentFleet(agentData);
+      setStorageStats(retentionData);
     } catch (err: any) {
       console.error('Failed to load platform data:', err);
     } finally {
@@ -184,6 +160,10 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
   };
 
   const handleToggleMerchantStatus = async (orgId: string, currentStatus: string) => {
+    if (!['ACTIVE', 'SUSPENDED'].includes(currentStatus)) {
+      showToast(`This tenant is ${currentStatus.toLowerCase()}. Manage trial or billing status through the subscription workflow.`);
+      return;
+    }
     const nextStatus = currentStatus === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE';
     try {
       await api.updateMerchantStatus(orgId, { planStatus: nextStatus });
@@ -201,10 +181,6 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
       prev.map((inc) => (inc.id === incId ? { ...inc, status: 'RESOLVED' } : inc))
     );
     showToast(`Incident ${incId} marked as Resolved.`);
-  };
-
-  const handlePingAgent = (agentId: string) => {
-    showToast(`Dispatched diagnostic probe to ${agentId} on localhost:8765. Handshake confirmed (4ms latency).`);
   };
 
   // Agent Builds Catalog
@@ -247,16 +223,8 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
     },
   ]);
 
-  // Storage Retention State
-  const [storageStats, setStorageStats] = useState({
-    totalCachedFiles: 184,
-    totalDiskUsageMb: 1420,
-    expiredFilesCount: 128,
-    expiredDiskUsageMb: 1080,
-    retentionHours: 2,
-    autoPurgeEnabled: true,
-    lastPurgeRun: '2 hours ago',
-  });
+  const [storageStats, setStorageStats] = useState<any>(null);
+  const [isPurgingRetention, setIsPurgingRetention] = useState(false);
 
   const handleDownloadBuild = (filename: string, fileTitle: string) => {
     let payloadContent = '';
@@ -299,29 +267,18 @@ pause
     showToast(`📥 Started download: ${fileTitle} (${filename})`);
   };
 
-  const handleTriggerRetentionPurge = () => {
-    const freedMb = storageStats.expiredDiskUsageMb;
-    const purgedCount = storageStats.expiredFilesCount;
-
-    setStorageStats((prev) => ({
-      ...prev,
-      totalCachedFiles: Math.max(0, prev.totalCachedFiles - purgedCount),
-      totalDiskUsageMb: Math.max(0, prev.totalDiskUsageMb - freedMb),
-      expiredFilesCount: 0,
-      expiredDiskUsageMb: 0,
-      lastPurgeRun: 'Just now',
-    }));
-
-    const auditRecord = {
-      id: `aud-${Date.now().toString(36)}`,
-      actor_user_id: 'usr_platform_owner',
-      action: `STORAGE_RETENTION_PURGE (Purged ${purgedCount} expired customer files, freed ${freedMb} MB)`,
-      entity_id: 'storage_volume',
-      ip_address: '127.0.0.1 (Loopback Console)',
-      created_at: new Date().toISOString(),
-    };
-    setAuditLogs([auditRecord, ...auditLogs]);
-    showToast(`🧹 Purge complete: ${purgedCount} files removed, ${freedMb} MB disk space reclaimed!`);
+  const handleTriggerRetentionPurge = async () => {
+    setIsPurgingRetention(true);
+    try {
+      const result = await api.runPlatformRetentionPurge();
+      setStorageStats(await api.getPlatformRetentionStats());
+      const { expiredFilesDeleted, orphanFilesDeleted, expiredFilesFailed, orphanFilesFailed } = result.summary;
+      showToast(`Retention pass: ${expiredFilesDeleted} order files and ${orphanFilesDeleted} unclaimed uploads deleted; ${expiredFilesFailed + orphanFilesFailed} failures.`);
+    } catch (err: any) {
+      showToast(`Retention purge failed: ${err.message}`);
+    } finally {
+      setIsPurgingRetention(false);
+    }
   };
 
   const handleExportMerchantsCsv = () => {
@@ -396,47 +353,36 @@ pause
     showToast('📥 Exported Platform Audit Log CSV.');
   };
 
-  const handleOnboardMerchant = (e: React.FormEvent) => {
+  const handleOnboardMerchant = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newOrgName || !newOwnerEmail) {
-      showToast('Please provide organization name and owner email');
-      return;
+    setIsOnboarding(true);
+    try {
+      const result = await api.createPlatformMerchant({
+        organizationName: newOrgName.trim(),
+        shopCode: newShopCode.trim() || undefined,
+        ownerName: newOwnerName.trim(),
+        ownerEmail: newOwnerEmail.trim(),
+        planTier: newPlanTier,
+      });
+      if (typeof result.invitationToken !== 'string' || result.invitationToken.length < 40) {
+        throw new Error('The owner invitation was not returned. Refresh the merchant list and inspect the audit log before trying again.');
+      }
+      const inviteUrl = new URL('/accept-invitation', window.location.origin);
+      inviteUrl.hash = new URLSearchParams({ token: result.invitationToken }).toString();
+      setProvisionedInvitationLink(inviteUrl.toString());
+      const [updatedMerchants, updatedAuditLogs] = await Promise.all([api.getPlatformMerchants(), api.getAuditLogs()]);
+      setMerchants(updatedMerchants);
+      setAuditLogs(updatedAuditLogs);
+      showToast(`Tenant created. Share the one-time owner setup link with ${result.merchant?.owner?.email || newOwnerEmail}.`);
+      setNewOrgName('');
+      setNewShopCode('');
+      setNewOwnerName('');
+      setNewOwnerEmail('');
+    } catch (err: any) {
+      showToast(`Could not onboard merchant: ${err.message}`);
+    } finally {
+      setIsOnboarding(false);
     }
-
-    const newMerchant = {
-      id: `org-${Date.now().toString(36)}`,
-      name: newOrgName,
-      shopCode: newShopCode.toLowerCase().trim() || `shop-${Math.random().toString(36).substring(2, 6)}`,
-      planTier: newPlanTier,
-      planStatus: 'ACTIVE',
-      billingCurrency: 'INR',
-      owner: {
-        name: newOwnerName || 'Store Manager',
-        email: newOwnerEmail,
-      },
-      shopsCount: 1,
-      ordersCount: 0,
-      createdAt: new Date().toISOString(),
-    };
-
-    setMerchants([newMerchant, ...merchants]);
-    setShowOnboardModal(false);
-    setNewOrgName('');
-    setNewShopCode('');
-    setNewOwnerName('');
-    setNewOwnerEmail('');
-
-    const auditRecord = {
-      id: `aud-${Date.now().toString(36)}`,
-      actor_user_id: 'usr_platform_owner',
-      action: `ONBOARD_TENANT_MERCHANT (${newOrgName})`,
-      entity_id: newMerchant.id,
-      ip_address: '127.0.0.1 (Loopback Console)',
-      created_at: new Date().toISOString(),
-    };
-    setAuditLogs([auditRecord, ...auditLogs]);
-
-    showToast(`🎉 Merchant ${newOrgName} onboarded successfully to ${newPlanTier} plan!`);
   };
 
   const handleSaveConfig = (e: React.FormEvent) => {
@@ -556,41 +502,41 @@ pause
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs">
               <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">TOTAL TENANT ORGS</span>
               <div className="text-2xl font-extrabold text-slate-900 dark:text-white">
-                {overview?.metrics?.totalOrganizations || 1}
+                {overview?.metrics?.totalOrganizations ?? '—'}
               </div>
-              <span className="text-[11px] text-emerald-600 font-semibold mt-1 block">↑ 100% Verified Stores</span>
+              <span className="text-[11px] text-slate-500 mt-1 block">Organizations in database</span>
             </div>
 
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs">
-              <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">ACTIVE COUNTER SHOPS</span>
+              <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">REGISTERED SHOPS</span>
               <div className="text-2xl font-extrabold text-slate-900 dark:text-white">
-                {overview?.metrics?.totalShops || 1}
+                {overview?.metrics?.totalShops ?? '—'}
               </div>
-              <span className="text-[11px] text-slate-500 mt-1 block font-mono">Excluded Kiosks: 0</span>
+              <span className="text-[11px] text-slate-500 mt-1 block">Countertop QR shops</span>
             </div>
 
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs">
               <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">ACTIVE PRINT AGENTS</span>
               <div className="text-2xl font-extrabold text-emerald-600">
-                {agentFleet.filter((a) => a.status === 'ONLINE').length} Online
+                {agentFleet.filter((a) => a.status === 'ONLINE').length} / {agentFleet.length} Online
               </div>
-              <span className="text-[11px] text-slate-500 mt-1 block">Loopback port 8765</span>
+              <span className="text-[11px] text-slate-500 mt-1 block">Based on heartbeat in last 45 seconds</span>
             </div>
 
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs">
               <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">PLATFORM GMV (INR)</span>
               <div className="text-2xl font-extrabold text-[#4D64E6]">
-                ₹{((overview?.metrics?.platformGMVPaise || 482000) / 100).toFixed(2)}
+                ₹{(Number(overview?.metrics?.platformGMVPaise ?? 0) / 100).toFixed(2)}
               </div>
-              <span className="text-[11px] text-emerald-600 font-semibold mt-1 block">Live Walk-in & QR</span>
+              <span className="text-[11px] text-slate-500 mt-1 block">Customer-payment ledger total</span>
             </div>
 
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs">
               <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">MONTHLY SAAS MRR</span>
               <div className="text-2xl font-extrabold text-slate-900 dark:text-white">
-                ₹{((overview?.metrics?.platformMRRPaise || 249900) / 100).toFixed(2)}
+                {overview?.metrics?.platformMRRPaise == null ? 'Not available' : `₹${(Number(overview.metrics.platformMRRPaise) / 100).toFixed(2)}`}
               </div>
-              <span className="text-[11px] text-indigo-600 font-semibold mt-1 block">Razorpay AutoPay</span>
+              <span className="text-[11px] text-slate-500 mt-1 block">Subscription billing is not configured</span>
             </div>
           </div>
 
@@ -601,27 +547,21 @@ pause
                 <h3 className="font-extrabold text-sm text-slate-900 dark:text-white">
                   Edge Spooler Fleet Health
                 </h3>
-                <span className="text-xs text-emerald-600 font-bold">100% Spooler Uptime</span>
+                <span className="text-xs text-slate-500 font-semibold">{agentFleet.filter((a) => a.status === 'ONLINE').length} online · {agentFleet.length} registered</span>
               </div>
               <div className="space-y-3 text-xs">
                 {agentFleet.map((ag) => (
                   <div key={ag.agentId} className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-xl flex justify-between items-center">
                     <div>
                       <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                        {ag.shopName} ({ag.shopCode})
+                        <span className={`w-2 h-2 rounded-full ${ag.status === 'ONLINE' ? 'bg-emerald-500' : ag.status === 'STALE' ? 'bg-amber-500' : 'bg-slate-400'}`} />
+                        {ag.shopName || 'Unknown shop'} ({ag.shopCode || ag.shopId}) · {ag.status}
                       </div>
-                      <div className="text-[11px] text-slate-400 font-mono mt-0.5">{ag.hostname} · {ag.osPlatform}</div>
+                      <div className="text-[11px] text-slate-400 font-mono mt-0.5">{ag.hostname || 'Hostname unavailable'} · {ag.osPlatform || 'OS unavailable'} · last heartbeat {ag.lastHeartbeat ? new Date(ag.lastHeartbeat).toLocaleString() : 'never'}</div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => handlePingAgent(ag.agentId)}
-                      className="px-3 py-1 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg font-bold text-[11px] hover:bg-slate-50 cursor-pointer"
-                    >
-                      Ping Node
-                    </button>
                   </div>
                 ))}
+                {agentFleet.length === 0 && <p className="p-3 text-slate-500">No desktop agents are registered.</p>}
               </div>
             </div>
 
@@ -643,11 +583,11 @@ pause
                 </button>
                 <button
                   type="button"
-                  onClick={() => showToast('Dispatched system ping to all registered desktop agents.')}
+                  onClick={loadPlatformData}
                   className="p-3 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 rounded-xl font-bold hover:bg-slate-100 cursor-pointer text-left"
                 >
-                  ⚡ Broadcast Heartbeat Ping
-                  <div className="text-[10px] font-normal opacity-70 mt-1">Check Windows spooler nodes</div>
+                  ↻ Refresh Agent Inventory
+                  <div className="text-[10px] font-normal opacity-70 mt-1">Reload persisted heartbeat data</div>
                 </button>
                 <button
                   type="button"
@@ -705,7 +645,9 @@ pause
               >
                 <option value="ALL">All Statuses</option>
                 <option value="ACTIVE">Active Only</option>
+                <option value="TRIAL">Trial Only</option>
                 <option value="SUSPENDED">Suspended Only</option>
+                <option value="PAST_DUE">Past Due Only</option>
               </select>
 
               <button
@@ -718,7 +660,7 @@ pause
 
               <button
                 type="button"
-                onClick={() => setShowOnboardModal(true)}
+                onClick={() => { setProvisionedInvitationLink(''); setShowOnboardModal(true); }}
                 className="flex items-center gap-1.5 px-3.5 py-1.5 bg-[#4D64E6] hover:bg-indigo-600 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-[#4D64E6]/25 cursor-pointer shrink-0"
               >
                 <span>+ Onboard Tenant</span>
@@ -733,7 +675,7 @@ pause
                   <th className="p-3.5 pl-5">Organization & Shop Code</th>
                   <th className="p-3.5">Owner Contact</th>
                   <th className="p-3.5">Subscription Plan</th>
-                  <th className="p-3.5">Branches & Spoolers</th>
+                  <th className="p-3.5">Shops</th>
                   <th className="p-3.5">Tenant Status</th>
                   <th className="p-3.5 pr-5 text-right">Administrative Action</th>
                 </tr>
@@ -751,18 +693,22 @@ pause
                     </td>
                     <td className="p-3.5">
                       <span className="px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-indigo-50 dark:bg-indigo-950/60 text-[#4D64E6]">
-                        {m.planTier || 'GROWTH'} (₹999/mo)
+                        {m.planTier || '—'}
                       </span>
                     </td>
                     <td className="p-3.5 text-slate-600 dark:text-slate-300">
-                      {m.shopsCount || 1} counter shop · 2 Spoolers
+                      {m.shopsCount ?? 0} {m.shopsCount === 1 ? 'shop' : 'shops'}
                     </td>
                     <td className="p-3.5">
                       <span
                         className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold ${
                           m.planStatus === 'ACTIVE'
                             ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                            : 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'
+                            : m.planStatus === 'TRIAL'
+                              ? 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
+                              : m.planStatus === 'PAST_DUE'
+                                ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                                : 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'
                         }`}
                       >
                         {m.planStatus}
@@ -776,7 +722,7 @@ pause
                       >
                         Inspect
                       </button>
-                      <button
+                      {['ACTIVE', 'SUSPENDED'].includes(m.planStatus) && <button
                         type="button"
                         onClick={() => handleToggleMerchantStatus(m.id, m.planStatus)}
                         className={`px-3 py-1 rounded-lg font-bold text-[11px] cursor-pointer ${
@@ -786,7 +732,7 @@ pause
                         }`}
                       >
                         {m.planStatus === 'ACTIVE' ? 'Suspend' : 'Reactivate'}
-                      </button>
+                      </button>}
                     </td>
                   </tr>
                 ))}
@@ -1117,9 +1063,9 @@ pause
                   <th className="p-3.5 pl-5">Agent ID & Hostname</th>
                   <th className="p-3.5">Store Assignment</th>
                   <th className="p-3.5">Platform & Version</th>
-                  <th className="p-3.5">Loopback Port</th>
-                  <th className="p-3.5">Printers & Queue</th>
-                  <th className="p-3.5 pr-5 text-right">Diagnostic Probe</th>
+                  <th className="p-3.5">Heartbeat Status</th>
+                  <th className="p-3.5">Assigned Printers</th>
+                  <th className="p-3.5 pr-5">Pending Commands</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -1127,32 +1073,26 @@ pause
                   <tr key={ag.agentId} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
                     <td className="p-3.5 pl-5">
                       <div className="font-bold text-slate-900 dark:text-white">{ag.agentId}</div>
-                      <div className="text-[10px] text-slate-400 font-mono">{ag.hostname}</div>
+                      <div className="text-[10px] text-slate-400 font-mono">{ag.hostname || 'Hostname unavailable'}</div>
                     </td>
                     <td className="p-3.5 font-medium text-slate-800 dark:text-slate-200">
-                      {ag.shopName} ({ag.shopCode})
+                      {ag.shopName || 'Unknown shop'} ({ag.shopCode || ag.shopId})
                     </td>
                     <td className="p-3.5">
-                      <span className="font-semibold text-slate-700 dark:text-slate-300">{ag.osPlatform}</span>
-                      <div className="text-[10px] text-slate-400">Agent {ag.agentVersion}</div>
+                      <span className="font-semibold text-slate-700 dark:text-slate-300">{ag.osPlatform || 'OS unavailable'}</span>
+                      <div className="text-[10px] text-slate-400">{ag.osVersion || 'OS version unavailable'} · Agent {ag.agentVersion || 'unknown'}</div>
                     </td>
-                    <td className="p-3.5 font-mono text-[11px] text-[#4D64E6]">
-                      http://127.0.0.1:{ag.port}
+                    <td className="p-3.5">
+                      <span className={`font-bold ${ag.status === 'ONLINE' ? 'text-emerald-600' : ag.status === 'STALE' ? 'text-amber-600' : 'text-slate-500'}`}>{ag.status}</span>
+                      <div className="text-[10px] text-slate-400">{ag.lastHeartbeat ? new Date(ag.lastHeartbeat).toLocaleString() : 'No heartbeat recorded'}</div>
                     </td>
                     <td className="p-3.5 text-slate-600 dark:text-slate-300">
-                      <span className="font-bold text-slate-900 dark:text-white">{ag.connectedPrinters}</span> OEM Printers · {ag.queueDepth} in SSD queue
+                      <span className="font-bold text-slate-900 dark:text-white">{ag.onlinePrinters}</span> online
                     </td>
-                    <td className="p-3.5 pr-5 text-right">
-                      <button
-                        type="button"
-                        onClick={() => handlePingAgent(ag.agentId)}
-                        className="px-3 py-1 bg-[#4D64E6] text-white rounded-lg font-bold text-[11px] hover:bg-[#3F54D1] cursor-pointer shadow-xs"
-                      >
-                        Ping Diagnostics
-                      </button>
-                    </td>
+                    <td className="p-3.5 pr-5 font-bold text-slate-700 dark:text-slate-300">{ag.pendingCommands}</td>
                   </tr>
                 ))}
+                {agentFleet.length === 0 && <tr><td colSpan={6} className="p-8 text-center text-slate-500">No agents have paired with a shop yet.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -1245,50 +1185,51 @@ pause
                   <span>Server Storage & Document Retention Policy</span>
                 </h2>
                 <p className="text-xs text-slate-400 mt-1">
-                  Enforce zero-knowledge document confidentiality and automated file cleanup after customer collection
+                  Database-backed estimates for temporary customer-order files. Merchant vault files are persistent and excluded.
                 </p>
               </div>
 
               <button
                 type="button"
                 onClick={handleTriggerRetentionPurge}
-                className="flex items-center gap-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-rose-600/25 cursor-pointer"
+                disabled={isPurgingRetention || !storageStats}
+                className="flex items-center gap-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-rose-600/25 cursor-pointer disabled:cursor-wait"
               >
-                <span>Trigger Retention Purge Now</span>
+                <span>{isPurgingRetention ? 'Running Retention Pass…' : 'Run Retention Pass Now'}</span>
               </button>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mt-6">
               <div className="bg-slate-50 dark:bg-slate-800/60 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">TOTAL JOBS CACHED</span>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">ACTIVE CUSTOMER FILES</span>
                 <div className="text-2xl font-extrabold text-slate-900 dark:text-white">
-                  {storageStats.totalCachedFiles}
+                  {storageStats?.customerOrderFiles?.activeCount ?? '—'}
                 </div>
-                <span className="text-[11px] text-slate-500 font-medium mt-1 block">Active print buffers</span>
+                <span className="text-[11px] text-slate-500 font-medium mt-1 block">Database-tracked order files</span>
               </div>
 
               <div className="bg-slate-50 dark:bg-slate-800/60 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">TOTAL STORAGE IN USE</span>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">TRACKED SIZE ESTIMATE</span>
                 <div className="text-2xl font-extrabold text-indigo-600 dark:text-indigo-400">
-                  {storageStats.totalDiskUsageMb} MB
+                  {storageStats ? `${(storageStats.customerOrderFiles.storedBytesEstimate / (1024 * 1024)).toFixed(1)} MB` : '—'}
                 </div>
-                <span className="text-[11px] text-slate-500 font-medium mt-1 block">Encrypted local volume</span>
+                <span className="text-[11px] text-slate-500 font-medium mt-1 block">Order files only; excludes unclaimed objects</span>
               </div>
 
               <div className="bg-slate-50 dark:bg-slate-800/60 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">EXPIRED FILES (&gt; 2 HOURS)</span>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">ELIGIBLE FOR DELETION</span>
                 <div className="text-2xl font-extrabold text-amber-600">
-                  {storageStats.expiredFilesCount} files
+                  {storageStats?.customerOrderFiles?.eligibleForDeletionCount ?? '—'} files
                 </div>
-                <span className="text-[11px] text-amber-600 font-medium mt-1 block">{storageStats.expiredDiskUsageMb} MB reclaimable</span>
+                <span className="text-[11px] text-amber-600 font-medium mt-1 block">After 24h from collection or cancellation</span>
               </div>
 
               <div className="bg-slate-50 dark:bg-slate-800/60 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">AUTOMATED PURGE CYCLE</span>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">AUTOMATIC SWEEP</span>
                 <div className="text-2xl font-extrabold text-emerald-600">
-                  {storageStats.retentionHours} Hours
+                  Every {storageStats?.policy?.automaticSweepIntervalMinutes ?? '—'} min
                 </div>
-                <span className="text-[11px] text-emerald-600 font-medium mt-1 block">Last run: {storageStats.lastPurgeRun}</span>
+                <span className="text-[11px] text-emerald-600 font-medium mt-1 block">Unclaimed uploads: {storageStats?.policy?.unclaimedUploadRetentionHours ?? '—'}h</span>
               </div>
             </div>
 
@@ -1298,7 +1239,7 @@ pause
                 <span>Customer Document Privacy Invariant</span>
               </div>
               <p>
-                In compliance with Inklly's zero-knowledge privacy charter, all customer files uploaded via Counter QR or WhatsApp are stored exclusively in an encrypted temporary spool directory. Once printed and collected, or after 2 hours have elapsed, all document binaries are permanently purged with zero trace.
+                Customer order files are stored in the configured private file store and are eligible for deletion 24 hours after an order is collected or cancelled. Unclaimed uploads are eligible after 48 hours. Merchant vault documents are persistent and are not part of this purge. Size figures are database estimates; unclaimed objects are not included in the counts above.
               </p>
             </div>
           </div>
@@ -1627,14 +1568,23 @@ pause
               </h3>
               <button
                 type="button"
-                onClick={() => setShowOnboardModal(false)}
+                onClick={() => { setShowOnboardModal(false); setProvisionedInvitationLink(''); }}
                 className="text-slate-400 hover:text-slate-700 font-bold cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
-            <form onSubmit={handleOnboardMerchant} className="space-y-3">
+            {provisionedInvitationLink ? (
+              <div className="space-y-3" role="status" aria-live="polite">
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900">
+                  <strong>Tenant created in the database.</strong> Billing is not configured, so this organization is on a seven-day trial. Share this one-time setup link with the owner using an approved private channel. It expires after 48 hours and is shown only here.
+                </div>
+                <input readOnly value={provisionedInvitationLink} aria-label="One-time owner setup link" className="w-full text-xs p-2.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 font-mono" />
+                <button type="button" onClick={() => navigator.clipboard.writeText(provisionedInvitationLink).then(() => showToast('Owner setup link copied.')).catch(() => showToast('Copy failed; select and copy the link manually.'))} className="w-full py-2.5 bg-[#4D64E6] text-white font-bold text-xs rounded-xl">Copy one-time setup link</button>
+                <button type="button" onClick={() => { setShowOnboardModal(false); setProvisionedInvitationLink(''); }} className="w-full py-2.5 bg-slate-100 dark:bg-slate-800 font-bold text-xs rounded-xl">Done</button>
+              </div>
+            ) : <form onSubmit={handleOnboardMerchant} className="space-y-3">
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Organization / Store Name
@@ -1699,28 +1649,30 @@ pause
                   onChange={(e) => setNewPlanTier(e.target.value)}
                   className="w-full text-xs p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100 font-bold"
                 >
-                  <option value="STARTER">Starter Plan (₹499/mo)</option>
-                  <option value="GROWTH">Growth Plan (₹999/mo)</option>
-                  <option value="ENTERPRISE">Enterprise Plan (₹2,499/mo)</option>
+                  <option value="STARTER">Starter (₹499/mo)</option>
+                  <option value="GROWTH">Growth (₹1,199/mo)</option>
+                  <option value="PRO">Pro (₹2,499/mo)</option>
+                  <option value="SCALE">Scale (₹6,999/mo)</option>
                 </select>
               </div>
 
               <div className="pt-2 flex gap-2">
                 <button
                   type="button"
-                  onClick={() => setShowOnboardModal(false)}
+                  onClick={() => { setShowOnboardModal(false); setProvisionedInvitationLink(''); }}
                   className="w-1/2 py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs rounded-xl cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
+                  disabled={isOnboarding}
                   className="w-1/2 py-2.5 bg-[#4D64E6] hover:bg-indigo-600 text-white font-bold text-xs rounded-xl cursor-pointer shadow-md shadow-[#4D64E6]/25"
                 >
-                  Provision Tenant
+                  {isOnboarding ? 'Creating tenant…' : 'Provision Tenant'}
                 </button>
               </div>
-            </form>
+            </form>}
           </div>
         </div>
       )}

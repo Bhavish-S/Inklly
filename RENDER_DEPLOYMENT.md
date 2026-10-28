@@ -16,7 +16,7 @@ Set these values in Render's Environment settings. Never commit their values to 
 | `JWT_SECRET` | Generate a unique random secret: `openssl rand -base64 48`. Keep it stable across restarts and instances. It must be at least 32 bytes; rotating it invalidates current sessions. |
 | `DATABASE_URL` | Supabase PostgreSQL connection string for the production database. Use the connection method supported by the deployed network and keep the password private. |
 | `CORS_ORIGIN` | Comma-separated exact frontend origins, such as `https://inklly.vercel.app`. |
-| `RAZORPAY_CREDENTIALS_ENCRYPTION_KEY` | Required before shops can save Razorpay credentials. Generate a base64-encoded 32-byte key with `openssl rand -base64 32`; preserve it because rotating it makes saved credentials unreadable. |
+| `RAZORPAY_CREDENTIALS_ENCRYPTION_KEY` | Required before shops can save Razorpay credentials or developer webhook secrets. Generate a base64-encoded 32-byte key with `openssl rand -base64 32`; preserve it because rotating it makes saved secrets unreadable without an explicit re-encryption migration. |
 | `STORAGE_DRIVER` | Set to `supabase` in production. The server refuses to fall back to ephemeral local disk. |
 | `SUPABASE_URL` | HTTPS URL of the Supabase project that owns the private Storage bucket. |
 | `SUPABASE_SERVICE_ROLE_KEY` | Server-only Supabase service role key. Never expose it to the browser or commit it. |

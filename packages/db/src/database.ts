@@ -30,6 +30,9 @@ export class DatabaseService {
       this.ensureSqliteDispatchMigration();
       this.ensureSqliteMerchantVaultMigration();
       this.ensureSqliteAgentPrinterMigration();
+      this.ensureSqliteAccountInvitationMigration();
+      this.ensureSqliteLegacyInvitationRename();
+      this.ensureSqlitePortalOrderIdempotencyMigration();
     }
   }
 
@@ -46,6 +49,10 @@ export class DatabaseService {
       throw new Error('Raw DatabaseSync only available in SQLite mode');
     }
     return this.db;
+  }
+
+  public getEngineName(): string {
+    return this.isPostgres ? 'PostgreSQL' : 'SQLite';
   }
 
   private initSchema(): void {
@@ -124,6 +131,50 @@ export class DatabaseService {
     this.ensurePostgresDispatchMigration();
     this.ensurePostgresMerchantVaultMigration();
     this.ensurePostgresAgentPrinterMigration();
+    this.ensurePostgresAccountInvitationMigration();
+    this.ensurePostgresLegacyInvitationRename();
+    this.ensurePostgresPortalOrderIdempotencyMigration();
+  }
+
+  private ensureSqlitePortalOrderIdempotencyMigration(): void {
+    const applied = this.db!.prepare(`SELECT version FROM inklly_schema_migrations WHERE version = 7`).get();
+    if (applied) return;
+    this.db!.exec('BEGIN');
+    try {
+      this.db!.exec(`CREATE TABLE IF NOT EXISTS portal_order_idempotency (
+        shop_id TEXT NOT NULL, idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL,
+        order_id TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL,
+        PRIMARY KEY (shop_id, idempotency_key),
+        FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE,
+        FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+      )`);
+      this.db!.exec(`CREATE INDEX IF NOT EXISTS idx_portal_order_idempotency_created ON portal_order_idempotency(created_at)`);
+      this.db!.prepare(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (7, ?)`).run(new Date().toISOString());
+      this.db!.exec('COMMIT');
+    } catch (error) {
+      try { this.db!.exec('ROLLBACK'); } catch { /* preserve the original migration error */ }
+      throw error;
+    }
+  }
+
+  private ensurePostgresPortalOrderIdempotencyMigration(): void {
+    const applied = this.queryPostgres<{ version: number }>(`SELECT version FROM inklly_schema_migrations WHERE version = ?`, [7]);
+    if (applied.length > 0) return;
+    this.queryPostgres('BEGIN');
+    try {
+      this.queryPostgres(`CREATE TABLE IF NOT EXISTS portal_order_idempotency (
+        shop_id TEXT NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+        idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL,
+        order_id TEXT NOT NULL UNIQUE REFERENCES orders(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL, PRIMARY KEY (shop_id, idempotency_key)
+      )`);
+      this.queryPostgres(`CREATE INDEX IF NOT EXISTS idx_portal_order_idempotency_created ON portal_order_idempotency(created_at)`);
+      this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [7, new Date().toISOString()]);
+      this.queryPostgres('COMMIT');
+    } catch (error) {
+      try { this.queryPostgres('ROLLBACK'); } catch { /* preserve the original migration error */ }
+      throw new Error(`[Inklly DB] Portal order idempotency migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
   }
 
   private ensureSqliteDispatchMigration(): void {
@@ -221,6 +272,118 @@ export class DatabaseService {
     } catch (error) {
       try { this.queryPostgres('ROLLBACK'); } catch { /* preserve the original migration error */ }
       throw new Error(`[Inklly DB] PostgreSQL agent printer migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+
+  private ensureSqliteAccountInvitationMigration(): void {
+    const applied = this.db!.prepare(`SELECT version FROM inklly_schema_migrations WHERE version = 5`).get();
+    if (applied) return;
+    this.db!.exec('BEGIN');
+    try {
+      this.db!.exec(`CREATE TABLE IF NOT EXISTS account_invitations (
+        id TEXT PRIMARY KEY,
+        token_hash TEXT NOT NULL UNIQUE,
+        user_id TEXT NOT NULL,
+        organization_id TEXT NOT NULL,
+        shop_id TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        accepted_at TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+        FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE
+      )`);
+      this.db!.exec(`CREATE INDEX IF NOT EXISTS idx_account_invitations_expiry ON account_invitations(expires_at, accepted_at)`);
+      this.db!.prepare(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (5, ?)`).run(new Date().toISOString());
+      this.db!.exec('COMMIT');
+    } catch (error) {
+      try { this.db!.exec('ROLLBACK'); } catch { /* preserve the original migration error */ }
+      throw error;
+    }
+  }
+
+  private ensurePostgresAccountInvitationMigration(): void {
+    const applied = this.queryPostgres<{ version: number }>(`SELECT version FROM inklly_schema_migrations WHERE version = ?`, [5]);
+    if (applied.length > 0) return;
+    this.queryPostgres('BEGIN');
+    try {
+      this.queryPostgres(`CREATE TABLE IF NOT EXISTS account_invitations (
+        id TEXT PRIMARY KEY,
+        token_hash TEXT NOT NULL UNIQUE,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        shop_id TEXT NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+        expires_at TEXT NOT NULL,
+        accepted_at TEXT,
+        created_at TEXT NOT NULL
+      )`);
+      this.queryPostgres(`CREATE INDEX IF NOT EXISTS idx_account_invitations_expiry ON account_invitations(expires_at, accepted_at)`);
+      this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [5, new Date().toISOString()]);
+      this.queryPostgres('COMMIT');
+    } catch (error) {
+      try { this.queryPostgres('ROLLBACK'); } catch { /* preserve the original migration error */ }
+      throw new Error(`[Inklly DB] PostgreSQL platform invitation migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+
+  // Version 5 was not released, but local databases may have applied the
+  // earlier platform_invitations name. Preserve those invitations while
+  // converging every driver on the semantically correct shared table name.
+  private ensureSqliteLegacyInvitationRename(): void {
+    const applied = this.db!.prepare(`SELECT version FROM inklly_schema_migrations WHERE version = 6`).get();
+    if (applied) return;
+    this.db!.exec('BEGIN');
+    try {
+      this.db!.exec(`CREATE TABLE IF NOT EXISTS account_invitations (
+        id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, user_id TEXT NOT NULL,
+        organization_id TEXT NOT NULL, shop_id TEXT NOT NULL, expires_at TEXT NOT NULL,
+        accepted_at TEXT, created_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+        FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE
+      )`);
+      const legacy = this.db!.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'platform_invitations'`).get();
+      if (legacy) {
+        this.db!.exec(`INSERT INTO account_invitations (id, token_hash, user_id, organization_id, shop_id, expires_at, accepted_at, created_at)
+          SELECT id, token_hash, user_id, organization_id, shop_id, expires_at, accepted_at, created_at FROM platform_invitations WHERE 1
+          ON CONFLICT DO NOTHING`);
+        this.db!.exec(`DROP TABLE platform_invitations`);
+      }
+      this.db!.exec(`CREATE INDEX IF NOT EXISTS idx_account_invitations_expiry ON account_invitations(expires_at, accepted_at)`);
+      this.db!.prepare(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (6, ?)`).run(new Date().toISOString());
+      this.db!.exec('COMMIT');
+    } catch (error) {
+      try { this.db!.exec('ROLLBACK'); } catch { /* preserve the original migration error */ }
+      throw error;
+    }
+  }
+
+  private ensurePostgresLegacyInvitationRename(): void {
+    const applied = this.queryPostgres<{ version: number }>(`SELECT version FROM inklly_schema_migrations WHERE version = ?`, [6]);
+    if (applied.length > 0) return;
+    this.queryPostgres('BEGIN');
+    try {
+      this.queryPostgres(`CREATE TABLE IF NOT EXISTS account_invitations (
+        id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        shop_id TEXT NOT NULL REFERENCES shops(id) ON DELETE CASCADE, expires_at TEXT NOT NULL,
+        accepted_at TEXT, created_at TEXT NOT NULL
+      )`);
+      const legacy = this.queryPostgres<{ table_name: string }>(
+        `SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'platform_invitations'`
+      );
+      if (legacy.length > 0) {
+        this.queryPostgres(`INSERT INTO account_invitations (id, token_hash, user_id, organization_id, shop_id, expires_at, accepted_at, created_at)
+          SELECT id, token_hash, user_id, organization_id, shop_id, expires_at, accepted_at, created_at FROM platform_invitations
+          ON CONFLICT DO NOTHING`);
+        this.queryPostgres(`DROP TABLE platform_invitations`);
+      }
+      this.queryPostgres(`CREATE INDEX IF NOT EXISTS idx_account_invitations_expiry ON account_invitations(expires_at, accepted_at)`);
+      this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [6, new Date().toISOString()]);
+      this.queryPostgres('COMMIT');
+    } catch (error) {
+      try { this.queryPostgres('ROLLBACK'); } catch { /* preserve the original migration error */ }
+      throw new Error(`[Inklly DB] PostgreSQL invitation table rename migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
     }
   }
 

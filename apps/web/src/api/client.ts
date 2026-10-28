@@ -61,10 +61,10 @@ export const api = {
     return res.json();
   },
 
-  async submitOrder(orderPayload: any) {
+  async submitOrder(orderPayload: any, idempotencyKey: string = crypto.randomUUID()) {
     const res = await fetch(`${API_BASE}/portal/orders`, {
       method: 'POST',
-      headers: getHeaders(),
+      headers: getHeaders({ 'Idempotency-Key': idempotencyKey }),
       body: JSON.stringify(orderPayload),
     });
     if (!res.ok) {
@@ -166,10 +166,18 @@ export const api = {
     return res.json();
   },
 
-  async getOrders(statusFilter?: string) {
-    const url = statusFilter && statusFilter !== 'ALL'
-      ? `${API_BASE}/merchant/orders?status=${statusFilter}`
-      : `${API_BASE}/merchant/orders`;
+  async getOrders(statusFilter?: string, options?: { page?: number; pageSize?: number; search?: string; sortBy?: 'createdAt' | 'totalAmountPaise' | 'status' | 'orderNumber'; sortOrder?: 'asc' | 'desc' }) {
+    const params = new URLSearchParams();
+    if (statusFilter && statusFilter !== 'ALL') params.set('status', statusFilter);
+    if (options) {
+      if (options.page !== undefined) params.set('page', String(options.page));
+      if (options.pageSize !== undefined) params.set('pageSize', String(options.pageSize));
+      if (options.search) params.set('search', options.search);
+      if (options.sortBy) params.set('sortBy', options.sortBy);
+      if (options.sortOrder) params.set('sortOrder', options.sortOrder);
+    }
+    const query = params.toString();
+    const url = `${API_BASE}/merchant/orders${query ? `?${query}` : ''}`;
     const res = await fetch(url, { headers: getHeaders() });
     if (!res.ok) throw new Error('Failed to load orders');
     return res.json();
@@ -282,6 +290,15 @@ export const api = {
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || 'Could not save printer');
+    return body;
+  },
+
+  async setDefaultPrinter(printerId: string) {
+    const res = await fetch(`${API_BASE}/merchant/printers/${encodeURIComponent(printerId)}/default`, {
+      method: 'PUT', headers: getHeaders(), body: JSON.stringify({}),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not set the default printer');
     return body;
   },
 
@@ -408,7 +425,9 @@ export const api = {
 
   async getStaff() {
     const res = await fetch(`${API_BASE}/merchant/staff`, { headers: getHeaders() });
-    return res.json();
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to load staff accounts');
+    return body;
   },
 
   async addStaff(staffData: any) {
@@ -417,7 +436,9 @@ export const api = {
       headers: getHeaders(),
       body: JSON.stringify(staffData),
     });
-    return res.json();
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to invite staff member');
+    return body;
   },
 
   async getBotTemplates() {
@@ -477,12 +498,56 @@ export const api = {
   // Platform Owner Console
   async getPlatformOverview() {
     const res = await fetch(`${API_BASE}/platform/overview`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Failed to load platform overview');
     return res.json();
+  },
+
+  async getPlatformAgents() {
+    const res = await fetch(`${API_BASE}/platform/agents`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Failed to load registered agent fleet');
+    return res.json();
+  },
+
+  async getPlatformRetentionStats() {
+    const res = await fetch(`${API_BASE}/platform/retention`, { headers: getHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to load retention statistics');
+    return body;
+  },
+
+  async runPlatformRetentionPurge() {
+    const res = await fetch(`${API_BASE}/platform/retention/purge`, {
+      method: 'POST', headers: getHeaders(), body: JSON.stringify({}),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok && res.status !== 207) throw new Error(body.error || 'Retention purge failed');
+    return body;
   },
 
   async getPlatformMerchants() {
     const res = await fetch(`${API_BASE}/platform/merchants`, { headers: getHeaders() });
-    return res.json();
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to load merchant organizations');
+    return body;
+  },
+
+  async createPlatformMerchant(payload: { organizationName: string; shopCode?: string; ownerName: string; ownerEmail: string; planTier: string }) {
+    const res = await fetch(`${API_BASE}/platform/merchants`, {
+      method: 'POST', headers: getHeaders(), body: JSON.stringify(payload),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not provision merchant');
+    return body;
+  },
+
+  async acceptOwnerInvitation(token: string, password: string) {
+    const res = await fetch(`${API_BASE}/auth/invitations/accept`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, password }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not accept invitation');
+    return body;
   },
 
   async updateMerchantStatus(orgId: string, updates: any) {
@@ -491,7 +556,9 @@ export const api = {
       headers: getHeaders(),
       body: JSON.stringify(updates),
     });
-    return res.json();
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to update organization');
+    return body;
   },
 
   async getPlatformLedger(domain?: string) {

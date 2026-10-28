@@ -13,6 +13,7 @@ export function createAuthRoutes(db: DatabaseService): Router {
 
   router.post('/login', controller.login);
   router.post('/register', controller.register);
+  router.post('/invitations/accept', controller.acceptPlatformInvitation);
   const requireAuthentication = authenticate(db);
   router.get('/me', requireAuthentication, controller.getMe);
 

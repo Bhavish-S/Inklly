@@ -84,7 +84,7 @@ export function createApp(db?: DatabaseService): express.Express {
   app.use('/api/v1/merchant', createMerchantRoutes(database, fileStorage));
   app.use('/api/v1/payments', createPaymentRoutes(database));
   app.use('/api/v1/agent', createAgentRoutes(database, fileStorage));
-  app.use('/api/v1/platform', createAdminRoutes(database));
+  app.use('/api/v1/platform', createAdminRoutes(database, fileStorage));
   app.use('/api/v1/developer', createDeveloperRoutes(database));
   app.use('/api/v1/subscriptions', createSubscriptionRoutes(database));
 

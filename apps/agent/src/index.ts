@@ -7,12 +7,10 @@ async function main() {
 
   process.on('SIGINT', () => {
     console.log('\n[Inklly Agent] Shutting down...');
-    daemon.stop();
-    process.exit(0);
+    void daemon.stop().then(() => process.exit(0));
   });
   process.on('SIGTERM', () => {
-    daemon.stop();
-    process.exit(0);
+    void daemon.stop().then(() => process.exit(0));
   });
 }
 

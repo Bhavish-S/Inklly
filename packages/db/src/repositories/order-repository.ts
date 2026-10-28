@@ -4,8 +4,100 @@ import { Order, OrderFile, OrderStatus, PaymentStatus, validateOrderTransition }
 export class OrderRepository {
   constructor(private db: DatabaseService) {}
 
+  public getOrdersPageByShop(
+    shopId: string,
+    options: { status?: OrderStatus | 'ALL'; statuses?: OrderStatus[]; search?: string; page: number; pageSize: number; sortBy: 'createdAt' | 'totalAmountPaise' | 'status' | 'orderNumber'; sortOrder: 'asc' | 'desc' }
+  ): { orders: Order[]; total: number; page: number; pageSize: number; totalPages: number; revenuePaise: number; pageCount: number } {
+    const filters = ['shop_id = ?'];
+    const params: Array<string | number | null> = [shopId];
+    if (options.statuses?.length) {
+      filters.push(`status IN (${options.statuses.map(() => '?').join(', ')})`);
+      params.push(...options.statuses);
+    } else if (options.status && options.status !== 'ALL') {
+      filters.push('status = ?');
+      params.push(options.status);
+    }
+    const search = options.search?.trim();
+    if (search) {
+      filters.push(`(LOWER(order_number) LIKE LOWER(?) OR LOWER(COALESCE(customer_name, '')) LIKE LOWER(?) OR LOWER(COALESCE(customer_phone, '')) LIKE LOWER(?) OR EXISTS (SELECT 1 FROM order_files f WHERE f.order_id = orders.id AND LOWER(f.file_name) LIKE LOWER(?)))`);
+      const pattern = `%${search}%`;
+      params.push(pattern, pattern, pattern, pattern);
+    }
+    const where = filters.join(' AND ');
+    const count = this.db.queryOne<{ total: number | string; revenue_paise: number | string; page_count: number | string }>(
+      `SELECT COUNT(*) AS total, COALESCE(SUM(total_amount_paise), 0) AS revenue_paise,
+       COALESCE(SUM((SELECT COALESCE(SUM(f.page_count), 0) FROM order_files f WHERE f.order_id = orders.id)), 0) AS page_count
+       FROM orders WHERE ${where}`,
+      params
+    );
+    const sortColumns = {
+      createdAt: 'created_at',
+      totalAmountPaise: 'total_amount_paise',
+      status: 'status',
+      orderNumber: 'order_number',
+    } as const;
+    const direction = options.sortOrder === 'asc' ? 'ASC' : 'DESC';
+    const rows = this.db.query<any>(
+      `SELECT * FROM orders WHERE ${where} ORDER BY ${sortColumns[options.sortBy]} ${direction}, id DESC LIMIT ? OFFSET ?`,
+      [...params, options.pageSize, (options.page - 1) * options.pageSize]
+    );
+    const total = Number(count?.total || 0);
+    return {
+      orders: rows.map((row) => this.hydrateOrder(row)),
+      total,
+      page: options.page,
+      pageSize: options.pageSize,
+      totalPages: Math.ceil(total / options.pageSize),
+      revenuePaise: Number(count?.revenue_paise || 0),
+      pageCount: Number(count?.page_count || 0),
+    };
+  }
+
   public createOrder(order: Order): void {
     this.db.transaction(() => {
+      this.persistOrder(order);
+    });
+  }
+
+  /** Creates a customer portal order once per shop/key and returns the original order on retry. */
+  public findIdempotentOrder(shopId: string, idempotencyKey: string, requestHash: string): { orderId: string; replayed: boolean; conflict: boolean } | null {
+    const existing = this.db.queryOne<any>(
+      `SELECT request_hash, order_id FROM portal_order_idempotency WHERE shop_id = ? AND idempotency_key = ?`,
+      [shopId, idempotencyKey]
+    );
+    if (!existing) return null;
+    return existing.request_hash === requestHash
+      ? { orderId: existing.order_id, replayed: true, conflict: false }
+      : { orderId: existing.order_id, replayed: false, conflict: true };
+  }
+
+  public createOrderIdempotently(order: Order, idempotencyKey: string, requestHash: string): { orderId: string; replayed: boolean; conflict: boolean } {
+    const existing = this.findIdempotentOrder(order.shopId, idempotencyKey, requestHash);
+    if (existing) {
+      return existing;
+    }
+
+    try {
+      this.db.transaction(() => {
+        this.persistOrder(order);
+        this.db.execute(
+          `INSERT INTO portal_order_idempotency (shop_id, idempotency_key, request_hash, order_id, created_at) VALUES (?, ?, ?, ?, ?)`,
+          [order.shopId, idempotencyKey, requestHash, order.id, order.createdAt]
+        );
+      });
+      return { orderId: order.id, replayed: false, conflict: false };
+    } catch (error) {
+      // A concurrent retry can pass the initial read. Once the winning transaction
+      // commits, resolve that uniqueness race to the original order.
+      const raced = this.findIdempotentOrder(order.shopId, idempotencyKey, requestHash);
+      if (raced) {
+        return raced;
+      }
+      throw error;
+    }
+  }
+
+  private persistOrder(order: Order): void {
       const tokenNumber = order.tokenNumber || `T-${Math.floor(1000 + Math.random() * 9000)}`;
       this.db.execute(
         `INSERT INTO orders (
@@ -68,7 +160,6 @@ export class OrderRepository {
           ]
         );
       }
-    });
   }
 
   public getOrderById(id: string): Order | null {

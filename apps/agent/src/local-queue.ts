@@ -59,6 +59,16 @@ export class LocalOfflineQueue {
     if (!columns.some((column) => column.name === 'expires_at')) {
       this.db.exec(`ALTER TABLE local_commands ADD COLUMN expires_at TEXT NOT NULL DEFAULT ''`);
     }
+    // A process restart can happen after OS submission but before result persistence.
+    // Preserve that ambiguity and report it; never put the command back in PENDING.
+    const interrupted = this.db.prepare(`SELECT command_id, job_id, attempt_id FROM local_commands WHERE status = 'DISPATCHED_TO_SPOOLER'`).all() as any[];
+    const markUncertain = this.db.prepare(`UPDATE local_commands SET status = 'REPORT_PENDING', result_json = ?, error_message = ?, updated_at = ? WHERE command_id = ? AND status = 'DISPATCHED_TO_SPOOLER'`);
+    const now = new Date().toISOString();
+    for (const row of interrupted) {
+      const errorMessage = 'The agent restarted while this job was in spooler dispatch. Physical output is uncertain; operator reconciliation is required. The job was not retried.';
+      const result: SpoolerResult = { attemptId: row.attempt_id, jobId: row.job_id, status: 'OUTPUT_UNCERTAIN', errorMessage, timestamp: now };
+      markUncertain.run(JSON.stringify(result), errorMessage, now, row.command_id);
+    }
   }
 
   public enqueue(ticket: PrintCommandTicket): boolean {

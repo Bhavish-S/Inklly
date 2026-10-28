@@ -132,13 +132,10 @@ const API_ENDPOINTS: ApiEndpointDef[] = [
     domain: 'Webhooks',
     method: 'POST',
     path: '/developer/test-webhook',
-    summary: 'Simulate HMAC-Signed Webhook Dispatch',
-    description: 'Dispatches a signed synthetic event with X-Inklly-Signature-256 for local or external webhook testing.',
+    summary: 'Preview Synthetic Webhook Payload',
+    description: 'Creates an unsigned local preview only. No webhook request is sent and no delivery signature is generated.',
     headers: { 'Content-Type': 'application/json' },
-    defaultBody: {
-      targetUrl: 'https://webhook.site/inklly-test-endpoint',
-      eventType: 'order.status_changed',
-    },
+    defaultBody: { eventType: 'order.status_changed' },
   },
 ];
 

@@ -361,6 +361,23 @@ export class AgentRepository {
   }
 
   // Webhooks
+  public migrateLegacyWebhookSecrets(encryptSecret: (secret: string) => string): number {
+    const legacyRows = this.db.query<any>(
+      `SELECT id, secret FROM webhook_subscriptions WHERE secret NOT LIKE 'inklly:enc:v1:webhook:%'`
+    );
+    if (!legacyRows.length) return 0;
+    this.db.transaction(() => {
+      for (const row of legacyRows) {
+        const encrypted = encryptSecret(String(row.secret));
+        this.db.execute(
+          `UPDATE webhook_subscriptions SET secret = ?, updated_at = ? WHERE id = ? AND secret = ?`,
+          [encrypted, new Date().toISOString(), row.id, row.secret]
+        );
+      }
+    });
+    return legacyRows.length;
+  }
+
   public createWebhookSubscription(sub: WebhookSubscriptionRecord): void {
     this.db.execute(
       `INSERT INTO webhook_subscriptions (id, organization_id, target_url, secret, event_types, is_active, created_at, updated_at)

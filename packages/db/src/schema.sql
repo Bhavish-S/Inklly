@@ -223,6 +223,20 @@ CREATE INDEX IF NOT EXISTS idx_orders_token ON orders(token_number);
 CREATE INDEX IF NOT EXISTS idx_orders_shop_status ON orders(shop_id, status);
 CREATE INDEX IF NOT EXISTS idx_orders_order_number ON orders(order_number);
 
+-- Deduplicates public customer order submissions across retries/timeouts.
+CREATE TABLE IF NOT EXISTS portal_order_idempotency (
+    shop_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    order_id TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (shop_id, idempotency_key),
+    FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE,
+    FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_portal_order_idempotency_created ON portal_order_idempotency(created_at);
+
 CREATE TABLE IF NOT EXISTS order_files (
     id TEXT PRIMARY KEY,
     order_id TEXT NOT NULL,
@@ -531,3 +545,19 @@ CREATE TABLE IF NOT EXISTS user_sessions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id);
+
+CREATE TABLE IF NOT EXISTS account_invitations (
+    id TEXT PRIMARY KEY,
+    token_hash TEXT NOT NULL UNIQUE,
+    user_id TEXT NOT NULL,
+    organization_id TEXT NOT NULL,
+    shop_id TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    accepted_at TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+    FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_invitations_expiry ON account_invitations(expires_at, accepted_at);

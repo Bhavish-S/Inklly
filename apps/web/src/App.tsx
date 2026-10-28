@@ -13,6 +13,7 @@ import { PricingPage } from './pages/PricingPage';
 import { ContactPage } from './pages/ContactPage';
 import { LoginPage } from './pages/LoginPage';
 import { RegisterPage } from './pages/RegisterPage';
+import { AcceptInvitationPage } from './pages/AcceptInvitationPage';
 import { LegalPage } from './pages/LegalPage';
 
 // Embedded Live Working Applications & Portals
@@ -97,6 +98,8 @@ export const App: React.FC = () => {
     '/contact',
     '/login',
     '/register',
+    '/activate-owner',
+    '/accept-invitation',
     '/legal',
     '/legal/privacy-policy',
     '/legal/terms',
@@ -173,6 +176,7 @@ export const App: React.FC = () => {
         {currentPath === '/register' && (
           <RegisterPage onNavigate={navigate} onRegisterSuccess={() => navigate('/merchant')} />
         )}
+        {(currentPath === '/activate-owner' || currentPath === '/accept-invitation') && <AcceptInvitationPage onNavigate={navigate} />}
 
         {/* Legal Policies */}
         {currentPath === '/legal/privacy-policy' && (

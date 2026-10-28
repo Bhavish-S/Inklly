@@ -351,6 +351,42 @@ export class AuthController {
     });
   };
 
+  public acceptPlatformInvitation = (req: Request, res: Response) => {
+    const { token, password } = req.body || {};
+    if (typeof token !== 'string' || token.length < 32 || token.length > 256 ||
+        typeof password !== 'string' || password.length < 12 || password.length > 1024 ||
+        !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9]/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
+      return res.status(400).json({ error: 'Use a valid invitation token and a password of at least 12 characters with upper and lower case letters, a number, and a symbol.' });
+    }
+
+    const now = new Date().toISOString();
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    let accepted: any = null;
+    try {
+      this.db.transaction(() => {
+        const claimed = this.db.query<any>(
+          `UPDATE account_invitations SET accepted_at = ? WHERE token_hash = ? AND accepted_at IS NULL AND expires_at > ?
+           RETURNING id, user_id, organization_id, shop_id`,
+          [now, tokenHash, now]
+        );
+        if (claimed.length === 0) return;
+        accepted = claimed[0];
+        this.userRepo.setUserPasswordHash(accepted.user_id, hashPassword(password));
+        this.userRepo.setUserActive(accepted.user_id, true);
+        this.userRepo.logAuditEvent({
+          id: crypto.randomUUID(), actorUserId: accepted.user_id, actorRole: 'MERCHANT_OWNER',
+          organizationId: accepted.organization_id, shopId: accepted.shop_id,
+          action: 'PLATFORM_INVITATION_ACCEPTED', targetType: 'PLATFORM_INVITATION', targetId: accepted.id,
+          outcome: 'SUCCESS', ipAddress: req.ip, createdAt: now,
+        });
+      });
+    } catch {
+      return res.status(503).json({ error: 'Invitation could not be accepted. Please retry.' });
+    }
+    if (!accepted) return res.status(400).json({ error: 'Invitation is invalid, expired, or already used.' });
+    return res.json({ success: true, email: this.userRepo.getUserById(accepted.user_id)?.email });
+  };
+
   public getMe = (req: Request, res: Response) => {
     if (!req.user) {
       return res.status(401).json({ error: 'Unauthenticated' });

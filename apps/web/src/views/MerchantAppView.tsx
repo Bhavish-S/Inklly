@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import QRCode from 'qrcode';
 import { api } from '../api/client';
 import {
@@ -236,24 +236,27 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
 
   // Real Edge Print Agent Health & Detection State (Port 8765)
   const [agentOnline, setAgentOnline] = useState<boolean>(false);
-  const [agentInfo, setAgentInfo] = useState<{ version?: string; hostname?: string } | null>(null);
+  const [agentInfo, setAgentInfo] = useState<{ version?: string; isPaired?: boolean; agentStatus?: string } | null>(null);
 
   const checkAgentHealth = async (showToast: boolean = false) => {
     try {
       const res = await fetch('http://127.0.0.1:8765/health', { method: 'GET', signal: AbortSignal.timeout(2000) });
       if (res.ok) {
         const data = await res.json();
-        setAgentOnline(true);
+        const pairedAndReachable = data.agentStatus === 'RUNNING' && data.isPaired === true;
+        setAgentOnline(pairedAndReachable);
         setAgentInfo(data);
         if (showToast) {
-          setGlobalToast('✓ Inklly Agent is ONLINE and communicating on port 8765');
+          setGlobalToast(pairedAndReachable
+            ? 'Inklly Agent is reachable locally and has a pairing credential.'
+            : 'An Inklly agent responded locally but is not paired to this shop.');
         }
-        return true;
+        return pairedAndReachable;
       }
     } catch {
       setAgentOnline(false);
       if (showToast) {
-        setGlobalToast('⚠️ Inklly Agent is OFFLINE. Run Inklly-Agent-Setup.bat or InkllyAgent.exe on this PC.');
+        setGlobalToast('No paired Inklly Agent responded on this computer. A verified installer is not available yet.');
       }
     }
     return false;
@@ -264,14 +267,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     const interval = setInterval(() => checkAgentHealth(false), 12000);
     return () => clearInterval(interval);
   }, []);
-
-  const handleDownloadAgent = (platform: string, format: string = 'bundle') => {
-    const isProd = typeof window !== 'undefined' && !['localhost', '127.0.0.1'].includes(window.location.hostname);
-    const apiBase = (import.meta.env.VITE_API_BASE as string) || (isProd ? 'https://inklly.onrender.com/api/v1' : 'http://localhost:4000/api/v1');
-    const downloadUrl = `${apiBase}/agent/download?platform=${platform}&shopCode=${currentMerchant.shopCode || 'campus1'}&format=${format}`;
-    window.location.href = downloadUrl;
-    setGlobalToast(`Downloading Inklly Agent for ${platform}...`);
-  };
 
   const [setupTab, setSetupTab] = useState<
     'profile' | 'printers' | 'pricing' | 'discounts' | 'portal' | 'automation'
@@ -291,9 +286,9 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     name: string;
     driver: string;
     port: string;
-    status: 'Ready' | 'Printing' | 'Offline';
+    status: 'Ready' | 'Printing' | 'Offline' | 'Stale' | 'Unknown';
     isDefault: boolean;
-    isPhysical: boolean;
+    isPhysical: boolean | null;
     supportsColor: boolean;
     supportsDuplex: boolean;
     tray: string;
@@ -357,7 +352,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [livePrintFilter, setLivePrintFilter] = useState<'all' | 'working' | 'alerts'>('all');
 
   // WhatsApp setup
-  const [whatsappHelpOpen, setWhatsappHelpOpen] = useState<boolean>(false);
 
   // Referrals
   const [referralTab, setReferralTab] = useState<'merchants' | 'history'>('merchants');
@@ -696,8 +690,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [storageFiles, setStorageFiles] = useState<Record<string, Array<{ id: string; name: string; pages: number; size: string; date: string; type: string }>>>({ temporary: [] });
 
   // WhatsApp State
-  const [whatsappConnected, setWhatsappConnected] = useState<boolean>(false);
-  const [whatsappQrTimer, setWhatsappQrTimer] = useState<number>(60);
 
   // Live Print State
   const [printerPausedMap, setPrinterPausedMap] = useState<Record<string, boolean>>({
@@ -729,13 +721,22 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   // Employees State
   const [showAddEmpModal, setShowAddEmpModal] = useState<boolean>(false);
   const [newEmpName, setNewEmpName] = useState<string>('');
+  const [newEmpEmail, setNewEmpEmail] = useState<string>('');
   const [newEmpPhone, setNewEmpPhone] = useState<string>('');
-  const [newEmpRole, setNewEmpRole] = useState<'Operator' | 'Manager' | 'Cashier'>('Operator');
-  const [newEmpShift, setNewEmpShift] = useState<'Morning (8 AM - 2 PM)' | 'Evening (2 PM - 9 PM)' | 'Full Day'>('Morning (8 AM - 2 PM)');
-  const [employeeList, setEmployeeList] = useState<Array<{ id: string; name: string; phone: string; role: string; shift: string; status: string }>>([]);
+  const [newEmpRole, setNewEmpRole] = useState<'Order Handler' | 'Print Operator' | 'Manager'>('Print Operator');
+  const [employeeList, setEmployeeList] = useState<Array<{ id: string; name: string; email: string; phone: string; role: string; status: string }>>([]);
+  const [employeeInviteUrl, setEmployeeInviteUrl] = useState('');
+  const [employeeError, setEmployeeError] = useState('');
+  const [employeeLoading, setEmployeeLoading] = useState(false);
+  const [employeeSaving, setEmployeeSaving] = useState(false);
 
   // Live Orders Data (Populated in real-time from server API and customer intake)
   const [ordersList, setOrdersList] = useState<any[]>([]);
+  const [queueOrders, setQueueOrders] = useState<any[]>([]);
+  const [queuePage, setQueuePage] = useState(1);
+  const [queueLoading, setQueueLoading] = useState(false);
+  const [queuePagination, setQueuePagination] = useState({ page: 1, pageSize: 25, total: 0, totalPages: 0, revenuePaise: 0, pageCount: 0 });
+  const queueRequestSequence = useRef(0);
   const [isRefreshingOrders, setIsRefreshingOrders] = useState<boolean>(false);
   const [lastOrderSyncTime, setLastOrderSyncTime] = useState<string>('Just now');
 
@@ -745,11 +746,11 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
 
     let tab: 'pending' | 'payment_pending' | 'processing' | 'printing' | 'rejected' | 'print_failed' | 'done' = 'pending';
     if (o.status === 'AWAITING_PAYMENT') tab = 'payment_pending';
-    else if (o.status === 'READY_FOR_PRINT') tab = 'processing';
-    else if (o.status === 'IN_PROGRESS' || o.status === 'SPOOLING') tab = 'printing';
-    else if (o.status === 'CANCELLED' || o.status === 'REJECTED') tab = 'rejected';
-    else if (o.status === 'FAILED' || o.status === 'OUTPUT_UNCERTAIN') tab = 'print_failed';
-    else if (o.status === 'COLLECTED' || o.status === 'READY_FOR_COLLECTION' || o.status === 'COMPLETED') tab = 'done';
+    else if (o.status === 'READY_FOR_PRINT' || o.status === 'PENDING_AGENT_SPOOL') tab = 'processing';
+    else if (o.status === 'IN_PROGRESS') tab = 'printing';
+    else if (o.status === 'CANCELLED') tab = 'rejected';
+    else if (o.status === 'PRINT_FAILED' || o.status === 'PRINT_UNCONFIRMED' || o.status === 'FAILED_REQUIRES_SUPPORT') tab = 'print_failed';
+    else if (o.status === 'COLLECTED' || o.status === 'READY_FOR_COLLECTION') tab = 'done';
     else tab = 'pending';
 
     const orderTime = o.createdAt
@@ -799,6 +800,42 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     };
   };
 
+  const queueStatuses: Record<typeof ordersTab, string[]> = {
+    pending: ['DRAFT', 'SUBMITTED', 'AWAITING_REVIEW', 'PENDING_RELEASE', 'ON_HOLD', 'CANCEL_REQUESTED'],
+    payment_pending: ['AWAITING_PAYMENT'],
+    processing: ['READY_FOR_PRINT', 'PENDING_AGENT_SPOOL'],
+    printing: ['IN_PROGRESS'],
+    rejected: ['CANCELLED'],
+    print_failed: ['PRINT_FAILED', 'PRINT_UNCONFIRMED', 'FAILED_REQUIRES_SUPPORT'],
+    done: ['READY_FOR_COLLECTION', 'COLLECTED'],
+    all: [],
+  };
+
+  const fetchOrdersPage = async (page = queuePage, tab = ordersTab, search = orderSearchQuery) => {
+    const requestSequence = ++queueRequestSequence.current;
+    setQueueLoading(true);
+    try {
+      const statuses = queueStatuses[tab];
+      const response = await api.getOrders(statuses.length ? statuses.join(',') : 'ALL', {
+        page, pageSize: queuePagination.pageSize, search: search.trim(), sortBy: 'createdAt', sortOrder: 'desc',
+      });
+      if (!response || !Array.isArray(response.orders)) throw new Error('Invalid page response');
+      if (requestSequence !== queueRequestSequence.current) return;
+      setQueueOrders(response.orders.map(mapServerOrderToUiOrder));
+      setQueuePagination({
+        page: response.page, pageSize: response.pageSize, total: response.total, totalPages: response.totalPages,
+        revenuePaise: response.revenuePaise || 0, pageCount: response.pageCount || 0,
+      });
+    } catch (err) {
+      if (requestSequence !== queueRequestSequence.current) return;
+      console.warn('[MerchantAppView] Could not fetch paginated order queue:', err);
+      setQueueOrders([]);
+      setQueuePagination((previous) => ({ ...previous, page, total: 0, totalPages: 0, revenuePaise: 0, pageCount: 0 }));
+    } finally {
+      if (requestSequence === queueRequestSequence.current) setQueueLoading(false);
+    }
+  };
+
   const fetchLiveOrdersFromApi = async () => {
     try {
       setIsRefreshingOrders(true);
@@ -811,6 +848,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     } catch (err) {
       console.warn('[MerchantAppView] Could not fetch live orders from API:', err);
     } finally {
+      if (activeView === 'orders') await fetchOrdersPage(queuePage);
       setIsRefreshingOrders(false);
     }
   };
@@ -819,9 +857,44 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     fetchLiveOrdersFromApi();
     const interval = setInterval(() => {
       fetchLiveOrdersFromApi();
-    }, 3000);
+    }, 15000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (activeView !== 'orders') return;
+    const debounce = window.setTimeout(() => { void fetchOrdersPage(queuePage); }, 300);
+    return () => window.clearTimeout(debounce);
+  }, [activeView, ordersTab, orderSearchQuery, queuePage]);
+
+  useEffect(() => {
+    if (activeView !== 'orders') return;
+    const interval = window.setInterval(() => { void fetchOrdersPage(queuePage); }, 15000);
+    return () => window.clearInterval(interval);
+  }, [activeView, ordersTab, orderSearchQuery, queuePage]);
+
+  useEffect(() => {
+    if (activeView !== 'employees') return;
+    let cancelled = false;
+    setEmployeeLoading(true);
+    setEmployeeError('');
+    api.getStaff().then((staff: any[]) => {
+      if (cancelled) return;
+      setEmployeeList(staff.map((entry) => ({
+        id: entry.user.id,
+        name: entry.user.fullName,
+        email: entry.user.email,
+        phone: entry.user.phone || '',
+        role: entry.rolePreset || (entry.membership.role === 'SHOP_STAFF' ? 'Staff member' : entry.membership.role),
+        status: entry.user.isActive ? 'Active' : 'Invitation pending',
+      })));
+    }).catch((err: any) => {
+      if (!cancelled) setEmployeeError(err.message || 'Could not load employee accounts.');
+    }).finally(() => {
+      if (!cancelled) setEmployeeLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [activeView]);
 
   // Synchronize orders with Customer Portal via LocalStorage
   const updateOrderInStorage = (orderId: string, updates: any) => {
@@ -1012,12 +1085,14 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
         ...printer,
         driver: printer.systemDriverName || printer.driver || 'Driver not reported',
         port: printer.port || 'Registered with shop',
-        status: printer.isOnline ? 'Ready' : 'Offline',
-        isPhysical: printer.isPhysical ?? true,
-        tray: printer.trays?.[0]?.name || 'Auto-Select',
+        status: printer.healthStatus === 'ONLINE' ? 'Ready'
+          : printer.healthStatus === 'OFFLINE' ? 'Offline'
+          : printer.healthStatus === 'STALE' ? 'Stale' : 'Unknown',
+        isPhysical: typeof printer.isPhysical === 'boolean' ? printer.isPhysical : null,
+        tray: printer.trays?.[0]?.name || '',
       }));
       setDetectedPrinters(livePrinters);
-      setAgentConnected(livePrinters.some((printer: any) => printer.isOnline));
+      setAgentConnected(livePrinters.some((printer: any) => printer.healthStatus === 'ONLINE'));
       setSelectedDefaultPrinter(livePrinters.find((printer: any) => printer.isDefault)?.name || '');
       if (showResult) {
         triggerSaveNotification(livePrinters.length ? `Loaded ${livePrinters.length} printer(s) registered with this shop.` : 'No printers are registered yet. Pair the desktop agent to discover local printers.');
@@ -1029,6 +1104,16 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       return false;
     } finally {
       setDetectingPrinters(false);
+    }
+  };
+
+  const handleSetDefaultPrinter = async (printerId: string) => {
+    try {
+      await api.setDefaultPrinter(printerId);
+      await handleRefreshPrinters(false);
+      triggerSaveNotification('Default printer saved for this shop.');
+    } catch (error) {
+      triggerSaveNotification(error instanceof Error ? error.message : 'Could not save the default printer.');
     }
   };
 
@@ -1071,39 +1156,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
 
   const handleTestPrint = (printerName?: string) => {
     triggerSaveNotification(`Test printing is not available from this dashboard yet${printerName || selectedDefaultPrinter ? ` for ${printerName || selectedDefaultPrinter}` : ''}. Use the paired desktop agent to verify printer output.`);
-  };
-
-  const handleDownloadAgentScript = async () => {
-    try {
-    const { pairingCode, expiresAt, shopId } = await api.createAgentPairingCode();
-    const isProd = typeof window !== 'undefined' && !['localhost', '127.0.0.1'].includes(window.location.hostname);
-    const serverUrl = ((import.meta.env.VITE_API_BASE as string) || (isProd ? 'https://inklly.onrender.com/api/v1' : 'http://localhost:4000/api/v1')).replace(/\/+$/, '');
-    const batContent = `@echo off
-chcp 65001 >nul
-set "INKLLY_SERVER_URL=${serverUrl}"
-set "INKLLY_SHOP_ID=${shopId}"
-set "INKLLY_PAIRING_CODE=${pairingCode}"
-set "INKLLY_AGENT_PORT=8765"
-if not exist "InkllyAgent.exe" (
-  echo Place this script beside the InkllyAgent.exe application first.
-  pause
-  exit /b 1
-)
-start "Inklly Agent" "InkllyAgent.exe"
-`;
-    const blob = new Blob([batContent], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'Inklly-Agent-Setup-win-x64.bat';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    triggerSaveNotification(`One-time setup script downloaded. Pairing code expires ${new Date(expiresAt).toLocaleTimeString()}.`);
-    } catch (error) {
-      triggerSaveNotification(error instanceof Error ? error.message : 'Could not create pairing code.');
-    }
   };
 
   const handleToggleChecklist = (key: string) => {
@@ -1172,32 +1224,41 @@ start "Inklly Agent" "InkllyAgent.exe"
     setTimeout(() => setOrderActionToast(null), 4000);
   };
 
-  const handleAddEmployee = (e: React.FormEvent) => {
+  const handleAddEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newEmpName.trim()) return;
-    const newId = `emp-${Date.now().toString().slice(-4)}`;
-    setEmployeeList((prev) => [
-      ...prev,
-      {
-        id: newId,
-        name: newEmpName.trim(),
-        phone: newEmpPhone.trim() || '+91 90000 00000',
-        role: newEmpRole,
-        shift: newEmpShift,
-        status: 'Active',
-      },
-    ]);
-    setShowAddEmpModal(false);
-    setNewEmpName('');
-    setNewEmpPhone('');
-    setOrderActionToast(`Employee account for ${newEmpName} provisioned with counter QR.`);
-    setTimeout(() => setOrderActionToast(null), 3000);
-  };
-
-  const handleDeleteEmployee = (empId: string) => {
-    setEmployeeList((prev) => prev.filter((e) => e.id !== empId));
-    setOrderActionToast('Employee account revoked.');
-    setTimeout(() => setOrderActionToast(null), 3000);
+    setEmployeeError('');
+    setEmployeeInviteUrl('');
+    setEmployeeSaving(true);
+    try {
+      const result = await api.addStaff({
+        email: newEmpEmail.trim(), fullName: newEmpName.trim(),
+        phone: newEmpPhone.trim() || undefined, rolePreset: newEmpRole,
+      });
+      if (typeof result.invitationToken !== 'string' || result.invitationToken.length < 40) {
+        throw new Error('The staff invitation was not returned. Refresh the staff list and inspect the audit log.');
+      }
+      const inviteUrl = new URL('/accept-invitation', window.location.origin);
+      inviteUrl.hash = new URLSearchParams({ token: result.invitationToken }).toString();
+      setEmployeeInviteUrl(inviteUrl.toString());
+      const staff = await api.getStaff();
+      setEmployeeList(staff.map((entry: any) => ({
+        id: entry.user.id,
+        name: entry.user.fullName,
+        email: entry.user.email,
+        phone: entry.user.phone || '',
+        role: entry.rolePreset || (entry.membership.role === 'SHOP_STAFF' ? 'Staff member' : entry.membership.role),
+        status: entry.user.isActive ? 'Active' : 'Invitation pending',
+      })));
+      setNewEmpName('');
+      setNewEmpEmail('');
+      setNewEmpPhone('');
+      setOrderActionToast('Staff account created. Share the one-time setup link privately; it expires in 48 hours.');
+      setTimeout(() => setOrderActionToast(null), 5000);
+    } catch (err: any) {
+      setEmployeeError(err.message || 'Could not invite this staff member.');
+    } finally {
+      setEmployeeSaving(false);
+    }
   };
 
   // Order Counts & Filtered Lists
@@ -1209,24 +1270,16 @@ start "Inklly Agent" "InkllyAgent.exe"
   const failedOrders = ordersList.filter((o) => o.tab === 'print_failed');
   const doneOrders = ordersList.filter((o) => o.tab === 'done');
 
-  const activeFilteredOrders = ordersList
-    .filter((o) => (ordersTab === 'all' ? true : o.tab === ordersTab))
-    .filter((o) => {
-      if (!orderSearchQuery.trim()) return true;
-      const q = orderSearchQuery.toLowerCase();
-      return (
-        o.id.toLowerCase().includes(q) ||
-        o.customer.toLowerCase().includes(q) ||
-        o.phone.toLowerCase().includes(q) ||
-        o.document.toLowerCase().includes(q)
-      );
-    });
+  const activeFilteredOrders = queueOrders;
 
-  const filteredOrdersTotalRevenue = activeFilteredOrders
-    .reduce((sum, o) => sum + (parseFloat(o.amount.replace('₹', '')) || 0), 0)
-    .toFixed(2);
+  const filteredOrdersTotalRevenue = (queuePagination.revenuePaise / 100).toFixed(2);
 
-  const filteredOrdersTotalPages = activeFilteredOrders.reduce((sum, o) => sum + (o.pages || 0), 0);
+  const filteredOrdersTotalPages = queuePagination.pageCount;
+
+  const selectOrdersTab = (tab: typeof ordersTab) => {
+    setOrdersTab(tab);
+    setQueuePage(1);
+  };
 
   const totalRevenueNumber = ordersList
     .filter((o) => o.tab === 'done')
@@ -2135,7 +2188,7 @@ start "Inklly Agent" "InkllyAgent.exe"
                 </select>
                 <button
                   type="button"
-                  onClick={fetchLiveOrdersFromApi}
+                  onClick={() => { void fetchLiveOrdersFromApi(); void fetchOrdersPage(queuePage); }}
                   disabled={isRefreshingOrders}
                   className="px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition-all flex items-center gap-1.5 border border-indigo-200 cursor-pointer shadow-xs disabled:opacity-50"
                   title="Force refresh order queue from server"
@@ -2146,7 +2199,7 @@ start "Inklly Agent" "InkllyAgent.exe"
                 </button>
                 <div>
                   <div className="text-lg font-extrabold text-[#172031] dark:text-white">
-                    {screenshotEmptyMode ? 0 : activeFilteredOrders.length}
+                    {screenshotEmptyMode ? 0 : queuePagination.total}
                   </div>
                   <div className="text-[10px] uppercase font-bold text-gray-400">ORDERS</div>
                 </div>
@@ -2186,7 +2239,7 @@ start "Inklly Agent" "InkllyAgent.exe"
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={() => setOrdersTab('pending')}
+                onClick={() => selectOrdersTab('pending')}
                 className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all ${
                   ordersTab === 'pending' ? 'bg-[#4E65F6] text-white shadow-xs' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
                 }`}
@@ -2195,7 +2248,7 @@ start "Inklly Agent" "InkllyAgent.exe"
               </button>
               <button
                 type="button"
-                onClick={() => setOrdersTab('payment_pending')}
+                onClick={() => selectOrdersTab('payment_pending')}
                 className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all ${
                   ordersTab === 'payment_pending' ? 'bg-[#4E65F6] text-white shadow-xs' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
                 }`}
@@ -2204,7 +2257,7 @@ start "Inklly Agent" "InkllyAgent.exe"
               </button>
               <button
                 type="button"
-                onClick={() => setOrdersTab('processing')}
+                onClick={() => selectOrdersTab('processing')}
                 className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all ${
                   ordersTab === 'processing' ? 'bg-[#4E65F6] text-white shadow-xs' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
                 }`}
@@ -2213,7 +2266,7 @@ start "Inklly Agent" "InkllyAgent.exe"
               </button>
               <button
                 type="button"
-                onClick={() => setOrdersTab('printing')}
+                onClick={() => selectOrdersTab('printing')}
                 className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all ${
                   ordersTab === 'printing' ? 'bg-[#4E65F6] text-white shadow-xs' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
                 }`}
@@ -2222,7 +2275,7 @@ start "Inklly Agent" "InkllyAgent.exe"
               </button>
               <button
                 type="button"
-                onClick={() => setOrdersTab('rejected')}
+                onClick={() => selectOrdersTab('rejected')}
                 className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all ${
                   ordersTab === 'rejected' ? 'bg-[#4E65F6] text-white shadow-xs' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
                 }`}
@@ -2231,7 +2284,7 @@ start "Inklly Agent" "InkllyAgent.exe"
               </button>
               <button
                 type="button"
-                onClick={() => setOrdersTab('print_failed')}
+                onClick={() => selectOrdersTab('print_failed')}
                 className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all ${
                   ordersTab === 'print_failed' ? 'bg-[#4E65F6] text-white shadow-xs' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
                 }`}
@@ -2240,7 +2293,7 @@ start "Inklly Agent" "InkllyAgent.exe"
               </button>
               <button
                 type="button"
-                onClick={() => setOrdersTab('done')}
+                onClick={() => selectOrdersTab('done')}
                 className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all ${
                   ordersTab === 'done' ? 'bg-[#4E65F6] text-white shadow-xs' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
                 }`}
@@ -2249,7 +2302,7 @@ start "Inklly Agent" "InkllyAgent.exe"
               </button>
               <button
                 type="button"
-                onClick={() => setOrdersTab('all')}
+                onClick={() => selectOrdersTab('all')}
                 className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all ${
                   ordersTab === 'all' ? 'bg-[#4E65F6] text-white shadow-xs' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
                 }`}
@@ -2265,7 +2318,7 @@ start "Inklly Agent" "InkllyAgent.exe"
                 <input
                   type="text"
                   value={orderSearchQuery}
-                  onChange={(e) => setOrderSearchQuery(e.target.value)}
+                  onChange={(e) => { setOrderSearchQuery(e.target.value); setQueuePage(1); }}
                   placeholder="Search order ID, name, phone or file…"
                   className="w-full pl-9 pr-4 py-2 rounded-full border border-gray-200 dark:border-gray-700 text-xs bg-white dark:bg-gray-800 outline-none focus:border-[#4E65F6]"
                 />
@@ -2274,7 +2327,7 @@ start "Inklly Agent" "InkllyAgent.exe"
                 {orderSearchQuery && (
                   <button
                     type="button"
-                    onClick={() => setOrderSearchQuery('')}
+                    onClick={() => { setOrderSearchQuery(''); setQueuePage(1); }}
                     className="text-xs font-bold text-gray-500 hover:text-black dark:hover:text-white px-2 py-1"
                   >
                     Clear Search ✕
@@ -2295,7 +2348,9 @@ start "Inklly Agent" "InkllyAgent.exe"
             </div>
 
             {/* Table or Empty State */}
-            {activeFilteredOrders.length > 0 ? (
+            {queueLoading && activeFilteredOrders.length === 0 ? (
+              <div className="py-20 text-center text-sm text-slate-500" role="status">Loading orders…</div>
+            ) : activeFilteredOrders.length > 0 ? (
               <div className="bg-white dark:bg-[#1E293B] border border-[#E8EAF3] dark:border-gray-800 rounded-2xl overflow-hidden shadow-xs">
                 <table className="w-full text-xs text-left">
                   <thead className="bg-gray-50 dark:bg-gray-800/60 border-b border-gray-100 dark:border-gray-800 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
@@ -2503,7 +2558,7 @@ start "Inklly Agent" "InkllyAgent.exe"
                 {orderSearchQuery && (
                   <button
                     type="button"
-                    onClick={() => setOrderSearchQuery('')}
+                    onClick={() => { setOrderSearchQuery(''); setQueuePage(1); }}
                     className="mt-4 px-4 py-2 bg-[#4D64E6] text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer"
                   >
                     Clear search filter
@@ -2511,6 +2566,17 @@ start "Inklly Agent" "InkllyAgent.exe"
                 )}
               </div>
             )}
+
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-4 py-3 text-xs">
+              <span className="text-gray-500" aria-live="polite">
+                {queuePagination.total === 0 ? 'No matching orders' : `Showing ${(queuePagination.page - 1) * queuePagination.pageSize + 1}–${Math.min(queuePagination.page * queuePagination.pageSize, queuePagination.total)} of ${queuePagination.total} matching orders`}
+              </span>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => setQueuePage((page) => Math.max(1, page - 1))} disabled={queueLoading || queuePagination.page <= 1} className="rounded-lg border px-3 py-2 font-semibold disabled:opacity-40">Previous</button>
+                <span className="min-w-20 text-center text-gray-600 dark:text-gray-300">Page {queuePagination.totalPages ? queuePagination.page : 0} of {queuePagination.totalPages}</span>
+                <button type="button" onClick={() => setQueuePage((page) => Math.min(queuePagination.totalPages, page + 1))} disabled={queueLoading || queuePagination.page >= queuePagination.totalPages} className="rounded-lg border px-3 py-2 font-semibold disabled:opacity-40">Next</button>
+              </div>
+            </div>
 
             {/* Order Detail Modal / Drawer */}
             {selectedOrder && (
@@ -2729,7 +2795,7 @@ start "Inklly Agent" "InkllyAgent.exe"
                       const matchesQuery = !query || `${printer.name} ${printer.driver}`.toLowerCase().includes(query);
                       const matchesFilter = livePrintFilter === 'all'
                         || (livePrintFilter === 'working' && printer.status === 'Ready')
-                        || (livePrintFilter === 'alerts' && printer.status === 'Offline');
+                        || (livePrintFilter === 'alerts' && ['Offline', 'Stale', 'Unknown'].includes(printer.status));
                       return matchesQuery && matchesFilter;
                     })
                     .map((printer: any) => (
@@ -2737,13 +2803,13 @@ start "Inklly Agent" "InkllyAgent.exe"
                         <div className="flex justify-between items-start gap-3">
                           <div className="min-w-0">
                             <div className="flex items-center gap-2">
-                              <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${printer.status === 'Ready' ? 'bg-green-500' : printer.status === 'Printing' ? 'bg-blue-500' : 'bg-gray-400'}`} />
+                              <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${printer.status === 'Ready' ? 'bg-green-500' : printer.status === 'Printing' ? 'bg-blue-500' : printer.status === 'Stale' || printer.status === 'Unknown' ? 'bg-amber-500' : 'bg-gray-400'}`} />
                               <h3 className="font-extrabold text-sm text-[#172031] dark:text-white truncate">{printer.name}</h3>
                               {printer.isDefault && <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">DEFAULT</span>}
                             </div>
                             <p className="text-[11px] text-gray-400 mt-1">{printer.driver} · Reported by paired desktop agent</p>
                           </div>
-                          <span className={`text-xs font-bold shrink-0 ${printer.status === 'Ready' ? 'text-green-600' : printer.status === 'Printing' ? 'text-blue-600' : 'text-gray-500'}`}>{printer.status}</span>
+                          <span className={`text-xs font-bold shrink-0 ${printer.status === 'Ready' ? 'text-green-600' : printer.status === 'Printing' ? 'text-blue-600' : printer.status === 'Stale' || printer.status === 'Unknown' ? 'text-amber-700' : 'text-gray-500'}`}>{printer.status}</span>
                         </div>
                         <div className="grid grid-cols-2 gap-2 text-xs pt-1">
                           <div className="p-2.5 bg-gray-50 dark:bg-gray-700/50 rounded-xl">
@@ -2762,7 +2828,7 @@ start "Inklly Agent" "InkllyAgent.exe"
                     const matchesQuery = !query || `${printer.name} ${printer.driver}`.toLowerCase().includes(query);
                     const matchesFilter = livePrintFilter === 'all'
                       || (livePrintFilter === 'working' && printer.status === 'Ready')
-                      || (livePrintFilter === 'alerts' && printer.status === 'Offline');
+                      || (livePrintFilter === 'alerts' && ['Offline', 'Stale', 'Unknown'].includes(printer.status));
                     return matchesQuery && matchesFilter;
                   }).length === 0 && <p className="col-span-full p-6 text-center text-sm text-gray-500">No printers match these filters.</p>}
                 </div>
@@ -2934,180 +3000,22 @@ start "Inklly Agent" "InkllyAgent.exe"
             VIEW 4: WHATSAPP SETUP
         ───────────────────────────────────────────────────────────── */}
         {activeView === 'whatsapp_setup' && (
-          <div className="p-6 max-w-5xl w-full mx-auto space-y-6">
-            <div className="flex justify-between items-center pb-4 border-b border-gray-200 dark:border-gray-800">
-              <div>
-                {!currentMerchant.whatsappBotEnabled && (
-              <div className="mb-4 p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
-                <div className="flex items-start gap-2.5">
-                  <span className="text-xl">🔒</span>
-                  <div>
-                    <span className="font-bold text-amber-900 dark:text-amber-200 block">
-                      WhatsApp automation is not available in the pilot yet
-                    </span>
-                    <span className="text-amber-700 dark:text-amber-300 text-[11px]">
-                      Meta messaging is not connected, so customer intake through WhatsApp is unavailable. Ask Inklly about pilot access.
-                    </span>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setUpgradeModalOpen(true)}
-                  className="px-3.5 py-1.5 bg-[#4D64E6] hover:bg-[#3F54D1] text-white font-bold rounded-xl shadow-xs transition-all cursor-pointer shrink-0"
-                >
-                  Contact Inklly
-                </button>
-              </div>
-            )}
-            <h2 className="text-xl font-extrabold text-[#172031] dark:text-white">WhatsApp setup</h2>
-                <p className="text-xs text-gray-400">Connect your shop's official WhatsApp Business number</p>
-              </div>
-              <span
-                className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 ${
-                  whatsappConnected
-                    ? 'bg-green-100 text-green-700 dark:bg-green-950/50 dark:text-green-300'
-                    : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300'
-                }`}
-              >
-                <span className={`w-2 h-2 rounded-full ${whatsappConnected ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} />
-                {whatsappConnected ? '● Connected (+91 98765 00000)' : '● Not connected'}
-              </span>
+          <div className="p-6 max-w-4xl w-full mx-auto space-y-5">
+            <div className="pb-4 border-b border-gray-200 dark:border-gray-800">
+              <h2 className="text-xl font-extrabold text-[#172031] dark:text-white">WhatsApp integration</h2>
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Customer orders can be placed through your shop QR portal.</p>
             </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-              {/* Connect with Facebook */}
-              <div className="md:col-span-7 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-6 shadow-xs">
-                <div className="flex items-center gap-2 mb-3">
-                  <span className="w-8 h-8 rounded-lg bg-[#1877F2] text-white flex items-center justify-center font-bold text-sm">f</span>
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
-                    RECOMMENDED
-                  </span>
-                </div>
-                <h3 className="font-extrabold text-base mb-1 text-[#172031] dark:text-white">Connect with Facebook</h3>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mb-6">Official Meta WhatsApp Cloud API connection for your shop.</p>
-
-                <div className="space-y-3 mb-6">
-                  <label className="flex items-center gap-3 p-3 rounded-xl border border-blue-600 bg-blue-50/50 dark:bg-blue-950/30 cursor-pointer">
-                    <input type="radio" name="fb_mode" defaultChecked className="text-blue-600" />
-                    <div>
-                      <div className="text-xs font-bold text-gray-900 dark:text-white">Existing business number</div>
-                      <div className="text-[10px] text-gray-500 dark:text-gray-400">Connect a dedicated SIM registered on WhatsApp Business</div>
-                    </div>
-                  </label>
-                  <label className="flex items-center gap-3 p-3 rounded-xl border border-gray-200 dark:border-gray-700 cursor-pointer">
-                    <input type="radio" name="fb_mode" className="text-blue-600" />
-                    <div>
-                      <div className="text-xs font-bold text-gray-900 dark:text-white">Display name</div>
-                      <div className="text-[10px] text-gray-500 dark:text-gray-400">Request Meta verified green tick display name</div>
-                    </div>
-                  </label>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => triggerSaveNotification('WhatsApp integration is not connected to Meta yet. QR portal ordering is available now.')}
-                  className="w-full py-3 bg-[#1877F2] hover:bg-[#166FE5] text-white font-bold text-xs rounded-xl shadow-md cursor-pointer transition-all"
-                >
-                  {whatsappConnected ? 'Re-link with Facebook Cloud API' : 'Continue with Facebook'}
-                </button>
-              </div>
-
-              {/* Connect by QR */}
-              <div className="md:col-span-5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-6 text-center flex flex-col justify-between shadow-xs">
+            <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 dark:border-amber-900 dark:bg-amber-950/30" aria-live="polite">
+              <div className="flex items-start gap-3">
+                <span aria-hidden="true" className="text-lg">ⓘ</span>
                 <div>
-                  <h3 className="font-extrabold text-base mb-1 text-[#172031] dark:text-white">OR Login with QR code</h3>
-                  <p className="text-xs text-gray-400 mb-4">Alternative · scan with your phone</p>
-
-                  <div className="w-48 h-48 mx-auto bg-gray-50 dark:bg-gray-900 border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-2xl flex flex-col items-center justify-center p-3 mb-4 relative overflow-hidden">
-                    <div className="w-32 h-32 bg-[#172031] rounded-xl flex items-center justify-center text-white text-[9px] font-mono p-1">
-                      [WHATSAPP QR]
-                    </div>
-                    {/* Scanning cyan bar */}
-                    <div className="absolute inset-x-4 top-8 h-1 bg-cyan-400 shadow-[0_0_8px_#22d3ee] animate-pulse" />
-                    <span className="text-[10px] text-gray-400 mt-2">WhatsApp → Linked devices</span>
-                  </div>
-                </div>
-
-                <div className="space-y-2 border-t border-gray-100 dark:border-gray-700 pt-3">
-                  <div className="flex items-center justify-between text-xs text-gray-400">
-                    <span>{whatsappQrTimer}s countdown</span>
-                    <button
-                      type="button"
-                      onClick={() => setOrderActionToast('WhatsApp pairing is unavailable until the Meta integration is configured.')}
-                      className="font-bold text-[#4D64E6] cursor-pointer"
-                    >
-                      Refresh QR
-                    </button>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => triggerSaveNotification('WhatsApp device pairing is not available until the Meta integration is configured.')}
-                    className="w-full py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
-                  >
-                    WhatsApp pairing unavailable
-                  </button>
+                  <h3 className="font-bold text-amber-950 dark:text-amber-100">WhatsApp onboarding is not available yet</h3>
+                  <p className="mt-1 max-w-2xl text-sm text-amber-900/80 dark:text-amber-200/80">
+                    Inklly has not connected Meta onboarding or message delivery. No WhatsApp account is connected, and this page cannot receive orders or files. Use the shop QR portal for customer orders.
+                  </p>
                 </div>
               </div>
-            </div>
-
-            {/* Your accounts Card */}
-            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-6 shadow-xs">
-              <div className="flex justify-between items-center mb-3">
-                <h3 className="font-extrabold text-sm text-[#172031] dark:text-white">Your accounts</h3>
-                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                  whatsappConnected ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
-                }`}>
-                  {whatsappConnected ? '1 Account Paired' : '0 Accounts'}
-                </span>
-              </div>
-              {whatsappConnected ? (
-                <div className="p-3 bg-gray-50 dark:bg-gray-700/40 border border-gray-200 dark:border-gray-700 rounded-xl flex justify-between items-center text-xs">
-                  <div className="flex items-center gap-2.5">
-                    <span className="w-7 h-7 rounded-lg bg-green-500 text-white flex items-center justify-center font-bold text-xs">WA</span>
-                    <div>
-                      <div className="font-bold text-gray-900 dark:text-white">+91 98765 43210</div>
-                      <div className="text-[10px] text-gray-400">Meta Cloud API · Printing Shopz Official</div>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setWhatsappConnected(false);
-                      setOrderActionToast('WhatsApp account unlinked.');
-                    }}
-                    className="text-red-600 hover:underline text-xs font-bold cursor-pointer"
-                  >
-                    Disconnect
-                  </button>
-                </div>
-              ) : (
-                <div className="p-5 text-center text-xs text-gray-400 bg-gray-50 dark:bg-gray-900/40 rounded-xl border border-dashed border-gray-200 dark:border-gray-700">
-                  No WhatsApp account connected yet. Pair your WhatsApp number above to start receiving customer print files directly.
-                </div>
-              )}
-            </div>
-
-            {/* Setup help Accordion */}
-            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-5 shadow-xs">
-              <button
-                type="button"
-                onClick={() => setWhatsappHelpOpen(!whatsappHelpOpen)}
-                className="w-full flex items-center justify-between text-xs font-extrabold text-left cursor-pointer"
-              >
-                <span className="flex items-center gap-2">
-                  <span className="text-blue-600 font-bold">▶</span> Setup help
-                </span>
-                <span className="text-gray-400">{whatsappHelpOpen ? '▲ Hide' : '▼ Expand'}</span>
-              </button>
-              {whatsappHelpOpen && (
-                <ol className="mt-4 space-y-2 text-xs text-gray-600 dark:text-gray-300 list-decimal list-inside border-t border-gray-100 dark:border-gray-700 pt-3">
-                  <li>Open WhatsApp on your mobile phone</li>
-                  <li>Tap Settings (iOS) or Menu ⋮ (Android) and choose <strong>Linked Devices</strong></li>
-                  <li>Tap <strong>Link a Device</strong> and verify biometric or PIN</li>
-                  <li>Point your phone camera at the QR code above to establish an encrypted session</li>
-                </ol>
-              )}
-            </div>
+            </section>
           </div>
         )}
 
@@ -3950,113 +3858,36 @@ start "Inklly Agent" "InkllyAgent.exe"
           </div>
           <div>
             <h3 className="font-extrabold text-base text-[#172031] dark:text-white">Employees</h3>
-            <p className="text-xs text-gray-400">Assign operational access and the main or a dedicated counter QR.</p>
+            <p className="text-xs text-gray-400">Invite staff with one of the supported access roles.</p>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => triggerSaveNotification('Adding new employee...')}
-          className="px-4 py-2 bg-[#4F46E5] hover:bg-[#4338CA] text-white rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-1.5"
-        >
-          <span>+</span> Add employee
-        </button>
+        {liveUser?.role === 'MERCHANT_OWNER' && <span className="text-xs text-slate-500">Owner access</span>}
       </div>
 
-      {/* New Employee Account Form Card */}
-      <div className="border border-gray-200 dark:border-gray-700 rounded-2xl p-6 space-y-5 bg-gray-50/30 dark:bg-gray-900/30">
-        <div className="flex justify-between items-center">
-          <h4 className="font-extrabold text-sm text-[#172031] dark:text-white">New employee account</h4>
-          <button type="button" className="text-gray-400 hover:text-gray-600">✕</button>
+      {liveUser?.role === 'MERCHANT_OWNER' && <form onSubmit={handleAddEmployee} className="border border-gray-200 dark:border-gray-700 rounded-2xl p-5 space-y-4 bg-gray-50/50 dark:bg-gray-900/30">
+        <div>
+          <h4 className="font-extrabold text-sm text-[#172031] dark:text-white">Invite a staff member</h4>
+          <p className="mt-1 text-xs text-gray-500">They will create their own password from a private setup link. Inklly does not email invitations yet.</p>
         </div>
-
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-          <div>
-            <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">Full name</label>
-            <input type="text" className="w-full px-3 py-2 border rounded-xl bg-white dark:bg-gray-800" />
-          </div>
-          <div>
-            <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">Login email</label>
-            <input type="email" className="w-full px-3 py-2 border rounded-xl bg-white dark:bg-gray-800" />
-          </div>
-          <div>
-            <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">Mobile number</label>
-            <input type="text" defaultValue="4mh24cs017@gmail.com" className="w-full px-3 py-2 border rounded-xl bg-white dark:bg-gray-800" />
-          </div>
-          <div>
-            <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">Temporary password</label>
-            <input type="password" defaultValue="password123456" className="w-full px-3 py-2 border rounded-xl bg-white dark:bg-gray-800" />
-          </div>
+          <label className="font-bold text-gray-700 dark:text-gray-300">Full name<input required minLength={2} maxLength={120} value={newEmpName} onChange={(e) => setNewEmpName(e.target.value)} autoComplete="name" className="mt-1 w-full px-3 py-2 border rounded-xl bg-white dark:bg-gray-800 font-normal" /></label>
+          <label className="font-bold text-gray-700 dark:text-gray-300">Login email<input required type="email" maxLength={320} value={newEmpEmail} onChange={(e) => setNewEmpEmail(e.target.value)} autoComplete="email" className="mt-1 w-full px-3 py-2 border rounded-xl bg-white dark:bg-gray-800 font-normal" /></label>
+          <label className="font-bold text-gray-700 dark:text-gray-300">Mobile number <span className="font-normal text-gray-400">(optional, international format)</span><input type="tel" value={newEmpPhone} onChange={(e) => setNewEmpPhone(e.target.value)} placeholder="+919876543210" autoComplete="tel" className="mt-1 w-full px-3 py-2 border rounded-xl bg-white dark:bg-gray-800 font-normal" /></label>
+          <label className="font-bold text-gray-700 dark:text-gray-300">Access role<select value={newEmpRole} onChange={(e) => setNewEmpRole(e.target.value as typeof newEmpRole)} className="mt-1 w-full px-3 py-2 border rounded-xl bg-white dark:bg-gray-800 font-normal"><option>Order Handler</option><option>Print Operator</option><option>Manager</option></select></label>
         </div>
+        {employeeError && <p role="alert" className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-xl p-3">{employeeError}</p>}
+        <button type="submit" disabled={employeeSaving} className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white rounded-xl text-xs font-bold">{employeeSaving ? 'Creating invite…' : 'Create staff invite'}</button>
+      </form>}
 
-        {/* Role Pills */}
-        <div className="flex gap-2 pt-1">
-          {['ORDER HANDLER', 'PRINT OPERATOR', 'MANAGER', 'CUSTOM'].map((r, i) => (
-            <button
-              key={r}
-              type="button"
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
-                i === 0
-                  ? 'border-[#4D64E6] text-[#4D64E6] bg-blue-50/50'
-                  : 'border-gray-200 dark:border-gray-700 text-gray-600 hover:bg-gray-50'
-              }`}
-            >
-              {r}
-            </button>
-          ))}
-        </div>
+      {employeeInviteUrl && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 space-y-2" role="status">
+        <div className="font-bold text-sm text-emerald-900">Invitation created</div>
+        <p className="text-xs text-emerald-800">Copy this private link and send it to the staff member. It can be used once and expires in 48 hours. Close this panel after copying; the token is only shown here.</p>
+        <div className="flex gap-2"><input readOnly value={employeeInviteUrl} className="min-w-0 flex-1 px-3 py-2 border rounded-xl bg-white text-xs" aria-label="One-time staff invitation link" /><button type="button" onClick={async () => { try { await navigator.clipboard.writeText(employeeInviteUrl); setOrderActionToast('Invitation link copied.'); } catch { setEmployeeError('Clipboard access was blocked. Select and copy the invitation link manually.'); } }} className="px-3 py-2 rounded-xl bg-emerald-700 text-white text-xs font-bold">Copy link</button><button type="button" onClick={() => setEmployeeInviteUrl('')} className="px-3 py-2 rounded-xl border text-xs">Close</button></div>
+      </div>}
 
-        {/* 9 Permission Checkboxes */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-          {[
-            { title: 'Orders', desc: 'View, configure, release and complete customer orders', checked: true },
-            { title: 'Dashboard', desc: 'View shop activity and performance', checked: false },
-            { title: 'Live Print', desc: 'Monitor printers and their active queues in real time', checked: true },
-            { title: 'Employee agent & printers', desc: "Pair this employee's own computer and configure its printers without changing the owner's setup", checked: true },
-            { title: 'Shared business setup', desc: 'Update shop-wide services, pricing, discounts and automation for both owner and employees', checked: false },
-            { title: 'Shop QR', desc: 'View, download and test the assigned customer QR', checked: true },
-            { title: 'Document storage', desc: 'Use documents stored on the connected shop computer', checked: true },
-            { title: 'Train bot', desc: 'Manage customer questions and automated replies', checked: false },
-          ].map((perm) => (
-            <div key={perm.title} className="p-3 border rounded-xl bg-white dark:bg-gray-800 flex items-start gap-3">
-              <input type="checkbox" defaultChecked={perm.checked} className="mt-1 rounded text-[#4D64E6]" />
-              <div>
-                <div className="font-bold text-[#172031] dark:text-white">{perm.title}</div>
-                <div className="text-[10px] text-gray-400 leading-tight mt-0.5">{perm.desc}</div>
-              </div>
-            </div>
-          ))}
-
-          {/* Dedicated employee QR (Full width) */}
-          <div className="sm:col-span-2 p-3 border rounded-xl bg-white dark:bg-gray-800 flex items-start gap-3">
-            <input type="checkbox" className="mt-1 rounded text-[#4D64E6]" />
-            <div>
-              <div className="font-bold text-[#172031] dark:text-white">Dedicated employee QR</div>
-              <div className="text-[10px] text-gray-400 leading-tight mt-0.5">
-                Off uses the main shop QR. On creates a revocable counter QR with the same portal UI.
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex justify-end items-center gap-3 pt-3 border-t">
-          <button type="button" className="px-4 py-2 border rounded-xl text-xs font-semibold text-gray-600 hover:bg-gray-50">
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => triggerSaveNotification('Employee account saved successfully')}
-            className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold"
-          >
-            Save employee
-          </button>
-        </div>
-      </div>
-
-      {/* Empty State */}
-      <div className="border border-gray-100 dark:border-gray-800 rounded-2xl py-12 text-center space-y-2">
-        <span className="text-3xl block">🛡️</span>
-        <div className="font-bold text-sm text-[#172031] dark:text-white">No employee accounts yet</div>
-        <p className="text-xs text-gray-400">The merchant owner keeps full access.</p>
+      <div className="space-y-3">
+        <h4 className="font-extrabold text-sm text-[#172031] dark:text-white">Staff accounts <span className="font-normal text-gray-400">({employeeList.length})</span></h4>
+        {employeeLoading ? <p className="py-8 text-center text-sm text-gray-500">Loading staff…</p> : employeeList.length === 0 ? <div className="border border-dashed border-gray-200 dark:border-gray-700 rounded-2xl py-10 text-center space-y-2"><span className="text-3xl block">👥</span><div className="font-bold text-sm text-[#172031] dark:text-white">No staff accounts yet</div><p className="text-xs text-gray-500">Create an invite to give a team member access to this shop.</p></div> : <div className="divide-y divide-gray-100 dark:divide-gray-700 border border-gray-100 dark:border-gray-700 rounded-2xl">{employeeList.map((employee) => <div key={employee.id} className="p-4 flex flex-wrap items-center justify-between gap-3"><div><div className="font-bold text-sm text-slate-900 dark:text-white">{employee.name}</div><div className="text-xs text-gray-500">{employee.email}{employee.phone ? ` · ${employee.phone}` : ''}</div></div><div className="flex items-center gap-2"><span className="px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-xs">{employee.role}</span><span className={`px-2.5 py-1 rounded-full text-xs ${employee.status === 'Active' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>{employee.status}</span></div></div>)}</div>}
       </div>
     </div>
   </div>
@@ -5024,162 +4855,33 @@ start "Inklly Agent" "InkllyAgent.exe"
                   <p className="text-xs text-gray-400">Add printers, review detected capabilities, and control order routing</p>
                 </div>
 
-                {/* Card 1: Inklly Agent Download */}
-                <div className="bg-white dark:bg-gray-800 border border-[#E8EAF3] dark:border-gray-800 rounded-2xl p-6 shadow-xs space-y-4">
-                  <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-700 pb-3">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-8 h-8 rounded-xl bg-blue-50 dark:bg-blue-950 flex items-center justify-center text-blue-600">
-                        ⚡
-                      </div>
+                <section aria-labelledby="agent-availability-title" className="bg-white dark:bg-gray-800 border border-amber-200 dark:border-amber-900 rounded-2xl p-6 shadow-xs space-y-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-100 dark:border-gray-700 pb-4">
+                    <div className="flex items-start gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-amber-50 dark:bg-amber-950/40 flex items-center justify-center text-amber-700">⚠</div>
                       <div>
-                        <div className="flex items-center gap-2">
-                          <h3 className="font-extrabold text-sm text-[#172031] dark:text-white">Inklly Agent</h3>
-                          <span className={`text-[10px] ${agentOnline ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950' : 'bg-blue-50 text-blue-600 dark:bg-blue-950'} px-2 py-0.5 rounded-full font-bold`}>
-                            {agentOnline ? 'Connected' : 'Ready to download'}
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-gray-400">Install Inklly on the computer connected to your printers.</p>
+                        <h3 id="agent-availability-title" className="font-extrabold text-sm text-[#172031] dark:text-white">Desktop print agent</h3>
+                        <p className="mt-1 max-w-2xl text-[11px] text-gray-500 dark:text-gray-400">A signed, verified production installer is not available yet. We have disabled installer downloads and pairing scripts, so this shop cannot currently dispatch physical print jobs through Inklly.</p>
                       </div>
                     </div>
-                    <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full ${agentOnline ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300' : 'bg-gray-100 text-gray-500 dark:bg-gray-700'}`}>
-                      ● {agentOnline ? 'ONLINE (Port 8765)' : 'Not connected'}
+                    <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full ${agentOnline ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}>
+                      {agentOnline ? 'LOCAL AGENT PAIRED' : 'INSTALLER UNAVAILABLE'}
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-12 gap-6 pt-2">
-                    {/* Left Column: Download button & platform options */}
-                    <div className="md:col-span-7 space-y-3">
-                      <span className="text-[10px] uppercase font-bold tracking-wider text-gray-400 block">
-                        DOWNLOAD · DETECTED WINDOWS 10/11 · X64
-                      </span>
-
-                      <button
-                        type="button"
-                        onClick={() => handleDownloadAgent('win-x64-bundle', 'bundle')}
-                        className="w-full p-4 bg-[#3B82F6] hover:bg-[#2563EB] text-white rounded-2xl flex items-center justify-between shadow-md transition-all text-left cursor-pointer"
-                      >
-                        <div className="flex items-center gap-3">
-                          <span className="text-2xl">💻</span>
-                          <div>
-                            <div className="font-extrabold text-sm">Download Inklly Print Agent Bundle</div>
-                            <div className="text-[11px] text-blue-100">Standalone Executable &amp; Setup (No Node.js needed) · x64 ZIP</div>
-                          </div>
-                        </div>
-                        <span className="text-xl">⬇</span>
-                      </button>
-
-                      {/* Download for another platform */}
-                      <div className="border border-gray-200 dark:border-gray-700 rounded-2xl p-4 space-y-3">
-                        <div className="flex justify-between items-center text-xs font-bold text-gray-700 dark:text-gray-300">
-                          <span>Installer &amp; Driver Packages</span>
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                          <button
-                            type="button"
-                            onClick={() => handleDownloadAgent('win-x64-msi', 'msi')}
-                            className="p-3 border rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center justify-between text-left cursor-pointer"
-                          >
-                            <div>
-                              <div className="font-bold">Windows x64 MSI</div>
-                              <div className="text-[10px] text-gray-400">Inklly-1.6.1-win-x64.msi</div>
-                            </div>
-                            <span>⬇</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDownloadAgent('windows7-x64', 'msi')}
-                            className="p-3 border rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center justify-between text-left cursor-pointer"
-                          >
-                            <div>
-                              <div className="font-bold">Windows 7/8/10 x64</div>
-                              <div className="text-[10px] text-gray-400">LegacyAgent-1.5.51-x64.msi</div>
-                            </div>
-                            <span>⬇</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDownloadAgent('windows7-x86', 'msi')}
-                            className="p-3 border rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center justify-between text-left cursor-pointer"
-                          >
-                            <div>
-                              <div className="font-bold">Windows 32-bit (x86)</div>
-                              <div className="text-[10px] text-gray-400">LegacyAgent-1.5.51-x86.msi</div>
-                            </div>
-                            <span>⬇</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDownloadAgent('usb', 'exe')}
-                            className="p-3 border rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center justify-between text-left cursor-pointer"
-                          >
-                            <div>
-                              <div className="font-bold">USB Counter Autorun</div>
-                              <div className="text-[10px] text-gray-400">usb-autorun-creator-2.exe</div>
-                            </div>
-                            <span>⬇</span>
-                          </button>
-                        </div>
-                        <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-xl text-[10px] text-gray-400 leading-relaxed">
-                          <strong className="text-gray-700 dark:text-gray-300 block mb-0.5">Supported production systems</strong>
-                          The recommended download matches your Windows PC architecture. Works seamlessly with Canon LBP2900, HP LaserJet, Epson EcoTank, and all Windows spooler printers.
-                        </div>
-                      </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                    <div className="rounded-xl border border-gray-200 dark:border-gray-700 p-4 space-y-2">
+                      <div className="font-bold text-slate-900 dark:text-white">Local agent check</div>
+                      <p className="text-[11px] leading-5 text-gray-500 dark:text-gray-400">This checks whether a paired agent responds on this computer. It does not prove that the cloud heartbeat is fresh or that a printer is ready.</p>
+                      <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">{agentOnline ? `Paired local process responds · ${agentInfo?.version || 'version unavailable'}` : 'No paired agent response detected'}</div>
+                      <button type="button" onClick={() => checkAgentHealth(true)} className="mt-1 rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-[11px] font-bold hover:bg-gray-50 dark:hover:bg-gray-700">Check this computer</button>
                     </div>
-
-                    {/* Right Column: Connection Steps */}
-                    <div className="md:col-span-5 border border-blue-100 dark:border-blue-900 bg-blue-50/20 dark:bg-blue-950/20 rounded-2xl p-4 space-y-3 text-xs">
-                      <span className="text-[10px] uppercase font-bold tracking-wider text-gray-400 block">
-                        CONNECTION STEPS
-                      </span>
-                      <div className="space-y-3">
-                        <div className="flex items-start gap-2.5">
-                          <span className="text-emerald-500 font-bold mt-0.5">✓</span>
-                          <div>
-                            <div className="font-bold">1. Download &amp; install the Inklly Agent</div>
-                            <div className="text-[11px] text-gray-400">Windows x64 · automatically matched</div>
-                          </div>
-                        </div>
-
-                        <div className="flex items-start gap-2.5">
-                          <span className="text-emerald-500 font-bold mt-0.5">✓</span>
-                          <div className="w-full">
-                            <div className="font-bold">2. Download a one-time setup script</div>
-                            <div className="text-[11px] text-gray-400 mb-2">Generate it only when you are ready to pair the print computer.</div>
-                            <div className="p-3 bg-white dark:bg-gray-800 border rounded-xl space-y-2">
-                              <div className="font-bold text-[11px]">Agent pairing</div>
-                              <p className="text-[10px] text-gray-400 leading-tight">
-                                The setup code expires after 15 minutes and can be used once. Keep the downloaded script private.
-                              </p>
-                              <button type="button" onClick={handleDownloadAgentScript} className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-[11px] font-bold">Generate setup script</button>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex items-start gap-2.5">
-                          <span className={`font-bold mt-0.5 ${agentOnline ? 'text-emerald-500' : 'text-amber-500'}`}>
-                            {agentOnline ? '✓' : '⊙'}
-                          </span>
-                          <div>
-                            <div className={`font-bold ${agentOnline ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-500'}`}>
-                            {agentOnline ? '3. Agent is reachable on this computer' : '3. Waiting for agent on port 8765'}
-                            </div>
-                            <div className="text-[11px] text-gray-400">
-                              {agentOnline ? 'Local health check responded.' : 'Start the installed agent on the print computer.'}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => checkAgentHealth(true)}
-                        className="w-full py-2.5 bg-[#4F46E5] text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 mt-2 cursor-pointer hover:bg-[#4338CA] transition-colors"
-                      >
-                        <span>🔄</span> Re-check agent connection
-                      </button>
+                    <div className="rounded-xl border border-amber-200 dark:border-amber-900 bg-amber-50/60 dark:bg-amber-950/20 p-4 space-y-2">
+                      <div className="font-bold text-amber-950 dark:text-amber-200">Pilot print safety</div>
+                      <p className="text-[11px] leading-5 text-amber-900/80 dark:text-amber-200/80">Physical printing stays disabled until installer integrity, Windows credential protection, printer capabilities, and output reconciliation have been verified on supported hardware. A spooler acceptance alone is not proof that paper was produced.</p>
                     </div>
                   </div>
-                </div>
+                </section>
 
                 {/* Card 2: Your Printers */}
                 <div className="bg-white dark:bg-gray-800 border border-[#E8EAF3] dark:border-gray-800 rounded-2xl p-6 shadow-xs space-y-5">
@@ -5218,22 +4920,19 @@ start "Inklly Agent" "InkllyAgent.exe"
                           <span className={`w-2.5 h-2.5 rounded-full ${agentOnline ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
                           <span className="font-bold text-xs">Inklly Agent</span>
                           <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${agentOnline ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300' : 'bg-gray-200 text-gray-600'}`}>
-                            {agentOnline ? 'ONLINE' : 'OFFLINE'}
+                            {agentOnline ? 'PAIRED · LOCAL' : 'NOT PAIRED'}
                           </span>
                         </div>
                         <div className="text-[11px] text-gray-500 mt-0.5">
-                          {agentOnline ? 'Connected to local print spooler daemon · Live commands active' : 'Inklly Agent OFFLINE — Run Inklly-Agent-Setup.bat on this PC'}
+                          {agentOnline ? 'Local status endpoint responded and reports a pairing credential. Cloud heartbeat and printer readiness are not confirmed here.' : 'No paired local agent response. A verified production installer is not available yet.'}
                         </div>
                         <div className="text-[10px] text-gray-400 font-mono mt-0.5">
-                          {agentOnline ? `Port 8765 · Host: ${agentInfo?.hostname || '127.0.0.1'} · v1.0.0` : 'Port 8765 · Computer unavailable · Agent version unavailable'}
+                          {agentInfo ? `127.0.0.1:8765 · ${agentInfo.version || 'version unavailable'}` : 'Local agent status not checked'}
                         </div>
                       </div>
                       <div className="flex gap-2">
-                        <button type="button" onClick={() => triggerSaveNotification('SQLite cache inspected: 0 queued items')} className="px-3 py-1.5 border rounded-xl text-xs font-bold bg-white dark:bg-gray-800 flex items-center gap-1 cursor-pointer">
-                          <span>🖶</span> SQLite cache
-                        </button>
                         <button type="button" onClick={() => checkAgentHealth(true)} className="px-3 py-1.5 border rounded-xl text-xs font-bold bg-white dark:bg-gray-800 flex items-center gap-1 cursor-pointer hover:bg-gray-50">
-                          <span>🔄</span> Reconnect
+                          <span>🔄</span> Check again
                         </button>
                       </div>
                     </div>
@@ -5259,7 +4958,7 @@ start "Inklly Agent" "InkllyAgent.exe"
                     <div className="p-3 bg-blue-50/50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-xl flex flex-col sm:flex-row justify-between sm:items-center gap-2 text-xs">
                       <span className="text-gray-600 dark:text-gray-300 font-medium">
                         {detectedPrinters.length > 0
-                          ? `Active printer queue: ${selectedDefaultPrinter} is primary hardware device.`
+                          ? `Preferred printer queue: ${selectedDefaultPrinter || 'none selected'}.`
                           : 'Click Add Printer to select a printer detected by your agent.'}
                       </span>
                       <div className="flex items-center gap-2">
@@ -5302,12 +5001,12 @@ start "Inklly Agent" "InkllyAgent.exe"
                                     PRIMARY DEFAULT
                                   </span>
                                 )}
-                                <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                                  ONLINE ({prn.status})
+                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${prn.status === 'Ready' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : prn.status === 'Stale' || prn.status === 'Unknown' ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300' : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'}`}>
+                                  {prn.status.toUpperCase()}
                                 </span>
                               </div>
                               <div className="text-[10px] text-gray-400 mt-0.5 font-mono">
-                                Port: {prn.port} · {prn.isPhysical ? 'Physical Hardware' : 'Virtual Spooler'} · {prn.supportsColor ? 'Color' : 'Monochrome'} · {prn.supportsDuplex ? 'Duplex' : 'Simplex'}
+                                {prn.port} · {prn.isPhysical === null ? 'Hardware type unknown' : prn.isPhysical ? 'Physical hardware' : 'Virtual queue'} · {prn.supportsColor ? 'Color reported' : 'Color unverified'} · {prn.supportsDuplex ? 'Duplex reported' : 'Duplex unverified'}
                               </div>
                             </div>
                           </div>
@@ -5315,10 +5014,7 @@ start "Inklly Agent" "InkllyAgent.exe"
                             {selectedDefaultPrinter !== prn.name && (
                               <button
                                 type="button"
-                                onClick={() => {
-                                  setSelectedDefaultPrinter(prn.name);
-                                  triggerSaveNotification(`Set ${prn.name} as primary default printer.`);
-                                }}
+                                onClick={() => void handleSetDefaultPrinter(prn.id)}
                                 className="px-3 py-1.5 border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-bold text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
                               >
                                 Set as Default
@@ -5341,15 +5037,16 @@ start "Inklly Agent" "InkllyAgent.exe"
                         <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">Default Printer</label>
                         <select
                           value={selectedDefaultPrinter}
-                          onChange={(e) => {
-                            setSelectedDefaultPrinter(e.target.value);
-                            triggerSaveNotification(`Default printer set to ${e.target.value}`);
-                          }}
+                            onChange={(e) => {
+                              const selected = detectedPrinters.find((printer) => printer.name === e.target.value);
+                              if (selected) void handleSetDefaultPrinter(selected.id);
+                            }}
                           className="w-full px-3 py-2 border rounded-xl bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 font-bold text-xs"
                         >
+                          {!selectedDefaultPrinter && <option value="" disabled>Choose a default printer</option>}
                           {detectedPrinters.map((p) => (
-                            <option key={p.name} value={p.name}>
-                              {p.name} {p.name === 'Canon LBP2900' ? '(Primary Physical Laser)' : ''}
+                            <option key={p.id} value={p.name}>
+                              {p.name}
                             </option>
                           ))}
                         </select>

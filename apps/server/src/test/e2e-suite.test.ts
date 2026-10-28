@@ -229,13 +229,14 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       assert.equal(meta.installerAvailable, false);
     });
 
-    it('T1.9: Returns driver compatibility matrix covering Canon, HP, Epson, and Brother', async () => {
+    it('T1.9: Returns conservative driver capabilities without claiming unverified hardware support', async () => {
       const res = await fetch(`${baseUrl}/api/v1/agent/driver-matrix`);
       assert.equal(res.status, 200);
       const matrix = (await res.json()) as any;
-      assert.ok(matrix.manufacturers.some((m: any) => m.brand === 'Canon'));
-      assert.ok(matrix.manufacturers.some((m: any) => m.brand === 'HP'));
-      assert.ok(matrix.supportedPaperSizes.includes('A4'));
+      assert.equal(matrix.capabilityStatus, 'NOT_VERIFIED');
+      assert.equal(matrix.physicalPrintingEnabledByDefault, false);
+      assert.equal(matrix.colorSupport, 'UNKNOWN');
+      assert.equal(matrix.duplexSupport, 'UNKNOWN');
     });
 
     it('T1.10: Returns loopback edge spooler diagnostics and safety specifications', async () => {
