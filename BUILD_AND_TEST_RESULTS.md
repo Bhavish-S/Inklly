@@ -5,7 +5,7 @@
 ## Current local verification
 
 - `npm run build` — passed for database, shared, desktop agent, server, and web workspaces using Vite 6.4.5. The main JavaScript bundle is 1,188.94 kB minified (312.90 kB gzip) and triggers Vite's 500 kB chunk warning; the build completes successfully.
-- `npm test` — 199 passed, 0 failed: database 6, shared 13, agent 12, server 168.
+- `npm test` — 200 passed, 0 failed: database 7, shared 13, agent 12, server 168.
 - `npm audit --audit-level=high` — passed with 0 vulnerabilities.
 - `npm run lint` — no root lint script is currently configured.
 
@@ -25,7 +25,7 @@ WhatsApp Cloud API onboarding and message delivery are unavailable. The merchant
 
 ## Deployment and integration limits
 
-- These results are from the local source tree. After pushing commit `ed18be7` on 2026-10-28, Vercel serves `assets/index-BuP-eUeH.js`, matching this build. Render `/health` returns HTTP 200 with `status: HEALTHY`, but exposes no source revision, so its deployed commit remains unverified. The live `/api/v1/portal/shop/campus1` endpoint returns HTTP 404 (`Shop not found or currently offline`); the deployed customer path is unusable for that shop code until the correct tenant is provisioned and the Render deployment/configuration are verified.
+- These results are from the local source tree at commit `ce4582d`. Vercel serves `assets/index-CujRSkbn.js`, matching this build. Render `/health` returns HTTP 200 but omits the `revision` field that the current source emits; its live OpenAPI document contains seven paths (one merchant route), versus the expanded local specification. This proves Render is still serving an older backend revision. The live `/api/v1/portal/shop/campus1` endpoint returns HTTP 404 (`Shop not found or currently offline`); the deployed customer path is unusable until the backend is updated and the correct tenant is provisioned.
 - The latest Render log connected to Supabase PostgreSQL and then exited because Supabase Storage settings are missing or invalid. The current source reports the specific invalid settings; the supplied deployed log has an older generic error, so its revision is unverified.
 - Supabase Storage tests mock the HTTP API. Live bucket permissions and file retention have not been verified against the production project.
 - Razorpay tests use test doubles; a live sandbox checkout/webhook round trip has not been verified here.

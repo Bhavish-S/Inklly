@@ -384,8 +384,6 @@ CREATE TABLE IF NOT EXISTS developer_keys (
     FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_developer_keys_shop ON developer_keys(shop_id, is_active, expires_at);
-
 CREATE TABLE IF NOT EXISTS webhook_subscriptions (
     id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL,

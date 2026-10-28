@@ -47,16 +47,16 @@ Implemented locally with regression coverage:
 - Private customer files use a private-storage abstraction and retention cleanup; production Supabase storage has not been verified against the live bucket.
 - Agent local status endpoints are read-only and host/origin validated. Physical printing remains disabled by default; the production installer is unavailable.
 
-Latest local verification: build passed, 199 tests passed, and `npm audit --audit-level=high` found no vulnerabilities. The merchant dashboard now consumes grouped order counts and a five-order recent window; the platform status mutation is validated and audited; developer API keys are shop-bound and fail closed unless external access is enabled; refund reservations are serialized; and unsupported WhatsApp persistence operations return 503. These local checks do not establish live PostgreSQL migration/transaction behavior, object storage, provider, browser, or hardware behavior.
+Latest local verification: build passed, 200 tests passed, and `npm audit --audit-level=high` found no vulnerabilities. The merchant dashboard now consumes grouped order counts and a five-order recent window; the platform status mutation is validated and audited; developer API keys are shop-bound and fail closed unless external access is enabled; refund reservations are serialized; and unsupported WhatsApp persistence operations return 503. SQLite startup over a pre-v8 developer-key schema is covered. These local checks do not establish live PostgreSQL migration/transaction behavior, object storage, provider, browser, or hardware behavior.
 
 ## Known incomplete product areas
 
-- Real tenant provisioning/deployment state: live Render health had no revision and `/api/v1/portal/shop/campus1` returned 404 on 2026-10-28; do not seed fake production tenants.
+- Real tenant provisioning/deployment state: the local health handler returns `RENDER_GIT_COMMIT`, but the live Render health response still omits `revision`; its OpenAPI document has only seven paths and `/api/v1/portal/shop/campus1` returns 404. This indicates Render is still serving an older backend revision. Do not seed fake production tenants.
 - Payment: no verified live Razorpay sandbox checkout/webhook round trip; subscription and per-printed-side SaaS billing are not implemented.
 - Financial ledger: existing payment ledger records and duplicate protections do not prove database-level append-only integrity or complete reconciliation.
 - Vault: category/list/download/delete foundations exist, but merchant document upload is missing.
 - WhatsApp: no real Meta onboarding, credential lifecycle, inbound intake, or outbound delivery; setup/pairing fails closed.
-- Developer API keys can be created/revoked only behind the external-API feature gate; those keys do not authenticate business routes. Webhook subscriptions are stored, but signed delivery, SSRF-safe dispatch, retries, and history are incomplete.
+- Developer API keys can be created/revoked and authenticate merchant business routes only when `ENABLE_EXTERNAL_API_ACCESS=true`; they are bound to one shop and checked for environment, expiry, revocation, owner membership, and limited scopes. Webhook subscriptions are stored, but signed delivery, SSRF-safe dispatch, retries, and history are incomplete.
 - Platform incidents and runtime configuration are not fully backed by durable operational services. Subscription billing and plan quota enforcement are incomplete.
 - Physical Windows printer output, capabilities, status fidelity, signed installer, and crash/recovery behavior still require supported hardware verification.
 - Production backups, recovery drills, shared rate limiting, monitoring, legal/privacy review, and account recovery need release work.

@@ -1,5 +1,9 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { DatabaseSync } from 'node:sqlite';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { DatabaseService } from '../database';
 import { ShopRepository } from '../repositories/shop-repository';
 import { OrderRepository } from '../repositories/order-repository';
@@ -58,6 +62,45 @@ describe('Relational Database & Multi-Tenancy Tests', () => {
     assert.equal(after, before);
     assert.equal(table?.name, 'portal_order_idempotency');
     assert.equal(migration?.version, 7);
+  });
+
+  it('upgrades a pre-v8 developer-key table before creating its shop index', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'inklly-pre-v8-'));
+    const filename = path.join(directory, 'legacy.db');
+    const legacy = new DatabaseSync(filename);
+    legacy.exec(`
+      CREATE TABLE inklly_schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+      CREATE TABLE developer_keys (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        key_name TEXT NOT NULL,
+        key_prefix TEXT NOT NULL,
+        secret_hash TEXT NOT NULL,
+        scopes TEXT NOT NULL,
+        environment TEXT NOT NULL DEFAULT 'TEST',
+        is_active INTEGER NOT NULL DEFAULT 1,
+        expires_at TEXT,
+        created_at TEXT NOT NULL,
+        revoked_at TEXT
+      );
+      INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (7, '2026-10-27T00:00:00.000Z');
+    `);
+    legacy.close();
+
+    let upgraded: DatabaseService | undefined;
+    try {
+      upgraded = new DatabaseService(filename);
+      const columns = upgraded.query<{ name: string }>(`PRAGMA table_info(developer_keys)`);
+      assert.ok(columns.some((column) => column.name === 'shop_id'));
+      assert.ok(columns.some((column) => column.name === 'created_by_user_id'));
+      const index = upgraded.queryOne<any>(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_developer_keys_shop'`);
+      assert.equal(index?.name, 'idx_developer_keys_shop');
+      const migration = upgraded.queryOne<any>(`SELECT version FROM inklly_schema_migrations WHERE version = 8`);
+      assert.equal(migration?.version, 8);
+    } finally {
+      upgraded?.getRawDb().close();
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it('synchronizes only agent-reported printer queues and marks disappeared queues offline', () => {

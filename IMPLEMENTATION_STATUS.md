@@ -17,13 +17,13 @@ Use `BUILD_AND_TEST_RESULTS.md` for the latest executed checks and `REMAINING_IS
 
 ## Incomplete or unverified
 
-- Render has not exposed a verifiable deployed source revision; live `campus1` shop lookup returned 404 on 2026-10-28. Vercel served the bundle matching commit `ed18be7` during the live check.
+- Commit `ce4582d` is pushed to `main`. Vercel serves the bundle built from this commit. Render still serves the older seven-path OpenAPI document, omits `revision` from `/health`, and returns 404 for `campus1`; the latest backend commit is not live yet.
 - PostgreSQL migration/startup against the live production project and Supabase private bucket behavior remain unverified.
 - Razorpay sandbox checkout and webhook round trip, refunds/reconciliation against provider statements, subscription checkout, and hybrid per-successful-side billing are not verified or fully implemented.
 - Financial ledger integrity is not proven database-immutable; database triggers/permissions and broad reconciliation remain open.
 - The merchant vault has category and file access foundations, but no completed merchant upload workflow.
 - WhatsApp UI and setup routes report unavailable; real Meta onboarding, secure account lifecycle, inbound customer intake, and outbound messages are not implemented.
-- API key creation/revocation does not yet authenticate business API calls. Webhook subscriptions are encrypted and validated, but signed delivery, DNS-pinned SSRF protection, retries, delivery history, replay, and rotation are incomplete.
+- Shop-bound API keys authenticate merchant business routes only when `ENABLE_EXTERNAL_API_ACCESS=true`, with environment, expiry, revocation, active membership, and least-privilege scope checks. Webhook subscriptions are encrypted and validated, but signed delivery, DNS-pinned SSRF protection, retries, delivery history, replay, and rotation are incomplete.
 - Platform incident handling and mutable runtime configuration require durable, audited backend services. Subscription plan changes and quota enforcement are incomplete.
 - A signed, verified desktop installer is unavailable. The agent refuses physical printing by default; no supported printer has been verified end to end.
 - Browser-level visual testing, production load testing, shared rate limits, backup/restore drills, monitoring, legal/privacy review, and account recovery remain release work.
@@ -37,4 +37,4 @@ Use `BUILD_AND_TEST_RESULTS.md` for the latest executed checks and `REMAINING_IS
 
 ## Verification record
 
-The latest code snapshot is still under active change. Re-run `npm run build`, `npm test`, and `npm audit --audit-level=high` before relying on the prior result. See `BUILD_AND_TEST_RESULTS.md` for exact last-observed commands and deployment checks.
+For the current local snapshot, `npm run build`, `npm test` (200 passed), and `npm audit --audit-level=high` passed. The Vercel frontend is live at commit `ce4582d`; Render is still serving an older API. See `BUILD_AND_TEST_RESULTS.md` for exact commands and deployment checks.
