@@ -21,7 +21,7 @@ Use `BUILD_AND_TEST_RESULTS.md` for the latest executed checks and `REMAINING_IS
 
 ## Incomplete or unverified
 
-- Commit `1ff9741` is the latest pushed revision; Vercel served `assets/index-CAL0rd8b.js` from it. Current unpushed UI changes build to `assets/index-Cfcklamd.js`. Render still serves the older seven-path OpenAPI document, omits `revision` from `/health`, and does not expose the latest storage or print-reconciliation routes.
+- Commit `7b017f8` is the latest pushed revision; Vercel served `assets/index-Cfcklamd.js` at 2026-10-28 10:00 UTC. Render timed out on the latest health check; its last successful response served the older seven-path OpenAPI document, omitted `revision`, and did not expose the latest storage or print-reconciliation routes.
 - PostgreSQL migration/startup against the live production project and Supabase private bucket behavior remain unverified.
 - Razorpay sandbox checkout and webhook round trip, refunds/reconciliation against provider statements, subscription checkout, and hybrid per-successful-side billing are not verified or fully implemented.
 - Database migrations now install append-only ledger triggers and a unique provider-transaction index; local SQLite tests cover immutability, compensating entries, and duplicate rejection. Live Supabase migration, pre-existing duplicate review, role/owner bypass protection, and complete reconciliation remain open.
@@ -41,4 +41,4 @@ Use `BUILD_AND_TEST_RESULTS.md` for the latest executed checks and `REMAINING_IS
 
 ## Verification record
 
-For the current local snapshot, `npm run build` and `npm test` (204 passed) completed successfully. `npm audit --audit-level=high` timed out twice at the npm registry. Vercel serves the latest pushed frontend bundle; Render is still serving an older API. See `BUILD_AND_TEST_RESULTS.md` for deployment checks.
+For the current local snapshot, `npm run build` and `npm test` (204 passed) completed successfully. `npm audit --audit-level=high` timed out twice at the npm registry. Vercel serves the latest pushed frontend bundle; Render's current response is unverified after a timeout. See `BUILD_AND_TEST_RESULTS.md` for deployment checks.
