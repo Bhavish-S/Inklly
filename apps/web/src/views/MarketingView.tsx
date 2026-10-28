@@ -321,7 +321,7 @@ export const MarketingView: React.FC<MarketingViewProps> = ({ onNavigate }) => {
             <span className="badge badge-info" style={{ marginBottom: '0.75rem' }}>Configurable pilot</span>
             <h3 style={{ fontSize: '1.25rem', fontWeight: 800 }}>No fixed tiers or usage charges yet</h3>
             <p style={{ color: '#667085', fontSize: '0.9375rem', lineHeight: 1.6, marginTop: '0.5rem' }}>
-              The subscription checkout, per-side usage meter, and quota enforcement are not active. A shop-specific pilot agreement will state the monthly base price, per-successful-side rate, and included limits before billing begins.
+              Print-side usage is recorded after shop staff confirm the complete physical output, but this meter does not create charges. Subscription checkout and quota enforcement are not active. A shop-specific pilot agreement will state the monthly base price, per-side rate, and included limits before billing begins.
             </p>
           </div>
         </div>

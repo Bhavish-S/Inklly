@@ -37,6 +37,7 @@ export class DatabaseService {
       this.ensureSqliteDeveloperKeyScopeMigration();
       this.ensureSqliteLedgerAppendOnlyMigration();
       this.ensureSqliteLedgerIdempotencyMigration();
+      this.ensureSqliteSubscriptionUsageMigration();
     }
   }
 
@@ -141,6 +142,53 @@ export class DatabaseService {
     this.ensurePostgresDeveloperKeyScopeMigration();
     this.ensurePostgresLedgerAppendOnlyMigration();
     this.ensurePostgresLedgerIdempotencyMigration();
+    this.ensurePostgresSubscriptionUsageMigration();
+  }
+
+  private ensureSqliteSubscriptionUsageMigration(): void {
+    if (this.db!.prepare(`SELECT version FROM inklly_schema_migrations WHERE version = 11`).get()) return;
+    this.db!.exec('BEGIN');
+    try {
+      this.db!.exec(`CREATE TABLE IF NOT EXISTS subscription_usage_events (
+        id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, shop_id TEXT NOT NULL,
+        order_id TEXT NOT NULL UNIQUE, confirmed_sides INTEGER NOT NULL CHECK (confirmed_sides > 0),
+        confirmation_source TEXT NOT NULL DEFAULT 'OPERATOR_PHYSICAL_INSPECTION', created_at TEXT NOT NULL,
+        FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+        FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE,
+        FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+      )`);
+      this.db!.exec(`CREATE INDEX IF NOT EXISTS idx_subscription_usage_org_created ON subscription_usage_events(organization_id, created_at)`);
+      this.db!.exec(`CREATE TRIGGER IF NOT EXISTS subscription_usage_prevent_update BEFORE UPDATE ON subscription_usage_events BEGIN SELECT RAISE(ABORT, 'subscription_usage_events are append-only'); END`);
+      this.db!.exec(`CREATE TRIGGER IF NOT EXISTS subscription_usage_prevent_delete BEFORE DELETE ON subscription_usage_events BEGIN SELECT RAISE(ABORT, 'subscription_usage_events are append-only'); END`);
+      this.db!.prepare(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (11, ?)`).run(new Date().toISOString());
+      this.db!.exec('COMMIT');
+    } catch (error) {
+      try { this.db!.exec('ROLLBACK'); } catch { /* preserve original error */ }
+      throw error;
+    }
+  }
+
+  private ensurePostgresSubscriptionUsageMigration(): void {
+    if (this.queryPostgres(`SELECT version FROM inklly_schema_migrations WHERE version = ?`, [11]).length) return;
+    this.queryPostgres('BEGIN');
+    try {
+      this.queryPostgres(`CREATE TABLE IF NOT EXISTS subscription_usage_events (
+        id TEXT PRIMARY KEY, organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        shop_id TEXT NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+        order_id TEXT NOT NULL UNIQUE REFERENCES orders(id) ON DELETE CASCADE,
+        confirmed_sides INTEGER NOT NULL CHECK (confirmed_sides > 0),
+        confirmation_source TEXT NOT NULL DEFAULT 'OPERATOR_PHYSICAL_INSPECTION', created_at TEXT NOT NULL
+      )`);
+      this.queryPostgres(`CREATE INDEX IF NOT EXISTS idx_subscription_usage_org_created ON subscription_usage_events(organization_id, created_at)`);
+      this.queryPostgres(`CREATE OR REPLACE FUNCTION prevent_subscription_usage_event_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'subscription_usage_events are append-only'; END; $$`);
+      this.queryPostgres(`DROP TRIGGER IF EXISTS subscription_usage_prevent_mutation ON subscription_usage_events`);
+      this.queryPostgres(`CREATE TRIGGER subscription_usage_prevent_mutation BEFORE UPDATE OR DELETE ON subscription_usage_events FOR EACH ROW EXECUTE FUNCTION prevent_subscription_usage_event_mutation()`);
+      this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [11, new Date().toISOString()]);
+      this.queryPostgres('COMMIT');
+    } catch (error) {
+      try { this.queryPostgres('ROLLBACK'); } catch { /* preserve original error */ }
+      throw new Error(`[Inklly DB] Subscription usage migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
   }
 
   private ensureSqliteLedgerIdempotencyMigration(): void {

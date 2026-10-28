@@ -471,6 +471,23 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 CREATE INDEX IF NOT EXISTS idx_subscriptions_org ON subscriptions(organization_id);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_status ON subscriptions(status);
 
+-- Append-only record of operator-confirmed print output. Quantities are sides
+-- (selected document pages x copies), not sheets or customer charge amounts.
+CREATE TABLE IF NOT EXISTS subscription_usage_events (
+    id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL,
+    shop_id TEXT NOT NULL,
+    order_id TEXT NOT NULL UNIQUE,
+    confirmed_sides INTEGER NOT NULL CHECK (confirmed_sides > 0),
+    confirmation_source TEXT NOT NULL DEFAULT 'OPERATOR_PHYSICAL_INSPECTION',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+    FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE,
+    FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_subscription_usage_org_created ON subscription_usage_events(organization_id, created_at);
+
 CREATE TABLE IF NOT EXISTS credit_accounts (
     id TEXT PRIMARY KEY,
     shop_id TEXT NOT NULL UNIQUE,

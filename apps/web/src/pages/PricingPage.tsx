@@ -38,7 +38,7 @@ export const PricingPage: React.FC<PricingPageProps> = ({ onNavigate }) => (
 
     <section className="mx-auto max-w-3xl px-5 pb-20">
       <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm leading-6 text-amber-950">
-        Pilot subscription and per-side billing are not active, and this page will not take a SaaS payment. Customer print payments are separate: a shop may enable Razorpay checkout with its own credentials. Verify the hosted payment integration before accepting real payments.
+        Print-side usage is recorded after shop staff confirm complete physical output, but the meter does not create charges. Pilot subscription checkout and quota enforcement are not active, and this page will not take a SaaS payment. Customer print payments are separate: a shop may enable Razorpay checkout with its own credentials. Verify the hosted payment integration before accepting real payments.
       </div>
     </section>
   </main>

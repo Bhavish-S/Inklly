@@ -52,7 +52,7 @@ Latest local verification on 2026-10-28: `npm run build` passed and `npm test` p
 ## Known incomplete product areas
 
 - Real tenant provisioning/deployment state: the local health handler returns `RENDER_GIT_COMMIT`, but the live Render health response still omits `revision`; its OpenAPI document has only seven paths and `/api/v1/portal/shop/campus1` returns 404. This indicates Render is still serving an older backend revision. Do not seed fake production tenants.
-- Payment: no verified live Razorpay sandbox checkout/webhook round trip; subscription and per-printed-side SaaS billing are not implemented.
+- Payment: no verified live Razorpay sandbox checkout/webhook round trip. Per-side output usage is recorded after operator confirmation; tariff management and subscription charges remain inactive.
 - Financial ledger: SQLite and PostgreSQL startup migrations add update/delete rejection triggers and provider transaction uniqueness. These migrations have local SQLite tests; live Supabase migration, legacy duplicate analysis, database-owner privilege hardening, and full reconciliation remain unverified.
 - Vault: authorized staff can upload inspected PDF/JPEG/PNG files, organize categories, download through the private storage API, and delete stored documents. Order-file 24-hour cleanup does not purge vault documents; vault records remain until staff delete them, so approve a retention/privacy policy before production use. Live Supabase behavior is unverified.
 - WhatsApp: no real Meta onboarding, credential lifecycle, inbound intake, or outbound delivery; setup/pairing fails closed.

@@ -7,6 +7,7 @@ import { encryptWebhookSecret } from '../services/webhook-secrets';
 const WEBHOOK_EVENT_TYPES = ['order.created', 'order.status_changed', 'payment.succeeded', 'print_job.jammed', 'spooler.offline'];
 
 const MERCHANT_ROUTE_DOCUMENTATION: Array<{ path: string; method: string; summary: string; access: string }> = [
+  { path: '/subscriptions/usage', method: 'get', summary: 'Read operator-confirmed print-side usage for the current billing period', access: 'Restricted to MERCHANT_OWNER. Metering only; no charge is created.' },
   { path: '/merchant/dashboard', method: 'get', summary: 'Get merchant dashboard data', access: 'Requires orders:view.' },
   { path: '/merchant/orders', method: 'get', summary: 'List merchant orders', access: 'Requires orders:view.' },
   { path: '/merchant/orders/{id}', method: 'get', summary: 'Get a merchant order', access: 'Requires orders:view.' },
