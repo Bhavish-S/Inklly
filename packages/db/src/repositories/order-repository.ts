@@ -4,6 +4,21 @@ import { Order, OrderFile, OrderStatus, PaymentStatus, validateOrderTransition }
 export class OrderRepository {
   constructor(private db: DatabaseService) {}
 
+  /** Tenant-scoped dashboard data without hydrating the shop's full order history. */
+  public getDashboardSummaryByShop(shopId: string): { statusCounts: Record<string, number>; recentOrders: Order[] } {
+    const counts = this.db.query<any>(
+      `SELECT status, COUNT(*) AS count FROM orders WHERE shop_id = ? GROUP BY status`,
+      [shopId]
+    );
+    const statusCounts: Record<string, number> = {};
+    for (const row of counts) statusCounts[String(row.status)] = Number(row.count || 0);
+    const recentRows = this.db.query<any>(
+      `SELECT * FROM orders WHERE shop_id = ? ORDER BY created_at DESC, id DESC LIMIT 5`,
+      [shopId]
+    );
+    return { statusCounts, recentOrders: recentRows.map((row) => this.hydrateOrder(row)) };
+  }
+
   public getOrdersPageByShop(
     shopId: string,
     options: { status?: OrderStatus | 'ALL'; statuses?: OrderStatus[]; search?: string; page: number; pageSize: number; sortBy: 'createdAt' | 'totalAmountPaise' | 'status' | 'orderNumber'; sortOrder: 'asc' | 'desc' }
@@ -190,19 +205,27 @@ export class OrderRepository {
   }
 
   public updateOrderStatus(orderId: string, nextStatus: OrderStatus): void {
-    const current = this.getOrderById(orderId);
-    if (!current) throw new Error(`Order ${orderId} not found`);
+    this.db.transaction(() => {
+      // Acquire the order row before reading its current state. This prevents
+      // two concurrent requests from validating against the same stale status.
+      const locked = this.db.queryOne<any>(
+        `UPDATE orders SET updated_at = updated_at WHERE id = ? RETURNING id`,
+        [orderId]
+      );
+      if (!locked) throw new Error(`Order ${orderId} not found`);
 
-    // Enforce state machine transition validation
-    validateOrderTransition(current.status, nextStatus);
+      const current = this.getOrderById(orderId);
+      if (!current) throw new Error(`Order ${orderId} not found`);
+      validateOrderTransition(current.status, nextStatus);
 
-    const now = new Date().toISOString();
-    const collectedAt = nextStatus === 'COLLECTED' ? now : current.collectedAt || null;
-
-    this.db.execute(
-      `UPDATE orders SET status = ?, updated_at = ?, collected_at = ? WHERE id = ?`,
-      [nextStatus, now, collectedAt, orderId]
-    );
+      const now = new Date().toISOString();
+      const collectedAt = nextStatus === 'COLLECTED' ? now : current.collectedAt || null;
+      const updated = this.db.queryOne<any>(
+        `UPDATE orders SET status = ?, updated_at = ?, collected_at = ? WHERE id = ? AND status = ? RETURNING id`,
+        [nextStatus, now, collectedAt, orderId, current.status]
+      );
+      if (!updated) throw new Error(`Order ${orderId} changed while its status was being updated`);
+    });
   }
 
   public updatePaymentStatus(orderId: string, paymentStatus: PaymentStatus): void {

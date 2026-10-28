@@ -65,7 +65,7 @@ npm run dev:server
 npm run dev:agent
 ```
 - Status & Diagnostics: `http://127.0.0.1:8765/status`
-- Offline SQLite Spool Queue: `http://127.0.0.1:8765/queue`
+- The local HTTP interface is read-only; it exposes `/status` and `/health`, not a browser-accessible queue.
 
 #### C. Frontend Web Application & Inklly Website (Port 3000)
 ```bash
@@ -81,7 +81,7 @@ npm run dev:web
   - Merchant Login: `http://localhost:3000/login`
   - Merchant Sign Up: `http://localhost:3000/register`
   - Legal Policies: `http://localhost:3000/legal/privacy-policy`
-- Customer QR Portal (Campus Print Express demo): `http://localhost:3000/p/campus1`
+- Customer QR Portal (local seeded fixture): `http://localhost:3000/p/campus1` (production requires a provisioned, online shop)
 - Merchant Workspace (Order Queue, Rates, Printers, Staff): `http://localhost:3000/merchant`
 - Platform Owner Console (GMV, Ledger, Organizations): `http://localhost:3000/platform` (or `/admin`)
 - Developer Portal (OpenAPI Spec, API Key Generator, Webhooks): `http://localhost:3000/developer`
@@ -98,8 +98,70 @@ For Windows users where PowerShell script execution is restricted (`PSSecurityEx
 
 ---
 
-## 🔒 Security & Safety Invariants Enforced
-1. **Hardware Safety:** Paper jams or spooler connection losses trigger `OUTPUT_UNCERTAIN`. Blind retries are strictly forbidden by the state machine; physical counter verification is required.
-2. **Deterministic Minor Units:** All pricing math is computed in integer Paise (₹1.00 = 100 paise), preventing floating point roundoff errors.
-3. **Multi-Tenant Isolation:** Server-side tenant scoping enforces that merchants can only access resources belonging to their `shopId` and `organizationId`.
-4. **Append-Only Ledgers:** Financial transactions across all 6 money domains (`CUSTOMER_PRINT_PAYMENT`, `SAAS_SUBSCRIPTION`, `CONVERSION_CREDIT`, `MERCHANT_PAYOUT`, `REFUND_DISPUTE`, `REFERRAL_REWARD`) are recorded immutably with webhook idempotency guards.
+## Product lifecycle diagrams
+
+### Customer order lifecycle
+
+```mermaid
+flowchart LR
+  A[Shop QR] --> B[Upload and inspect document]
+  B --> C[Server quote in integer paise]
+  C --> D[Customer confirms order]
+  D --> E{Payment method}
+  E -->|Cash| F[Await merchant review]
+  E -->|Razorpay| G[Provider payment verification]
+  G --> F
+  F --> H[Merchant releases order]
+  H --> I[Agent polls authorized queue]
+  I --> J[Local validation and spooler submission]
+  J --> K{Outcome known?}
+  K -->|Yes| L[Ready for pickup]
+  K -->|No| M[OUTPUT_UNCERTAIN; operator reconciliation]
+  L --> N[Merchant records collection]
+```
+
+### Merchant API request pipeline
+
+```mermaid
+flowchart LR
+  A[HTTP request] --> B[Signed session validation]
+  B --> C[Active account and current membership]
+  C --> D[Tenant and subscription checks]
+  D --> E[Route role or permission]
+  E --> F[Controller input and ownership validation]
+  F --> G[Repository transaction / private storage]
+  G --> H[Safe response]
+```
+
+### Desktop agent dispatch
+
+```mermaid
+sequenceDiagram
+  participant M as Merchant API
+  participant A as Paired desktop agent
+  participant Q as Local durable queue
+  participant S as OS spooler
+  M->>A: Authenticated poll for assigned shop/printer jobs
+  A->>Q: Persist ticket before processing
+  A->>M: Acknowledge stable dispatch ID
+  A->>Q: Validate file and print settings
+  A->>S: Submit supported job
+  S-->>A: Spooler result (not physical-output proof)
+  A->>Q: Persist result for retryable reporting
+  A->>M: Report outcome
+  Note over A,M: Ambiguous output becomes OUTPUT_UNCERTAIN; never auto-retry
+```
+
+## Verified safety behavior and current limits
+
+- **Print uncertainty:** ambiguous dispatch outcomes become `OUTPUT_UNCERTAIN`; automatic retries are withheld pending operator reconciliation. Physical printing remains pilot-gated and has not been verified on hardware.
+- **Pricing:** the shared pricing engine calculates print quotes in integer Paise. Local tests cover core pricing rules; tax and other advanced billing policies remain incomplete.
+- **Tenant authorization:** merchant routes require a signed persisted session, active account, current shop membership, tenant scoping, and route-specific role/permission checks. Continue adding ownership tests for each resource type.
+- **Payment:** Razorpay checkout and webhook handlers validate signatures and payment records in source, but live credentials/provider round trips have not been verified. Subscription checkout and usage billing are not implemented.
+- **Financial records:** customer payment entries are stored and dashboard revenue reads the payment ledger. Database-level ledger immutability and comprehensive reconciliation are not yet established; do not describe the ledger as immutable.
+- **Developer integrations:** the OpenAPI endpoint is public. API-key management and webhook subscriptions are disabled unless explicitly enabled; generated API keys do not yet authenticate to business routes, and signed webhook delivery/retries are not implemented.
+- **WhatsApp and agent installer:** WhatsApp setup/pairing requests fail closed until Meta onboarding is built. A signed production agent installer is unavailable, and physical printing is disabled by default.
+
+## Current verification
+
+See [`BUILD_AND_TEST_RESULTS.md`](./BUILD_AND_TEST_RESULTS.md) for command output and [`REMAINING_ISSUES.md`](./REMAINING_ISSUES.md) for deployment blockers. Latest local verification: `npm run build` passed, `npm test` passed 199 tests, and `npm audit --audit-level=high` found zero vulnerabilities. These checks do not establish live provider, PostgreSQL, object-storage, browser, or printer behavior.

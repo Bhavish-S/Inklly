@@ -326,9 +326,10 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [profileDropdownOpen, setProfileDropdownOpen] = useState<boolean>(false);
 
   // Dashboard state
-  const [dashboardMetricToggle, setDashboardMetricToggle] = useState<'orders' | 'revenue'>('orders');
-  const [screenshotEmptyMode, setScreenshotEmptyMode] = useState<boolean>(false);
-  const [selectedCurrency, setSelectedCurrency] = useState<string>('INR');
+  const [dashboardMetrics, setDashboardMetrics] = useState<any>({
+    totalOrders: 0, pendingReview: 0, readyForPrint: 0, inProgress: 0, readyForPickup: 0, completed: 0,
+    awaitingPayment: 0, failed: 0, cancelled: 0, totalRevenuePaise: 0, activePrinters: 0, totalPrinters: 0, statusCounts: {},
+  });
 
   // Orders queue state
   const [ordersTab, setOrdersTab] = useState<
@@ -732,6 +733,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
 
   // Live Orders Data (Populated in real-time from server API and customer intake)
   const [ordersList, setOrdersList] = useState<any[]>([]);
+  const [livePrintOrders, setLivePrintOrders] = useState<any[]>([]);
   const [queueOrders, setQueueOrders] = useState<any[]>([]);
   const [queuePage, setQueuePage] = useState(1);
   const [queueLoading, setQueueLoading] = useState(false);
@@ -839,10 +841,11 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const fetchLiveOrdersFromApi = async () => {
     try {
       setIsRefreshingOrders(true);
-      const serverOrders = await api.getOrders('ALL');
-      if (Array.isArray(serverOrders)) {
-        const mapped = serverOrders.map(mapServerOrderToUiOrder);
+      const dashboard = await api.getDashboard();
+      if (dashboard && Array.isArray(dashboard.recentOrders) && dashboard.metrics) {
+        const mapped = dashboard.recentOrders.map(mapServerOrderToUiOrder);
         setOrdersList(mapped);
+        setDashboardMetrics(dashboard.metrics);
         setLastOrderSyncTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
       }
     } catch (err) {
@@ -850,6 +853,18 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     } finally {
       if (activeView === 'orders') await fetchOrdersPage(queuePage);
       setIsRefreshingOrders(false);
+    }
+  };
+
+  const fetchLivePrintOrders = async () => {
+    try {
+      const page = await api.getOrders('IN_PROGRESS,READY_FOR_PRINT,PENDING_AGENT_SPOOL', {
+        page: 1, pageSize: 100, search: '', sortBy: 'createdAt', sortOrder: 'asc',
+      });
+      if (page && Array.isArray(page.orders)) setLivePrintOrders(page.orders.map(mapServerOrderToUiOrder));
+    } catch (error) {
+      console.warn('[MerchantAppView] Could not fetch live print queue:', error);
+      setLivePrintOrders([]);
     }
   };
 
@@ -866,6 +881,13 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     const debounce = window.setTimeout(() => { void fetchOrdersPage(queuePage); }, 300);
     return () => window.clearTimeout(debounce);
   }, [activeView, ordersTab, orderSearchQuery, queuePage]);
+
+  useEffect(() => {
+    if (activeView !== 'live_print') return;
+    void fetchLivePrintOrders();
+    const interval = window.setInterval(() => { void fetchLivePrintOrders(); }, 15000);
+    return () => window.clearInterval(interval);
+  }, [activeView]);
 
   useEffect(() => {
     if (activeView !== 'orders') return;
@@ -908,8 +930,11 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   };
 
   // Order Queue Handlers
+  const findCachedOrder = (orderId: string) =>
+    [...ordersList, ...queueOrders, ...livePrintOrders].find((order) => order.id === orderId || order.rawId === orderId);
+
   const handleOneClickPrint = async (orderId: string) => {
-    const order = ordersList.find((o) => o.id === orderId || o.rawId === orderId);
+    const order = findCachedOrder(orderId);
     const targetId = order?.rawId || orderId;
 
     try {
@@ -924,17 +949,17 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   };
 
   const handleRejectOrder = async (orderId: string) => {
-    const order = ordersList.find((o) => o.id === orderId || o.rawId === orderId);
+    const order = findCachedOrder(orderId);
     const targetId = order?.rawId || orderId;
     try {
-      await api.updateOrderStatus(targetId, 'REJECTED');
+      await api.updateOrderStatus(targetId, 'CANCELLED');
     } catch (e) {
       console.warn('Reject error:', e);
       setOrderActionToast(e instanceof Error ? e.message : 'Could not reject this order.');
       return;
     }
     await fetchLiveOrdersFromApi();
-    setOrderActionToast(`Order #${orderId} has been rejected.`);
+    setOrderActionToast(`Order #${orderId} was rejected and cancelled.`);
     setTimeout(() => setOrderActionToast(null), 3000);
   };
 
@@ -944,7 +969,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   };
 
   const handleMarkCollected = async (orderId: string) => {
-    const order = ordersList.find((o) => o.id === orderId || o.rawId === orderId);
+    const order = findCachedOrder(orderId);
     const targetId = order?.rawId || orderId;
     try {
       if (order?.rawStatus === 'COLLECTED') {
@@ -1262,13 +1287,17 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   };
 
   // Order Counts & Filtered Lists
-  const pendingOrders = ordersList.filter((o) => o.tab === 'pending');
-  const paymentPendingOrders = ordersList.filter((o) => o.tab === 'payment_pending');
-  const processingOrders = ordersList.filter((o) => o.tab === 'processing');
-  const printingOrders = ordersList.filter((o) => o.tab === 'printing');
-  const rejectedOrders = ordersList.filter((o) => o.tab === 'rejected');
-  const failedOrders = ordersList.filter((o) => o.tab === 'print_failed');
-  const doneOrders = ordersList.filter((o) => o.tab === 'done');
+  const processingOrders = livePrintOrders.filter((o) => o.tab === 'processing');
+  const printingOrders = livePrintOrders.filter((o) => o.tab === 'printing');
+  const statusCounts = dashboardMetrics.statusCounts || {};
+  const countOrderStatuses = (...statuses: string[]) => statuses.reduce((sum, status) => sum + (Number(statusCounts[status]) || 0), 0);
+  const pendingOrderCount = countOrderStatuses('DRAFT', 'SUBMITTED', 'AWAITING_REVIEW', 'PENDING_RELEASE', 'ON_HOLD', 'CANCEL_REQUESTED');
+  const paymentPendingOrderCount = countOrderStatuses('AWAITING_PAYMENT');
+  const processingOrderCount = countOrderStatuses('READY_FOR_PRINT', 'PENDING_AGENT_SPOOL');
+  const printingOrderCount = countOrderStatuses('IN_PROGRESS');
+  const rejectedOrderCount = countOrderStatuses('CANCELLED');
+  const failedOrderCount = countOrderStatuses('PRINT_FAILED', 'PRINT_UNCONFIRMED', 'FAILED_REQUIRES_SUPPORT');
+  const completedOrderCount = countOrderStatuses('READY_FOR_COLLECTION', 'COLLECTED');
 
   const activeFilteredOrders = queueOrders;
 
@@ -1281,10 +1310,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     setQueuePage(1);
   };
 
-  const totalRevenueNumber = ordersList
-    .filter((o) => o.tab === 'done')
-    .reduce((acc, o) => acc + (parseFloat(o.amount.replace('₹', '')) || 0), 0)
-    .toFixed(2);
+  const totalRevenueNumber = (Number(dashboardMetrics.totalRevenuePaise || 0) / 100).toFixed(2);
 
   const handleTestChatSend = () => {
     if (!testChatMessage.trim()) return;
@@ -1670,68 +1696,28 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
         ───────────────────────────────────────────────────────────── */}
         {activeView === 'dashboard' && (
           <div className="p-6 max-w-7xl w-full mx-auto space-y-6">
-            {/* Sub-header notice & Currency Dropdown */}
+            {/* Live data freshness and currency context */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-500">
-              <p>Order counts include all currencies. Revenue totals show INR only; no currency conversion.</p>
-              <div className="flex items-center gap-3">
-                {/* Subtle Toggle: Screenshot Parity (Empty initial) vs Live Demo Orders */}
-                <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-0.5 rounded-lg text-[11px] font-semibold border border-slate-200 dark:border-slate-700">
-                  <button
-                    type="button"
-                    onClick={() => setScreenshotEmptyMode(true)}
-                    className={`px-2.5 py-1 rounded-md transition-all ${
-                      screenshotEmptyMode
-                        ? 'bg-white dark:bg-slate-700 text-[#4E65F6] font-bold shadow-xs'
-                        : 'text-slate-500 hover:text-slate-700'
-                    }`}
-                    title="Render exact initial 0-orders state matching reference screenshot"
-                  >
-                    Screenshot Parity (0)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setScreenshotEmptyMode(false)}
-                    className={`px-2.5 py-1 rounded-md transition-all ${
-                      !screenshotEmptyMode
-                        ? 'bg-white dark:bg-slate-700 text-[#4E65F6] font-bold shadow-xs'
-                        : 'text-slate-500 hover:text-slate-700'
-                    }`}
-                    title="Render active live orders with full metrics"
-                  >
-                    Live Orders ({ordersList.length})
-                  </button>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span>Revenue currency</span>
-                  <select
-                    value={selectedCurrency}
-                    onChange={(e) => setSelectedCurrency(e.target.value)}
-                    className="border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1 bg-white dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-200 outline-none cursor-pointer"
-                  >
-                    <option value="INR">INR (₹)</option>
-                    <option value="USD">USD ($)</option>
-                  </select>
-                </div>
-              </div>
+              <p>Revenue is the lifetime total of verified INR payments recorded in the shop ledger.</p>
+              <span>{isRefreshingOrders ? 'Updating…' : lastOrderSyncTime ? `Updated ${lastOrderSyncTime}` : 'Waiting for shop data'}</span>
             </div>
 
             {/* 4 Top Colorful Stat Cards matching Screenshot 2026-10-23 074343.png */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {/* Card 1: Today's Revenue (Blue Gradient #4E65F6) */}
+              {/* Card 1: Verified revenue */}
               <div className="rounded-2xl p-5 bg-gradient-to-br from-[#4E65F6] to-[#5C72FA] text-white shadow-xs flex flex-col justify-between h-36">
                 <div className="flex justify-between items-start">
-                  <span className="text-xs font-bold uppercase tracking-wider text-blue-100">Today's Revenue</span>
+                  <span className="text-xs font-bold uppercase tracking-wider text-blue-100">Paid Revenue · INR</span>
                   <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-white">
                     <TrendingUpIcon size={16} />
                   </div>
                 </div>
                 <div>
                   <div className="text-3xl font-extrabold tracking-tight">
-                    ₹{screenshotEmptyMode ? '0.00' : totalRevenueNumber}
+                    ₹{totalRevenueNumber}
                   </div>
                   <div className="flex justify-between items-center text-[11px] text-blue-100 mt-1">
-                    <span>Completed orders · INR</span>
+                    <span>Verified ledger total</span>
                     <span className="bg-white/20 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
                       <TrendingUpIcon size={11} /> <span>—</span>
                     </span>
@@ -1749,10 +1735,10 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                 </div>
                 <div>
                   <div className="text-3xl font-extrabold tracking-tight text-white">
-                    {screenshotEmptyMode ? 0 : ordersList.length}
+                    {Number(dashboardMetrics.totalOrders || 0)}
                   </div>
                   <div className="flex justify-between items-center text-[11px] text-amber-50 mt-1">
-                    <span>Completed prints for your shop</span>
+                    <span>All recorded orders</span>
                     <span className="bg-white/20 px-2 py-0.5 rounded-full font-bold text-white flex items-center gap-1">
                       <TrendingUpIcon size={11} /> <span>—</span>
                     </span>
@@ -1770,7 +1756,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                 </div>
                 <div>
                   <div className="text-3xl font-extrabold tracking-tight text-white">
-                    {screenshotEmptyMode ? 0 : pendingOrders.length}
+                    {pendingOrderCount}
                   </div>
                   <div className="flex justify-between items-center text-[11px] text-rose-50 mt-1">
                     <span>Awaiting print action</span>
@@ -1791,7 +1777,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                 </div>
                 <div>
                   <div className="text-3xl font-extrabold tracking-tight text-white">
-                    {screenshotEmptyMode ? 0 : doneOrders.length}
+                    {Number(dashboardMetrics.completed || 0)}
                   </div>
                   <div className="flex justify-between items-center text-[11px] text-emerald-50 mt-1">
                     <span>Orders printed & delivered</span>
@@ -1803,338 +1789,62 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
               </div>
             </div>
 
-            {/* Middle Row (2/3 and 1/3) */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              {/* Orders This Week Area Chart (lg:col-span-8) */}
-              <div className="lg:col-span-8 bg-white dark:bg-[#1E293B] border border-[#E8EAF3] dark:border-gray-800 rounded-2xl p-5 shadow-xs">
-                <div className="flex items-center justify-between mb-4">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <section className="lg:col-span-1 bg-white dark:bg-[#1E293B] border border-[#E8EAF3] dark:border-gray-800 rounded-2xl p-5 shadow-xs" aria-labelledby="dashboard-queues-title">
+                <div className="flex items-start justify-between gap-3 mb-4">
                   <div>
-                    <h3 className="font-extrabold text-sm text-[#172031] dark:text-white">Orders This Week</h3>
-                    <p className="text-xs text-gray-400">
-                      Total {screenshotEmptyMode ? 0 : ordersList.length} orders · ₹{screenshotEmptyMode ? '0.00' : totalRevenueNumber} revenue
-                    </p>
+                    <h3 id="dashboard-queues-title" className="font-extrabold text-sm text-[#172031] dark:text-white">Order queues</h3>
+                    <p className="text-xs text-gray-400">Live counts from your shop</p>
                   </div>
-                  <div className="bg-slate-50 dark:bg-slate-800 p-0.5 rounded-full border border-slate-200/80 dark:border-slate-700 flex text-xs font-semibold">
-                    <button
-                      type="button"
-                      onClick={() => setDashboardMetricToggle('orders')}
-                      className={`px-3 py-1 rounded-full transition-all ${
-                        dashboardMetricToggle === 'orders'
-                          ? 'bg-[#EEF2FF] text-[#4E65F6] font-bold shadow-xs'
-                          : 'text-slate-500 hover:text-slate-700'
-                      }`}
-                    >
-                      Orders
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDashboardMetricToggle('revenue')}
-                      className={`px-3 py-1 rounded-full transition-all ${
-                        dashboardMetricToggle === 'revenue'
-                          ? 'bg-[#EEF2FF] text-[#4E65F6] font-bold shadow-xs'
-                          : 'text-slate-500 hover:text-slate-700'
-                      }`}
-                    >
-                      Revenue
-                    </button>
-                  </div>
+                  <button type="button" onClick={() => setActiveView('orders')} className="text-xs font-bold text-[#4E65F6] hover:underline">Open orders</button>
                 </div>
-
-                {/* SVG Area Chart with 4-3-2-1-0 Ticks matching Screenshot */}
-                <div className="h-44 w-full pt-2">
-                  <div className="relative h-full flex">
-                    {/* Y-axis ticks */}
-                    <div className="flex flex-col justify-between text-[10px] font-semibold text-gray-400 pr-3 pb-5">
-                      <span>4</span>
-                      <span>3</span>
-                      <span>2</span>
-                      <span>1</span>
-                      <span>0</span>
+                <dl className="space-y-3 text-sm">
+                  {[
+                    ['Awaiting review', Number(dashboardMetrics.pendingReview || 0), 'text-amber-600'],
+                    ['Awaiting payment', paymentPendingOrderCount, 'text-orange-600'],
+                    ['Ready to print', Number(dashboardMetrics.readyForPrint || 0), 'text-indigo-600'],
+                    ['Printing', Number(dashboardMetrics.inProgress || 0), 'text-blue-600'],
+                    ['Ready for pickup', Number(dashboardMetrics.readyForPickup || 0), 'text-emerald-600'],
+                    ['Failed or uncertain', Number(dashboardMetrics.failed || 0), 'text-rose-600'],
+                  ].map(([label, count, color]) => (
+                    <div key={String(label)} className="flex items-center justify-between border-b border-gray-100 dark:border-gray-700 pb-2 last:border-0 last:pb-0">
+                      <dt className="text-gray-600 dark:text-gray-300">{label}</dt>
+                      <dd className={`font-extrabold ${color}`}>{count}</dd>
                     </div>
-                    <div className="flex-1 flex flex-col justify-between relative">
-                      <svg viewBox="0 0 500 110" className="w-full h-28 overflow-visible">
-                        <line x1="0" y1="5" x2="500" y2="5" stroke="#E2E8F0" strokeDasharray="3 3" />
-                        <line x1="0" y1="28" x2="500" y2="28" stroke="#E2E8F0" strokeDasharray="3 3" />
-                        <line x1="0" y1="52" x2="500" y2="52" stroke="#E2E8F0" strokeDasharray="3 3" />
-                        <line x1="0" y1="75" x2="500" y2="75" stroke="#E2E8F0" strokeDasharray="3 3" />
-                        <line x1="0" y1="98" x2="500" y2="98" stroke="#4E65F6" strokeWidth="2" />
+                  ))}
+                </dl>
+              </section>
 
-                        {ordersList.length === 0 ? (
-                          <>
-                            <line x1="15" y1="98" x2="485" y2="98" stroke="#4E65F6" strokeWidth="2" />
-                            {[15, 93, 171, 250, 328, 406, 485].map((cx, i) => (
-                              <circle key={i} cx={cx} cy="98" r="3.5" fill="#4E65F6" stroke="#fff" strokeWidth="1" />
-                            ))}
-                          </>
-                        ) : (
-                          <>
-                            <defs>
-                              <linearGradient id="orderChartGrad" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor="#4E65F6" stopOpacity="0.25" />
-                                <stop offset="100%" stopColor="#4E65F6" stopOpacity="0.0" />
-                              </linearGradient>
-                            </defs>
-                            <polygon
-                              points="15,98 93,65 171,40 250,55 328,25 406,45 485,15 485,98 15,98"
-                              fill="url(#orderChartGrad)"
-                            />
-                            <polyline
-                              points="15,98 93,65 171,40 250,55 328,25 406,45 485,15"
-                              fill="none"
-                              stroke="#4E65F6"
-                              strokeWidth="2.5"
-                            />
-                            {[
-                              { cx: 15, cy: 98 },
-                              { cx: 93, cy: 65 },
-                              { cx: 171, cy: 40 },
-                              { cx: 250, cy: 55 },
-                              { cx: 328, cy: 25 },
-                              { cx: 406, cy: 45 },
-                              { cx: 485, cy: 15 },
-                            ].map((pt, i) => (
-                              <circle key={i} cx={pt.cx} cy={pt.cy} r="4" fill="#4E65F6" stroke="#fff" strokeWidth="1.5" />
-                            ))}
-                          </>
-                        )}
-                      </svg>
-                      <div className="flex justify-between text-[11px] font-semibold text-gray-400 mt-1 px-1">
-                        <span>Sun</span>
-                        <span>Mon</span>
-                        <span>Tue</span>
-                        <span>Wed</span>
-                        <span>Thu</span>
-                        <span>Fri</span>
-                        <span>Sat</span>
-                      </div>
-                    </div>
+              <section className="lg:col-span-2 bg-white dark:bg-[#1E293B] border border-[#E8EAF3] dark:border-gray-800 rounded-2xl p-5 shadow-xs" aria-labelledby="dashboard-recent-orders-title">
+                <div className="flex items-start justify-between gap-3 mb-4">
+                  <div>
+                    <h3 id="dashboard-recent-orders-title" className="font-extrabold text-sm text-[#172031] dark:text-white">Recent orders</h3>
+                    <p className="text-xs text-gray-400">Latest {ordersList.length} of {Number(dashboardMetrics.totalOrders || 0)} orders</p>
                   </div>
+                  <button type="button" onClick={() => setActiveView('orders')} className="px-3 py-2 bg-[#4E65F6] hover:bg-[#3F54D1] text-white rounded-xl text-xs font-bold">View all</button>
                 </div>
-              </div>
-
-              {/* Order Status (lg:col-span-4) matching Screenshot 2026-10-23 074343.png */}
-              <div className="lg:col-span-4 bg-white dark:bg-[#1E293B] border border-[#E8EAF3] dark:border-gray-800 rounded-2xl p-5 shadow-xs flex flex-col justify-between">
-                <div>
-                  <h3 className="font-extrabold text-sm text-[#172031] dark:text-white">Order Status</h3>
-                  <p className="text-xs text-gray-400">
-                    {screenshotEmptyMode ? 0 : ordersList.length} total orders
-                  </p>
-                </div>
-
-                {screenshotEmptyMode ? (
-                  <div className="my-auto py-8 flex flex-col items-center justify-center text-center">
-                    <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 mb-2">
-                      <PackageIcon size={24} />
-                    </div>
-                    <h4 className="text-sm font-bold text-[#172031] dark:text-white">No orders yet</h4>
-                    <p className="text-xs text-gray-400 mt-0.5">Status breakdown appears here</p>
-                  </div>
+                {ordersList.length === 0 ? (
+                  <div className="py-10 text-center text-sm text-gray-500 dark:text-gray-400">No orders have been placed for this shop yet.</div>
                 ) : (
-                  <>
-                    <div className="my-auto py-4 flex items-center justify-center">
-                      <div className="relative w-32 h-32 flex items-center justify-center">
-                        <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
-                          <path
-                            className="text-gray-200 dark:text-gray-700"
-                            strokeWidth="3.8"
-                            stroke="currentColor"
-                            fill="none"
-                            d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                          />
-                          <path
-                            className="text-[#4E65F6]"
-                            strokeDasharray="60, 100"
-                            strokeWidth="3.8"
-                            strokeLinecap="round"
-                            stroke="currentColor"
-                            fill="none"
-                            d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                          />
-                        </svg>
-                        <div className="absolute text-center">
-                          <div className="text-xl font-extrabold text-[#172031] dark:text-white">{ordersList.length}</div>
-                          <div className="text-[10px] text-gray-400">Total</div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="space-y-1.5 text-xs">
-                      <div className="flex justify-between items-center">
-                        <div className="flex items-center gap-2">
-                          <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
-                          <span className="text-gray-600 dark:text-gray-300">Pending Actions</span>
-                        </div>
-                        <span className="font-bold">{pendingOrders.length}</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <div className="flex items-center gap-2">
-                          <span className="w-2.5 h-2.5 rounded-full bg-purple-500" />
-                          <span className="text-gray-600 dark:text-gray-300">Printing / Processing</span>
-                        </div>
-                        <span className="font-bold">{printingOrders.length + processingOrders.length}</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <div className="flex items-center gap-2">
-                          <span className="w-2.5 h-2.5 rounded-full bg-green-500" />
-                          <span className="text-gray-600 dark:text-gray-300">Completed</span>
-                        </div>
-                        <span className="font-bold">{doneOrders.length}</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <div className="flex items-center gap-2">
-                          <span className="w-2.5 h-2.5 rounded-full bg-red-400" />
-                          <span className="text-gray-600 dark:text-gray-300">Failed / Rejected</span>
-                        </div>
-                        <span className="font-bold">{failedOrders.length + rejectedOrders.length}</span>
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-
-            {/* Bottom Row (1/3 and 2/3) matching Screenshot 2026-10-23 074343.png */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              {/* Monthly Revenue Chart (lg:col-span-4) */}
-              <div className="lg:col-span-4 bg-white dark:bg-[#1E293B] border border-[#E8EAF3] dark:border-gray-800 rounded-2xl p-5 shadow-xs flex flex-col justify-between">
-                <div>
-                  <h3 className="font-extrabold text-sm text-[#172031] dark:text-white">Monthly Revenue</h3>
-                  <p className="text-xs text-gray-400">Last 7 months · INR</p>
-                </div>
-
-                <div className="h-44 w-full pt-4">
-                  <div className="relative h-full flex">
-                    {/* Y-axis ticks */}
-                    <div className="flex flex-col justify-between text-[10px] font-semibold text-gray-400 pr-2 pb-5">
-                      <span>4</span>
-                      <span>3</span>
-                      <span>2</span>
-                      <span>1</span>
-                      <span>0</span>
-                    </div>
-                    <div className="flex-1 flex flex-col justify-between relative">
-                      <svg viewBox="0 0 300 110" className="w-full h-28 overflow-visible">
-                        <line x1="0" y1="5" x2="300" y2="5" stroke="#E2E8F0" strokeDasharray="3 3" />
-                        <line x1="0" y1="28" x2="300" y2="28" stroke="#E2E8F0" strokeDasharray="3 3" />
-                        <line x1="0" y1="52" x2="300" y2="52" stroke="#E2E8F0" strokeDasharray="3 3" />
-                        <line x1="0" y1="75" x2="300" y2="75" stroke="#E2E8F0" strokeDasharray="3 3" />
-                        <line x1="0" y1="98" x2="300" y2="98" stroke="#4E65F6" strokeWidth="2" />
-
-                        {ordersList.length === 0 ? (
-                          <>
-                            <line x1="15" y1="98" x2="285" y2="98" stroke="#4E65F6" strokeWidth="2" />
-                            {[15, 60, 105, 150, 195, 240, 285].map((cx, i) => (
-                              <circle key={i} cx={cx} cy="98" r="3" fill="#4E65F6" />
-                            ))}
-                          </>
-                        ) : (
-                          <>
-                            <polyline
-                              points="15,98 60,82 105,70 150,60 195,45 240,32 285,20"
-                              fill="none"
-                              stroke="#4E65F6"
-                              strokeWidth="2.5"
-                            />
-                            {[
-                              { cx: 15, cy: 98 },
-                              { cx: 60, cy: 82 },
-                              { cx: 105, cy: 70 },
-                              { cx: 150, cy: 60 },
-                              { cx: 195, cy: 45 },
-                              { cx: 240, cy: 32 },
-                              { cx: 285, cy: 20 },
-                            ].map((pt, i) => (
-                              <circle key={i} cx={pt.cx} cy={pt.cy} r="3.5" fill="#4E65F6" stroke="#fff" strokeWidth="1.5" />
-                            ))}
-                          </>
-                        )}
-                      </svg>
-                      <div className="flex justify-between text-[11px] font-semibold text-gray-400 mt-1 px-1">
-                        <span>Apr</span>
-                        <span>May</span>
-                        <span>Jun</span>
-                        <span>Jul</span>
-                        <span>Aug</span>
-                        <span>Sep</span>
-                        <span>Oct</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Recent Orders (lg:col-span-8) */}
-              <div className="lg:col-span-8 bg-white dark:bg-[#1E293B] border border-[#E8EAF3] dark:border-gray-800 rounded-2xl p-5 shadow-xs">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h3 className="font-extrabold text-sm text-[#172031] dark:text-white">Recent Orders</h3>
-                    <p className="text-xs text-gray-400">Today's incoming orders</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setActiveView('orders')}
-                    className="px-4 py-2 bg-[#4E65F6] hover:bg-[#3F54D1] text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer flex items-center gap-1.5 transition-all"
-                  >
-                    <span>Open Order Handler</span>
-                    <span>→</span>
-                  </button>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs text-[#172031] dark:text-gray-200">
-                    <thead>
-                      <tr className="border-b border-gray-100 dark:border-gray-800 text-[10px] font-bold text-gray-400 uppercase tracking-wider text-left">
-                        <th className="pb-3 px-2">CUSTOMER</th>
-                        <th className="pb-3 px-2">DOCUMENT</th>
-                        <th className="pb-3 px-2">STATUS</th>
-                        <th className="pb-3 px-2 text-right">AMOUNT</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {ordersList.length === 0 ? (
-                        <tr>
-                          <td colSpan={4} className="py-12 text-center">
-                            <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 mx-auto mb-3">
-                              <InboxIcon size={24} />
-                            </div>
-                            <h4 className="text-sm font-bold text-[#172031] dark:text-white">No orders yet</h4>
-                            <p className="text-xs text-gray-400 mt-1 max-w-sm mx-auto">
-                              Incoming print orders from your WhatsApp number will show up here in real time.
-                            </p>
-                          </td>
-                        </tr>
-                      ) : (
-                        ordersList.map((ord) => (
-                          <tr key={ord.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 border-b border-gray-50 dark:border-gray-800/60">
-                            <td className="py-3 px-2 font-semibold">
-                              <div className="flex items-center gap-2">
-                                <span className="w-6 h-6 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-[10px] font-bold">
-                                  O#
-                                </span>
-                                <div>
-                                  <div>{ord.customer}</div>
-                                  <div className="text-[10px] text-gray-400">{ord.time}</div>
-                                </div>
-                              </div>
-                            </td>
-                            <td className="py-3 px-2 font-medium text-gray-700 dark:text-gray-300 truncate max-w-xs">
-                              {ord.document} ({ord.pages}p)
-                            </td>
-                            <td className="py-3 px-2">
-                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300">
-                                ● {ord.status}
-                              </span>
-                            </td>
-                            <td className="py-3 px-2 text-right font-extrabold text-[#172031] dark:text-white">
-                              {ord.amount}
-                            </td>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs text-left">
+                      <thead className="text-[10px] uppercase text-gray-400 border-b border-gray-100 dark:border-gray-700">
+                        <tr><th className="py-2 pr-3">Customer</th><th className="py-2 pr-3">Document</th><th className="py-2 pr-3">Status</th><th className="py-2 text-right">Total</th></tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                        {ordersList.map((order) => (
+                          <tr key={order.id} className="text-gray-700 dark:text-gray-200">
+                            <td className="py-3 pr-3"><div className="font-semibold">{order.customer || 'Customer'}</div><div className="text-[10px] text-gray-400">{order.time}</div></td>
+                            <td className="py-3 pr-3 max-w-[14rem] truncate">{order.document || 'Print order'}</td>
+                            <td className="py-3 pr-3"><span className="rounded-full bg-slate-100 dark:bg-slate-700 px-2 py-1">{order.rawStatus || order.status}</span></td>
+                            <td className="py-3 text-right font-bold">{order.amount}</td>
                           </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
             </div>
           </div>
         )}
@@ -2199,19 +1909,19 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                 </button>
                 <div>
                   <div className="text-lg font-extrabold text-[#172031] dark:text-white">
-                    {screenshotEmptyMode ? 0 : queuePagination.total}
+                    {queuePagination.total}
                   </div>
                   <div className="text-[10px] uppercase font-bold text-gray-400">ORDERS</div>
                 </div>
                 <div>
                   <div className="text-lg font-extrabold text-[#172031] dark:text-white">
-                    ₹{screenshotEmptyMode ? '0.00' : filteredOrdersTotalRevenue}
+                    ₹{filteredOrdersTotalRevenue}
                   </div>
                   <div className="text-[10px] uppercase font-bold text-gray-400">REVENUE</div>
                 </div>
                 <div>
                   <div className="text-lg font-extrabold text-[#172031] dark:text-white">
-                    {screenshotEmptyMode ? 0 : filteredOrdersTotalPages}
+                    {filteredOrdersTotalPages}
                   </div>
                   <div className="text-[10px] uppercase font-bold text-gray-400">PAGES</div>
                 </div>
@@ -2244,7 +1954,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                   ordersTab === 'pending' ? 'bg-[#4E65F6] text-white shadow-xs' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
                 }`}
               >
-                Pending {screenshotEmptyMode ? 0 : pendingOrders.length}
+                Pending {pendingOrderCount}
               </button>
               <button
                 type="button"
@@ -2253,7 +1963,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                   ordersTab === 'payment_pending' ? 'bg-[#4E65F6] text-white shadow-xs' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
                 }`}
               >
-                Payment Pending {screenshotEmptyMode ? 0 : paymentPendingOrders.length}
+                Payment Pending {paymentPendingOrderCount}
               </button>
               <button
                 type="button"
@@ -2262,7 +1972,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                   ordersTab === 'processing' ? 'bg-[#4E65F6] text-white shadow-xs' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
                 }`}
               >
-                Processing {screenshotEmptyMode ? 0 : processingOrders.length}
+                Processing {processingOrderCount}
               </button>
               <button
                 type="button"
@@ -2271,7 +1981,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                   ordersTab === 'printing' ? 'bg-[#4E65F6] text-white shadow-xs' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
                 }`}
               >
-                Printing {screenshotEmptyMode ? 0 : printingOrders.length}
+                Printing {printingOrderCount}
               </button>
               <button
                 type="button"
@@ -2280,7 +1990,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                   ordersTab === 'rejected' ? 'bg-[#4E65F6] text-white shadow-xs' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
                 }`}
               >
-                Rejected {screenshotEmptyMode ? 0 : rejectedOrders.length}
+                Rejected {rejectedOrderCount}
               </button>
               <button
                 type="button"
@@ -2289,7 +1999,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                   ordersTab === 'print_failed' ? 'bg-[#4E65F6] text-white shadow-xs' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
                 }`}
               >
-                Print Failed {screenshotEmptyMode ? 0 : failedOrders.length}
+                Print Failed {failedOrderCount}
               </button>
               <button
                 type="button"
@@ -2298,7 +2008,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                   ordersTab === 'done' ? 'bg-[#4E65F6] text-white shadow-xs' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
                 }`}
               >
-                Done {screenshotEmptyMode ? 0 : doneOrders.length}
+                Done {completedOrderCount}
               </button>
               <button
                 type="button"
@@ -2307,7 +2017,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                   ordersTab === 'all' ? 'bg-[#4E65F6] text-white shadow-xs' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
                 }`}
               >
-                All Orders {screenshotEmptyMode ? 0 : ordersList.length}
+                All Orders {Number(dashboardMetrics.totalOrders || 0)}
               </button>
             </div>
 
@@ -2739,15 +2449,15 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
               </div>
               <div className="p-5 rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-xs">
                 <span className="text-[10px] font-bold uppercase text-gray-400 block mb-1">PRINTING NOW</span>
-                <span className={`text-3xl font-extrabold ${printingOrders.length ? 'text-blue-600' : 'text-gray-900 dark:text-white'}`}>
-                  {printingOrders.length}
+                <span className={`text-3xl font-extrabold ${printingOrderCount ? 'text-blue-600' : 'text-gray-900 dark:text-white'}`}>
+                  {printingOrderCount}
                 </span>
                 <span className="text-[10px] text-gray-400 block mt-1">Orders marked in progress</span>
               </div>
               <div className="p-5 rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-xs">
                 <span className="text-[10px] font-bold uppercase text-gray-400 block mb-1">WAITING TO PRINT</span>
                 <span className="text-3xl font-extrabold text-gray-900 dark:text-white">
-                  {pendingOrders.length + processingOrders.length}
+                  {pendingOrderCount + processingOrderCount}
                 </span>
                 <span className="text-[10px] text-gray-400 block mt-1">Pending approval & spooling</span>
               </div>
@@ -2947,7 +2657,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                   <div className="p-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center">
                     <h3 className="font-extrabold text-sm text-[#172031] dark:text-white">Active Print Buffer</h3>
                     <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-                      {printingOrders.length} orders in progress · {pendingOrders.length} awaiting release
+                      {printingOrderCount} orders in progress · {pendingOrderCount + processingOrderCount} waiting to print
                     </span>
                   </div>
                   {printingOrders.length > 0 || processingOrders.length > 0 ? (

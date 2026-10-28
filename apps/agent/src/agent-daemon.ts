@@ -261,15 +261,36 @@ export class AgentDaemon {
   }
 
   private handleLocalRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
+    const config = this.configManager.get();
+    const host = (req.headers.host || '').toLowerCase();
+    const allowedHosts = new Set([
+      `127.0.0.1:${config.localPort}`,
+      `localhost:${config.localPort}`,
+      `[::1]:${config.localPort}`,
+    ]);
+    // This listener is loopback-only. Checking Host as well as binding to the
+    // loopback address prevents DNS-rebinding pages from using an attacker
+    // hostname that resolves to 127.0.0.1 to read local diagnostics.
+    if (!allowedHosts.has(host)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Local agent requests must use a loopback host.' }));
+      return;
+    }
+
     const allowedOrigins = new Set((process.env.INKLLY_PORTAL_ORIGINS || 'http://localhost:3000,http://127.0.0.1:3000,https://inklly.vercel.app')
       .split(',').map((origin) => origin.trim()).filter(Boolean));
     const origin = req.headers.origin;
+    if (origin && !allowedOrigins.has(origin)) {
+      res.writeHead(403, { 'Content-Type': 'application/json', Vary: 'Origin' });
+      res.end(JSON.stringify({ error: 'Origin is not allowed to access local agent diagnostics.' }));
+      return;
+    }
     if (origin && allowedOrigins.has(origin)) res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
 
     if (req.method === 'OPTIONS') {
-      if (!origin || !allowedOrigins.has(origin)) {
+      if (!origin) {
         res.writeHead(403);
         res.end();
         return;
@@ -278,8 +299,6 @@ export class AgentDaemon {
       res.end();
       return;
     }
-
-    const config = this.configManager.get();
 
     // Browser-originated requests can inspect agent status, but can never submit print work
     // or overwrite the paired shop credentials. Cloud-authenticated polling is the only

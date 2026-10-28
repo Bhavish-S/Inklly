@@ -3,6 +3,7 @@ import * as assert from 'node:assert/strict';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
+import * as http from 'node:http';
 import { LocalOfflineQueue } from '../local-queue';
 import { PrinterDiscoveryService } from '../printer-discovery';
 import { SpoolerExecutor, downloadTicketDocument } from '../spooler-executor';
@@ -302,6 +303,38 @@ describe('Inklly Desktop Edge Print Agent Test Suite', () => {
 
       const queueRes = await fetch('http://127.0.0.1:8799/queue');
       assert.equal(queueRes.status, 404, 'local diagnostics must not expose or mutate print queue contents');
+
+      const reboundHostResponse = await new Promise<number>((resolve, reject) => {
+        const request = http.request({
+          hostname: '127.0.0.1',
+          port: 8799,
+          path: '/status',
+          method: 'GET',
+          headers: { Host: 'attacker.example:8799', Origin: 'https://attacker.example' },
+        }, (response) => {
+          response.resume();
+          response.on('end', () => resolve(response.statusCode || 0));
+        });
+        request.on('error', reject);
+        request.end();
+      });
+      assert.equal(reboundHostResponse, 403, 'DNS-rebinding hostnames must not read loopback diagnostics');
+
+      const hostileOriginResponse = await new Promise<number>((resolve, reject) => {
+        const request = http.request({
+          hostname: '127.0.0.1',
+          port: 8799,
+          path: '/status',
+          method: 'GET',
+          headers: { Origin: 'https://attacker.example' },
+        }, (response) => {
+          response.resume();
+          response.on('end', () => resolve(response.statusCode || 0));
+        });
+        request.on('error', reject);
+        request.end();
+      });
+      assert.equal(hostileOriginResponse, 403, 'browser requests from untrusted origins must be rejected');
     } finally {
       await daemon.stop();
     }

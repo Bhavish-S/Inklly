@@ -12,6 +12,8 @@ import {
 export interface DeveloperKeyRecord {
   id: string;
   organizationId: string;
+  shopId?: string;
+  createdByUserId?: string;
   keyName: string;
   keyPrefix: string;
   secretHash: string;
@@ -316,11 +318,13 @@ export class AgentRepository {
   // Developer Keys
   public createDeveloperKey(key: DeveloperKeyRecord): void {
     this.db.execute(
-      `INSERT INTO developer_keys (id, organization_id, key_name, key_prefix, secret_hash, scopes, environment, is_active, expires_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+      `INSERT INTO developer_keys (id, organization_id, shop_id, created_by_user_id, key_name, key_prefix, secret_hash, scopes, environment, is_active, expires_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
       [
         key.id,
         key.organizationId,
+        key.shopId || null,
+        key.createdByUserId || null,
         key.keyName,
         key.keyPrefix,
         key.secretHash,
@@ -332,6 +336,32 @@ export class AgentRepository {
     );
   }
 
+  public authenticateDeveloperKey(secretHash: string, environment: 'TEST' | 'LIVE', now = new Date().toISOString()): (DeveloperKeyRecord & { shopId: string; createdByUserId: string }) | null {
+    const row = this.db.queryOne<any>(
+      `SELECT * FROM developer_keys WHERE secret_hash = ? AND environment = ? AND is_active = 1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?) AND shop_id IS NOT NULL AND created_by_user_id IS NOT NULL`,
+      [secretHash, environment, now]
+    );
+    if (!row) return null;
+    let scopes: unknown;
+    try { scopes = JSON.parse(row.scopes); } catch { return null; }
+    if (!Array.isArray(scopes) || !scopes.every((scope) => typeof scope === 'string')) return null;
+    return {
+      id: row.id,
+      organizationId: row.organization_id,
+      shopId: row.shop_id,
+      createdByUserId: row.created_by_user_id,
+      keyName: row.key_name,
+      keyPrefix: row.key_prefix,
+      secretHash: row.secret_hash,
+      scopes,
+      environment: row.environment,
+      isActive: Boolean(row.is_active),
+      expiresAt: row.expires_at || undefined,
+      createdAt: row.created_at,
+      revokedAt: row.revoked_at || undefined,
+    };
+  }
+
   public getDeveloperKeysByOrg(orgId: string): DeveloperKeyRecord[] {
     const rows = this.db.query<any>(
       `SELECT * FROM developer_keys WHERE organization_id = ? AND revoked_at IS NULL ORDER BY created_at DESC`,
@@ -340,6 +370,8 @@ export class AgentRepository {
     return rows.map((r) => ({
       id: r.id,
       organizationId: r.organization_id,
+      shopId: r.shop_id || undefined,
+      createdByUserId: r.created_by_user_id || undefined,
       keyName: r.key_name,
       keyPrefix: r.key_prefix,
       secretHash: r.secret_hash,

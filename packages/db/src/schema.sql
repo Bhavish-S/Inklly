@@ -221,6 +221,7 @@ CREATE TABLE IF NOT EXISTS orders (
 CREATE INDEX IF NOT EXISTS idx_orders_token ON orders(token_number);
 
 CREATE INDEX IF NOT EXISTS idx_orders_shop_status ON orders(shop_id, status);
+CREATE INDEX IF NOT EXISTS idx_orders_shop_created ON orders(shop_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_orders_order_number ON orders(order_number);
 
 -- Deduplicates public customer order submissions across retries/timeouts.
@@ -369,6 +370,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_events(action);
 CREATE TABLE IF NOT EXISTS developer_keys (
     id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL,
+    shop_id TEXT,
+    created_by_user_id TEXT,
     key_name TEXT NOT NULL,
     key_prefix TEXT NOT NULL, -- e.g. "ink_live_" or "ink_test_"
     secret_hash TEXT NOT NULL,
@@ -380,6 +383,8 @@ CREATE TABLE IF NOT EXISTS developer_keys (
     revoked_at TEXT,
     FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
 );
+
+CREATE INDEX IF NOT EXISTS idx_developer_keys_shop ON developer_keys(shop_id, is_active, expires_at);
 
 CREATE TABLE IF NOT EXISTS webhook_subscriptions (
     id TEXT PRIMARY KEY,

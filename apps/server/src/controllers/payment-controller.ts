@@ -369,42 +369,51 @@ export class PaymentController {
       return res.status(400).json({ error: 'Refund reason is required (3-500 characters).' });
     }
 
-    const existingRefunds = this.db.query<any>(
-      `SELECT COALESCE(SUM(amount_paise), 0) as total FROM refunds WHERE order_id = ? AND status IN ('REQUESTED', 'PROCESSING', 'COMPLETED')`,
-      [orderId]
-    );
-    const alreadyRefunded = existingRefunds[0]?.total || 0;
-    if (amountPaise + alreadyRefunded > order.totalAmountPaise) {
-      return res.status(409).json({ error: 'Refund amount exceeds the remaining refundable balance.' });
-    }
-
-    const payment = this.db.queryOne<any>(
-      `SELECT id FROM payments WHERE order_id = ? AND status = 'VERIFIED' ORDER BY created_at DESC LIMIT 1`,
-      [orderId]
-    );
-    if (!payment) {
-      return res.status(409).json({ error: 'No verified payment record found for this order.' });
-    }
-
     const refundId = `ref-${crypto.randomUUID()}`;
     const now = new Date().toISOString();
+    let refundRequest: 'CREATED' | 'EXCEEDS_REMAINING' | 'NO_VERIFIED_PAYMENT';
+    try {
+      refundRequest = this.db.transaction(() => {
+        const payment = this.db.queryOne<any>(
+          `SELECT id FROM payments WHERE order_id = ? AND status = 'VERIFIED' ORDER BY created_at DESC LIMIT 1`,
+          [orderId]
+        );
+        if (!payment) return 'NO_VERIFIED_PAYMENT';
 
-    this.db.transaction(() => {
-      this.db.execute(
-        `INSERT INTO refunds (id, order_id, payment_id, amount_paise, currency, status, reason, requested_by, requested_at)
-         VALUES (?, ?, ?, ?, ?, 'REQUESTED', ?, ?, ?)`,
-        [
-          refundId,
-          orderId,
-          payment.id,
-          amountPaise,
-          order.currency,
-          reason,
-          req.user?.userId || 'system',
-          now,
-        ]
-      );
-    });
+        // Serialize refund reservations on the verified payment row. PostgreSQL
+        // holds this row lock until commit; SQLite serializes the write transaction.
+        // The remaining-balance read and reservation insert must share that lock.
+        const lockedPayment = this.db.queryOne<any>(
+          `UPDATE payments SET updated_at = updated_at WHERE id = ? AND status = 'VERIFIED' RETURNING id`,
+          [payment.id]
+        );
+        if (!lockedPayment) return 'NO_VERIFIED_PAYMENT';
+
+        const existingRefunds = this.db.queryOne<any>(
+          `SELECT COALESCE(SUM(amount_paise), 0) AS total FROM refunds WHERE order_id = ? AND status IN ('REQUESTED', 'PROCESSING', 'COMPLETED')`,
+          [orderId]
+        );
+        const alreadyRefunded = Number(existingRefunds?.total || 0);
+        if (amountPaise + alreadyRefunded > order.totalAmountPaise) return 'EXCEEDS_REMAINING';
+
+        this.db.execute(
+          `INSERT INTO refunds (id, order_id, payment_id, amount_paise, currency, status, reason, requested_by, requested_at)
+           VALUES (?, ?, ?, ?, ?, 'REQUESTED', ?, ?, ?)`,
+          [refundId, orderId, payment.id, amountPaise, order.currency, reason, req.user?.userId || 'system', now]
+        );
+        return 'CREATED';
+      });
+    } catch (error) {
+      console.error('[Refund reservation]', error);
+      return res.status(503).json({ error: 'Refund request could not be reserved. No refund was created; retry after refreshing the order.' });
+    }
+
+    if (refundRequest === 'NO_VERIFIED_PAYMENT') {
+      return res.status(409).json({ error: 'No verified payment record found for this order.' });
+    }
+    if (refundRequest === 'EXCEEDS_REMAINING') {
+      return res.status(409).json({ error: 'Refund amount exceeds the remaining refundable balance.' });
+    }
 
     res.status(201).json({
       success: true,

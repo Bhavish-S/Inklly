@@ -4,8 +4,8 @@
 
 ## Current local verification
 
-- `npm run build` — passed for database, shared, desktop agent, server, and web workspaces using Vite 6.4.5. The main JavaScript bundle is 1,198.01 kB minified (314.19 kB gzip) and triggers Vite's 500 kB chunk warning; the build completes successfully.
-- `npm test` — 197 passed, 0 failed: database 6, shared 13, agent 12, server 166.
+- `npm run build` — passed for database, shared, desktop agent, server, and web workspaces using Vite 6.4.5. The main JavaScript bundle is 1,188.94 kB minified (312.90 kB gzip) and triggers Vite's 500 kB chunk warning; the build completes successfully.
+- `npm test` — 199 passed, 0 failed: database 6, shared 13, agent 12, server 168.
 - `npm audit --audit-level=high` — passed with 0 vulnerabilities.
 - `npm run lint` — no root lint script is currently configured.
 
@@ -19,7 +19,7 @@ The platform admin agent fleet is loaded from persisted registrations, shop assi
 
 Platform merchant onboarding now transactionally provisions an inactive owner, organization, shop, baseline paise rate rules, seven-day trial, hashed 48-hour invitation, and audit event. The owner sets a strong password using a single-use invitation; the raw token is returned once with `Cache-Control: no-store`. API tests cover role gating, validation, persistence, expiry, replay rejection, activation, and login. Merchant printer health is derived from heartbeat freshness, and stale or unknown printers cannot receive print dispatch. Rate rules reject printer IDs outside the authenticated shop.
 
-Developer API keys validate their environment and supported scopes; key verifier hashes are omitted from both creation and listing responses. Developer webhook secrets use purpose-bound AES-256-GCM encryption at rest; legacy plaintext rows are transactionally migrated and creation fails closed if the stable encryption key is unavailable. Registration requires HTTPS, rejects literal IPs and local hostnames, and validates supported events. The webhook explorer accurately labels its operation as an unsigned, local synthetic preview. Durable signed delivery, DNS-pinned SSRF-safe dispatch, retry history, and rotation/revocation are not implemented.
+Developer API keys are bound to the issuing user and shop, require `ENABLE_EXTERNAL_API_ACCESS=true`, and are checked for environment, expiry, revocation, active membership, and least-privilege scopes. Key verifier hashes are omitted from creation and listing responses. Developer webhook secrets use purpose-bound AES-256-GCM encryption at rest; legacy plaintext rows are transactionally migrated and creation fails closed if the stable encryption key is unavailable. Registration requires HTTPS, rejects literal IPs and local hostnames, and validates supported events. The webhook explorer accurately labels its operation as an unsigned, local synthetic preview. Durable signed delivery, DNS-pinned SSRF-safe dispatch, retry history, and rotation/revocation are not implemented.
 
 WhatsApp Cloud API onboarding and message delivery are unavailable. The merchant screen contains no simulated QR or connected-account state; setup writes and pairing requests return HTTP 503 until secure Meta onboarding, credential storage, and delivery are implemented.
 
@@ -32,9 +32,10 @@ WhatsApp Cloud API onboarding and message delivery are unavailable. The merchant
 - Subscription checkout and per-successfully-printed-side SaaS billing are not implemented.
 - The desktop agent refuses physical printing by default. If explicitly enabled, it requires an exact fresh online local queue match and rejects unsupported mixed-color, manual-duplex, or multi-up requests; real printer output, hardware status/capability accuracy, OS queue reconciliation, and post-spool outcome confirmation still require Windows hardware verification.
 - Agent ticket polling is now gated by merchant release status and verified online payment. The server integration test confirms an unreviewed customer order is withheld and becomes pollable after release. The full agent-to-Windows-spooler lifecycle is not verified on physical hardware.
-- The merchant dashboard's revenue KPI now sums the customer-payment ledger. A regression test confirms a collected-but-unpaid order does not increase revenue.
+- The merchant dashboard uses grouped order-status counts and returns at most five hydrated recent orders; live print refresh is paginated. Revenue sums the customer-payment ledger. Tests cover aggregate counts and confirm a collected-but-unpaid order does not increase revenue.
 - Merchant storage category and document tables are present in the generated schema; a versioned migration upgrades existing SQLite and PostgreSQL databases and a test checks migration registration and table presence. Live PostgreSQL migration/startup is not yet verified.
 - Browser visual/E2E testing was not run; the local browser surface was unavailable in this session.
+- PostgreSQL migration and transaction behavior for the latest API-key and nested-order-transaction changes have not been verified against the live Supabase database.
 
 ## Reproduction
 

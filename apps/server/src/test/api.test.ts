@@ -400,6 +400,14 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       method: 'POST', headers, body: JSON.stringify({ connectionType: 'existing_business_number', metaAppSecret: 'must-not-be-stored' }),
     });
     assert.equal(save.status, 503);
+
+    const events = await fetch(`${baseUrl}/api/v1/merchant/whatsapp/events`, { headers });
+    assert.equal(events.status, 503);
+    assert.match((await events.json() as any).error, /event persistence are not configured/i);
+
+    const remove = await fetch(`${baseUrl}/api/v1/merchant/whatsapp/account/nonexistent`, { method: 'DELETE', headers });
+    assert.equal(remove.status, 503);
+    assert.match((await remove.json() as any).error, /No account was removed/i);
   });
 
   it('persists merchant storage categories in the tenant-scoped database', async () => {
@@ -520,6 +528,10 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     const dashboard = await res.json();
     assert.ok(dashboard.metrics.totalOrders >= 1);
     assert.ok(dashboard.metrics.activePrinters >= 1);
+    assert.ok(dashboard.recentOrders.length <= 5, 'dashboard should hydrate only its recent-order window');
+    const persistedStatusCounts = db.query<any>(`SELECT status, COUNT(*) AS count FROM orders WHERE shop_id = ? GROUP BY status`, ['shop-campus-1']);
+    assert.equal(dashboard.metrics.totalOrders, persistedStatusCounts.reduce((sum, row) => sum + Number(row.count), 0));
+    for (const row of persistedStatusCounts) assert.equal(dashboard.metrics.statusCounts[row.status], Number(row.count));
 
     // List orders
     const ordersRes = await fetch(`${baseUrl}/api/v1/merchant/orders`, {
@@ -581,7 +593,18 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     });
     assert.equal(invalidRes.status, 422);
 
-    // The later dispatch test verifies the pre-approval queue boundary for this fixture.
+    const rejectRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${demoOrder.id}/status`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${merchantToken}`,
+      },
+      body: JSON.stringify({ status: 'CANCELLED' }),
+    });
+    assert.equal(rejectRes.status, 200);
+    assert.equal((await rejectRes.json()).order.status, 'CANCELLED');
+
+    // Keep the shared fixture in its pre-approval state for later workflow tests.
     db.execute(`UPDATE orders SET status = 'AWAITING_REVIEW' WHERE id = ?`, [demoOrder.id]);
   });
 
@@ -812,6 +835,58 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.ok(audit.some((entry) => entry.action === 'VIEW_PUBLIC_ENQUIRIES'));
   });
 
+  it('validates tenant status changes and records the update atomically in the audit log', async () => {
+    const organizationId = `org-status-${crypto.randomUUID()}`;
+    const now = new Date().toISOString();
+    db.execute(
+      `INSERT INTO organizations (id, name, owner_user_id, plan_tier, plan_status, billing_currency, created_at, updated_at)
+       VALUES (?, 'Status Mutation Test', 'user-owner-1', 'STARTER', 'TRIAL', 'INR', ?, ?)`,
+      [organizationId, now, now]
+    );
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` };
+    const url = `${baseUrl}/api/v1/platform/merchants/${organizationId}/status`;
+    try {
+      const invalidStatus = await fetch(url, { method: 'PATCH', headers, body: JSON.stringify({ planStatus: 'ROOT' }) });
+      assert.equal(invalidStatus.status, 400);
+      const invalidTier = await fetch(url, { method: 'PATCH', headers, body: JSON.stringify({ planTier: 'UNLIMITED' }) });
+      assert.equal(invalidTier.status, 400);
+      assert.equal(db.queryOne<any>(`SELECT plan_status, plan_tier FROM organizations WHERE id = ?`, [organizationId]).plan_status, 'TRIAL');
+      assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM audit_events WHERE target_id = ?`, [organizationId]).count), 0);
+
+      const missing = await fetch(`${baseUrl}/api/v1/platform/merchants/missing-${crypto.randomUUID()}/status`, {
+        method: 'PATCH', headers, body: JSON.stringify({ planStatus: 'ACTIVE' }),
+      });
+      assert.equal(missing.status, 404);
+
+      const update = await fetch(url, {
+        method: 'PATCH', headers, body: JSON.stringify({ planStatus: 'suspended', planTier: 'scale' }),
+      });
+      assert.equal(update.status, 200);
+      const body = await update.json() as any;
+      assert.deepEqual(body.organization, { id: organizationId, planStatus: 'SUSPENDED', planTier: 'SCALE' });
+
+      const persisted = db.queryOne<any>(`SELECT plan_status, plan_tier FROM organizations WHERE id = ?`, [organizationId]);
+      assert.equal(persisted.plan_status, 'SUSPENDED');
+      assert.equal(persisted.plan_tier, 'SCALE');
+      const audit = db.queryOne<any>(
+        `SELECT actor_user_id, actor_role, organization_id, action, outcome, details FROM audit_events WHERE target_id = ?`,
+        [organizationId]
+      );
+      assert.ok(audit);
+      assert.equal(audit.actor_role, 'PLATFORM_OWNER');
+      assert.equal(audit.organization_id, organizationId);
+      assert.equal(audit.action, 'PLATFORM_MERCHANT_STATUS_UPDATED');
+      assert.equal(audit.outcome, 'SUCCESS');
+      assert.deepEqual(JSON.parse(audit.details), {
+        previous: { planStatus: 'TRIAL', planTier: 'STARTER' },
+        next: { planStatus: 'SUSPENDED', planTier: 'SCALE' },
+      });
+    } finally {
+      db.execute(`DELETE FROM audit_events WHERE target_id = ?`, [organizationId]);
+      db.execute(`DELETE FROM organizations WHERE id = ?`, [organizationId]);
+    }
+  });
+
   it('onboards a merchant transactionally and accepts a hashed, single-use owner invitation', async () => {
     const anonymous = await fetch(`${baseUrl}/api/v1/platform/merchants`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1021,6 +1096,50 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(spec.openapi, '3.0.3');
     assert.ok(spec.paths['/portal/quote']);
 
+    const requiredMerchantOperations: Record<string, string[]> = {
+      '/merchant/dashboard': ['get'],
+      '/merchant/orders': ['get'],
+      '/merchant/orders/{id}': ['get'],
+      '/merchant/orders/{id}/files/{fileId}': ['get'],
+      '/merchant/orders/{id}/status': ['patch'],
+      '/merchant/orders/{id}/print': ['post'],
+      '/merchant/agents/pairing-code': ['post'],
+      '/merchant/agents/{id}': ['delete'],
+      '/merchant/rates': ['get', 'put'],
+      '/merchant/discounts/bulk': ['put'],
+      '/merchant/printers': ['get', 'post'],
+      '/merchant/printers/{id}/default': ['put'],
+      '/merchant/settings': ['get', 'put'],
+      '/merchant/settings/razorpay': ['get', 'put', 'delete'],
+      '/merchant/settings/razorpay/test': ['post'],
+      '/merchant/staff': ['get', 'post'],
+      '/merchant/bot-templates': ['get', 'put'],
+      '/merchant/credits/balance': ['get'],
+      '/merchant/credits/purchase': ['post'],
+      '/merchant/payouts': ['get', 'post'],
+      '/merchant/storage/categories': ['get', 'post'],
+      '/merchant/storage/categories/{id}': ['delete'],
+      '/merchant/storage/documents': ['get'],
+      '/merchant/storage/documents/{id}/download': ['get'],
+      '/merchant/storage/documents/{id}': ['delete'],
+      '/merchant/whatsapp/setup': ['get', 'post'],
+      '/merchant/whatsapp/qr-pairing': ['post'],
+      '/merchant/whatsapp/qr-pairing/refresh': ['post'],
+      '/merchant/whatsapp/account/{id}': ['delete'],
+      '/merchant/whatsapp/events': ['get'],
+    };
+    assert.equal(spec.components.securitySchemes.bearerAuth.scheme, 'bearer');
+    for (const [path, methods] of Object.entries(requiredMerchantOperations)) {
+      for (const method of methods) {
+        const operation = spec.paths[path]?.[method];
+        assert.ok(operation, `OpenAPI must document ${method.toUpperCase()} ${path}`);
+        assert.ok(operation.summary, `${method.toUpperCase()} ${path} must have a summary`);
+        assert.ok(operation.description, `${method.toUpperCase()} ${path} must describe its access requirements`);
+        assert.ok(operation.security?.some((requirement: any) => Array.isArray(requirement.bearerAuth)), `${method.toUpperCase()} ${path} must require bearer authentication`);
+        assert.ok(operation.responses?.default, `${method.toUpperCase()} ${path} must document a response`);
+      }
+    }
+
     // Create developer key
     const keyRes = await fetch(`${baseUrl}/api/v1/developer/keys`, {
       method: 'POST',
@@ -1039,6 +1158,60 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     const keyData = await keyRes.json();
     assert.ok(keyData.apiKeySecret.startsWith('ink_test_'));
     assert.equal('secretHash' in keyData.key, false, 'one-time key creation must not expose the stored verifier');
+    const apiKey = keyData.apiKeySecret as string;
+    const scopedDashboard = await fetch(`${baseUrl}/api/v1/merchant/dashboard`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    assert.equal(scopedDashboard.status, 200, 'valid TEST key with orders:read must authenticate to its bound shop');
+    const crossShopApiKey = await fetch(`${baseUrl}/api/v1/merchant/dashboard?shopId=shop-other-tenant`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    assert.equal(crossShopApiKey.status, 403, 'API key must not escape its bound shop');
+    const ownerOnlyApiKey = await fetch(`${baseUrl}/api/v1/merchant/settings/razorpay`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    assert.equal(ownerOnlyApiKey.status, 403, 'API key must never inherit merchant-owner route access');
+
+    const readOnlyKeyResponse = await fetch(`${baseUrl}/api/v1/developer/keys`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+      body: JSON.stringify({ keyName: 'Read only test', environment: 'TEST', scopes: ['orders:read'] }),
+    });
+    assert.equal(readOnlyKeyResponse.status, 201);
+    const readOnlyKey = (await readOnlyKeyResponse.json() as any).apiKeySecret as string;
+    const readOnlyWrite = await fetch(`${baseUrl}/api/v1/merchant/orders/${cashOrderId}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${readOnlyKey}` },
+      body: JSON.stringify({ status: 'CANCELLED' }),
+    });
+    assert.equal(readOnlyWrite.status, 403, 'orders:read must not authorize order mutation');
+
+    const originalNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    const wrongEnvironment = await fetch(`${baseUrl}/api/v1/merchant/dashboard`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    assert.equal(wrongEnvironment.status, 401, 'TEST API keys must not work in LIVE runtime');
+    if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = originalNodeEnv;
+
+    process.env.ENABLE_EXTERNAL_API_ACCESS = 'false';
+    const disabledApiKey = await fetch(`${baseUrl}/api/v1/merchant/dashboard`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    assert.equal(disabledApiKey.status, 403, 'API keys must fail closed when external API access is disabled');
+    process.env.ENABLE_EXTERNAL_API_ACCESS = 'true';
+
+    const revokedKeyId = keyData.key.id as string;
+    const revoked = await fetch(`${baseUrl}/api/v1/developer/keys/${revokedKeyId}`, {
+      method: 'DELETE', headers: { Authorization: `Bearer ${merchantToken}` },
+    });
+    assert.equal(revoked.status, 200);
+    const revokedUse = await fetch(`${baseUrl}/api/v1/merchant/dashboard`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    assert.equal(revokedUse.status, 401, 'revoked API keys must stop authenticating immediately');
+
     const listedKeysRes = await fetch(`${baseUrl}/api/v1/developer/keys`, { headers: { Authorization: `Bearer ${merchantToken}` } });
     assert.equal(listedKeysRes.status, 200);
     const listedKeys = await listedKeysRes.json() as any[];
@@ -1467,6 +1640,38 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(refundBody.status, 'REQUESTED');
     assert.equal(refundBody.amountPaise, 500);
     assert.ok(refundBody.refundId);
+  });
+
+  it('reserves concurrent partial refunds against the remaining payment balance', async () => {
+    const suffix = crypto.randomUUID();
+    const orderId = `refund-concurrency-${suffix}`;
+    const orderNumber = `RF-${suffix.slice(0, 12)}`;
+    const paymentId = `pay-refund-${suffix}`;
+    const now = new Date().toISOString();
+    db.execute(
+      `INSERT INTO orders (id, shop_id, order_number, token_number, customer_name, channel, status, payment_status, payment_method,
+       total_amount_paise, currency, quote_version, created_at, updated_at)
+       VALUES (?, 'shop-campus-1', ?, 'T-RF', 'Refund Test', 'QR_PORTAL', 'READY_FOR_COLLECTION', 'VERIFIED', 'CASH_ON_COLLECTION', 1000, 'INR', 'v1', ?, ?)`,
+      [orderId, orderNumber, now, now]
+    );
+    db.execute(
+      `INSERT INTO payments (id, order_id, provider, provider_transaction_id, provider_event_id, amount_paise, currency, status, created_at, updated_at)
+       VALUES (?, ?, 'MANUAL_CASH', ?, ?, 1000, 'INR', 'VERIFIED', ?, ?)`,
+      [paymentId, orderId, paymentId, paymentId, now, now]
+    );
+
+    const makeRequest = () => fetch(`${baseUrl}/api/v1/payments/orders/${orderId}/refunds`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+      body: JSON.stringify({ amountPaise: 700, reason: 'Concurrent partial refund test' }),
+    });
+    const responses = await Promise.all([makeRequest(), makeRequest()]);
+    assert.deepEqual(responses.map((response) => response.status).sort(), [201, 409]);
+    const reserved = db.queryOne<any>(
+      `SELECT COALESCE(SUM(amount_paise), 0) AS total FROM refunds WHERE order_id = ? AND status IN ('REQUESTED', 'PROCESSING', 'COMPLETED')`,
+      [orderId]
+    );
+    assert.equal(Number(reserved.total), 700);
   });
 
   it('Lists refunds for the authenticated shop', async () => {

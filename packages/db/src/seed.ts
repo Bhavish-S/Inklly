@@ -517,6 +517,8 @@ export function seedDatabase(db: DatabaseService, forceDemoSeed: boolean = false
     agentRepo.createDeveloperKey({
       id: 'key-dev-demo-1',
       organizationId: orgId,
+      shopId,
+      createdByUserId: 'user-owner-1',
       keyName: 'Campus Automation Key',
       keyPrefix: 'ink_test_',
       secretHash: 'hash_test_sec_campus_987',

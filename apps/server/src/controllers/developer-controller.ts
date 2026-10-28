@@ -6,6 +6,71 @@ import { encryptWebhookSecret } from '../services/webhook-secrets';
 
 const WEBHOOK_EVENT_TYPES = ['order.created', 'order.status_changed', 'payment.succeeded', 'print_job.jammed', 'spooler.offline'];
 
+const MERCHANT_ROUTE_DOCUMENTATION: Array<{ path: string; method: string; summary: string; access: string }> = [
+  { path: '/merchant/dashboard', method: 'get', summary: 'Get merchant dashboard data', access: 'Requires orders:view.' },
+  { path: '/merchant/orders', method: 'get', summary: 'List merchant orders', access: 'Requires orders:view.' },
+  { path: '/merchant/orders/{id}', method: 'get', summary: 'Get a merchant order', access: 'Requires orders:view.' },
+  { path: '/merchant/orders/{id}/files/{fileId}', method: 'get', summary: 'Download a private order file', access: 'Requires orders:view and order/file ownership.' },
+  { path: '/merchant/orders/{id}/status', method: 'patch', summary: 'Update merchant order status', access: 'Requires orders:process.' },
+  { path: '/merchant/orders/{id}/print', method: 'post', summary: 'Release a merchant order to printing', access: 'Requires live_print:manage.' },
+  { path: '/merchant/agents/pairing-code', method: 'post', summary: 'Create a desktop-agent pairing code', access: 'Restricted to MERCHANT_OWNER.' },
+  { path: '/merchant/agents/{id}', method: 'delete', summary: 'Revoke a registered desktop agent', access: 'Restricted to MERCHANT_OWNER.' },
+  { path: '/merchant/rates', method: 'get', summary: 'Get shop rate rules', access: 'Requires settings:view.' },
+  { path: '/merchant/rates', method: 'put', summary: 'Update a shop rate rule', access: 'Requires settings:manage.' },
+  { path: '/merchant/discounts/bulk', method: 'put', summary: 'Update the shop bulk discount', access: 'Requires settings:manage.' },
+  { path: '/merchant/printers', method: 'get', summary: 'List shop printers', access: 'Requires printers:view.' },
+  { path: '/merchant/printers', method: 'post', summary: 'Add a shop printer', access: 'Requires printers:manage.' },
+  { path: '/merchant/printers/{id}/default', method: 'put', summary: 'Set the default shop printer', access: 'Requires printers:manage.' },
+  { path: '/merchant/settings', method: 'get', summary: 'Get shop settings', access: 'Requires settings:view.' },
+  { path: '/merchant/settings', method: 'put', summary: 'Update shop settings', access: 'Restricted to MERCHANT_OWNER or SHOP_MANAGER.' },
+  { path: '/merchant/settings/razorpay', method: 'get', summary: 'Get Razorpay credential configuration status', access: 'Restricted to MERCHANT_OWNER.' },
+  { path: '/merchant/settings/razorpay', method: 'put', summary: 'Save Razorpay credentials', access: 'Restricted to MERCHANT_OWNER.' },
+  { path: '/merchant/settings/razorpay/test', method: 'post', summary: 'Test configured Razorpay credentials', access: 'Restricted to MERCHANT_OWNER.' },
+  { path: '/merchant/settings/razorpay', method: 'delete', summary: 'Remove Razorpay credentials', access: 'Restricted to MERCHANT_OWNER.' },
+  { path: '/merchant/staff', method: 'get', summary: 'List shop staff', access: 'Restricted to MERCHANT_OWNER or SHOP_MANAGER.' },
+  { path: '/merchant/staff', method: 'post', summary: 'Invite shop staff', access: 'Restricted to MERCHANT_OWNER.' },
+  { path: '/merchant/bot-templates', method: 'get', summary: 'List shop message templates', access: 'Requires bot:train.' },
+  { path: '/merchant/bot-templates', method: 'put', summary: 'Update a shop message template', access: 'Requires bot:train.' },
+  { path: '/merchant/credits/balance', method: 'get', summary: 'Get shop conversion-credit balance', access: 'Requires credits:view.' },
+  { path: '/merchant/credits/purchase', method: 'post', summary: 'Request a conversion-credit purchase', access: 'Requires credits:manage.' },
+  { path: '/merchant/payouts', method: 'get', summary: 'List shop payout requests', access: 'Requires finance:view.' },
+  { path: '/merchant/payouts', method: 'post', summary: 'Request a shop payout', access: 'Requires finance:manage.' },
+  { path: '/merchant/storage/categories', method: 'get', summary: 'List storage categories', access: 'Requires storage:view.' },
+  { path: '/merchant/storage/categories', method: 'post', summary: 'Create a storage category', access: 'Requires storage:manage.' },
+  { path: '/merchant/storage/categories/{id}', method: 'delete', summary: 'Delete a storage category', access: 'Requires storage:manage.' },
+  { path: '/merchant/storage/documents', method: 'get', summary: 'List stored documents', access: 'Requires storage:view.' },
+  { path: '/merchant/storage/documents/{id}/download', method: 'get', summary: 'Download a stored document', access: 'Requires storage:view and document ownership.' },
+  { path: '/merchant/storage/documents/{id}', method: 'delete', summary: 'Delete a stored document', access: 'Requires storage:manage.' },
+  { path: '/merchant/whatsapp/setup', method: 'get', summary: 'Get WhatsApp setup availability', access: 'Restricted to MERCHANT_OWNER or SHOP_MANAGER.' },
+  { path: '/merchant/whatsapp/setup', method: 'post', summary: 'Save WhatsApp setup', access: 'Restricted to MERCHANT_OWNER or SHOP_MANAGER; currently returns unavailable until Meta onboarding is configured.' },
+  { path: '/merchant/whatsapp/qr-pairing', method: 'post', summary: 'Start WhatsApp QR pairing', access: 'Restricted to MERCHANT_OWNER or SHOP_MANAGER; currently unavailable.' },
+  { path: '/merchant/whatsapp/qr-pairing/refresh', method: 'post', summary: 'Refresh WhatsApp QR pairing', access: 'Restricted to MERCHANT_OWNER or SHOP_MANAGER; currently unavailable.' },
+  { path: '/merchant/whatsapp/account/{id}', method: 'delete', summary: 'Remove a WhatsApp account', access: 'Restricted to MERCHANT_OWNER.' },
+  { path: '/merchant/whatsapp/events', method: 'get', summary: 'List WhatsApp setup events', access: 'Restricted to MERCHANT_OWNER or SHOP_MANAGER.' },
+];
+
+function buildMerchantOpenApiPaths(): Record<string, Record<string, unknown>> {
+  const paths: Record<string, Record<string, unknown>> = {};
+  for (const route of MERCHANT_ROUTE_DOCUMENTATION) {
+    const operation: Record<string, unknown> = {
+      summary: route.summary,
+      description: `Requires an authenticated tenant session, tenant isolation, and an active subscription. ${route.access}`,
+      security: [{ bearerAuth: [] }],
+      responses: { default: { description: 'Response status and body are defined by the route handler.' } },
+    };
+    const pathParameters = [...route.path.matchAll(/\{([^}]+)\}/g)].map(([, name]) => ({
+      name,
+      in: 'path',
+      required: true,
+      schema: { type: 'string' },
+    }));
+    if (pathParameters.length) operation.parameters = pathParameters;
+    paths[route.path] ??= {};
+    paths[route.path][route.method] = operation;
+  }
+  return paths;
+}
+
 function normalizeWebhookUrl(value: unknown): string | null {
   if (typeof value !== 'string' || value.length > 2048) return null;
   let url: URL;
@@ -42,6 +107,16 @@ export class DeveloperController {
         version: '1.0.0',
         description:
           'Authoritative REST API specification for Inklly Print OS, customer ordering, edge agent dispatch, and automated ledgers.',
+      },
+      components: {
+        securitySchemes: {
+          bearerAuth: {
+            type: 'http',
+            scheme: 'bearer',
+            bearerFormat: 'JWT',
+            description: 'Signed Inklly user session token. Merchant API calls are tenant-scoped to the session membership.',
+          },
+        },
       },
       servers,
       paths: {
@@ -91,12 +166,7 @@ export class DeveloperController {
             responses: { 200: { description: 'Array of print tickets' } },
           },
         },
-        '/merchant/orders': {
-          get: {
-            summary: 'Merchant orders queue filtered by status',
-            responses: { 200: { description: 'Filtered orders list' } },
-          },
-        },
+        ...buildMerchantOpenApiPaths(),
       },
     });
   };
@@ -111,6 +181,8 @@ export class DeveloperController {
   public createKey = (req: Request, res: Response) => {
     const orgId = this.organizationId(req, res);
     if (!orgId) return;
+    const shopId = req.user?.shopId;
+    if (!shopId) return res.status(403).json({ error: 'An active shop membership is required to create an API key.' });
     const { keyName, environment, scopes } = req.body;
 
     if (typeof keyName !== 'string' || !keyName.trim() || keyName.trim().length > 80) {
@@ -136,6 +208,8 @@ export class DeveloperController {
     const keyRecord: DeveloperKeyRecord = {
       id: `key-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
       organizationId: orgId,
+      shopId,
+      createdByUserId: req.user!.userId,
       keyName: keyName.trim(),
       keyPrefix: prefix,
       secretHash,

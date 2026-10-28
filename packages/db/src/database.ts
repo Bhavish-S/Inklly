@@ -11,6 +11,7 @@ export class DatabaseService {
   private signalArray: Int32Array | null = null;
   private dataBytes: Uint8Array | null = null;
   private isPostgres: boolean = false;
+  private transactionDepth = 0;
   private static instance: DatabaseService | null = null;
 
   constructor(dbTarget: string = ':memory:') {
@@ -33,6 +34,7 @@ export class DatabaseService {
       this.ensureSqliteAccountInvitationMigration();
       this.ensureSqliteLegacyInvitationRename();
       this.ensureSqlitePortalOrderIdempotencyMigration();
+      this.ensureSqliteDeveloperKeyScopeMigration();
     }
   }
 
@@ -134,6 +136,38 @@ export class DatabaseService {
     this.ensurePostgresAccountInvitationMigration();
     this.ensurePostgresLegacyInvitationRename();
     this.ensurePostgresPortalOrderIdempotencyMigration();
+    this.ensurePostgresDeveloperKeyScopeMigration();
+  }
+
+  private ensureSqliteDeveloperKeyScopeMigration(): void {
+    if (this.db!.prepare(`SELECT version FROM inklly_schema_migrations WHERE version = 8`).get()) return;
+    this.db!.exec('BEGIN');
+    try {
+      const columns = this.db!.prepare(`PRAGMA table_info(developer_keys)`).all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === 'shop_id')) this.db!.exec(`ALTER TABLE developer_keys ADD COLUMN shop_id TEXT`);
+      if (!columns.some((column) => column.name === 'created_by_user_id')) this.db!.exec(`ALTER TABLE developer_keys ADD COLUMN created_by_user_id TEXT`);
+      this.db!.exec(`CREATE INDEX IF NOT EXISTS idx_developer_keys_shop ON developer_keys(shop_id, is_active, expires_at)`);
+      this.db!.prepare(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (8, ?)`).run(new Date().toISOString());
+      this.db!.exec('COMMIT');
+    } catch (error) {
+      try { this.db!.exec('ROLLBACK'); } catch { /* preserve original migration error */ }
+      throw error;
+    }
+  }
+
+  private ensurePostgresDeveloperKeyScopeMigration(): void {
+    if (this.queryPostgres(`SELECT version FROM inklly_schema_migrations WHERE version = ?`, [8]).length) return;
+    this.queryPostgres('BEGIN');
+    try {
+      this.queryPostgres(`ALTER TABLE developer_keys ADD COLUMN IF NOT EXISTS shop_id TEXT`);
+      this.queryPostgres(`ALTER TABLE developer_keys ADD COLUMN IF NOT EXISTS created_by_user_id TEXT`);
+      this.queryPostgres(`CREATE INDEX IF NOT EXISTS idx_developer_keys_shop ON developer_keys(shop_id, is_active, expires_at)`);
+      this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [8, new Date().toISOString()]);
+      this.queryPostgres('COMMIT');
+    } catch (error) {
+      try { this.queryPostgres('ROLLBACK'); } catch { /* preserve original migration error */ }
+      throw new Error(`[Inklly DB] PostgreSQL developer key migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
   }
 
   private ensureSqlitePortalOrderIdempotencyMigration(): void {
@@ -415,13 +449,22 @@ export class DatabaseService {
   }
 
   public transaction<T>(callback: () => T): T {
-    this.execute('BEGIN;');
+    const depth = this.transactionDepth;
+    const savepoint = `inklly_nested_${depth}`;
+    this.execute(depth === 0 ? 'BEGIN;' : `SAVEPOINT ${savepoint};`);
+    this.transactionDepth += 1;
     try {
       const result = callback();
-      this.execute('COMMIT;');
+      this.execute(depth === 0 ? 'COMMIT;' : `RELEASE SAVEPOINT ${savepoint};`);
+      this.transactionDepth = depth;
       return result;
     } catch (err) {
-      this.execute('ROLLBACK;');
+      this.transactionDepth = depth;
+      if (depth === 0) this.execute('ROLLBACK;');
+      else {
+        this.execute(`ROLLBACK TO SAVEPOINT ${savepoint};`);
+        this.execute(`RELEASE SAVEPOINT ${savepoint};`);
+      }
       throw err;
     }
   }

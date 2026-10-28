@@ -57,11 +57,16 @@ export class LedgerRepository {
     return rows.map(this.mapRow);
   }
 
-  public calculateBalancePaise(shopId: string, domain: MoneyDomain): number {
-    const row = this.db.queryOne<any>(
-      `SELECT SUM(amount_paise) as balance FROM ledger_entries WHERE shop_id = ? AND domain = ?`,
-      [shopId, domain]
-    );
+  public calculateBalancePaise(shopId: string, domain: MoneyDomain, currency?: string): number {
+    const row = currency
+      ? this.db.queryOne<any>(
+          `SELECT SUM(amount_paise) as balance FROM ledger_entries WHERE shop_id = ? AND domain = ? AND currency = ?`,
+          [shopId, domain, currency]
+        )
+      : this.db.queryOne<any>(
+          `SELECT SUM(amount_paise) as balance FROM ledger_entries WHERE shop_id = ? AND domain = ?`,
+          [shopId, domain]
+        );
     return row?.balance || 0;
   }
 

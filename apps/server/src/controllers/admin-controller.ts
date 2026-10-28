@@ -60,6 +60,10 @@ export const SAAS_PLANS: SubscriptionPlan[] = [
   },
 ];
 
+const ALLOWED_PLAN_STATUSES = new Set([
+  'TRIAL', 'ACTIVE', 'GRACE', 'PAST_DUE', 'CANCELLED', 'SUSPENDED', 'PENDING_PAYMENT',
+]);
+
 export class AdminController {
   constructor(
     private db: DatabaseService,
@@ -309,20 +313,53 @@ export class AdminController {
   };
 
   public updateMerchantStatus = (req: Request, res: Response) => {
-    const { id } = req.params;
-    const { planStatus, planTier } = req.body;
+    const id = String(req.params.id);
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const hasPlanStatus = Object.prototype.hasOwnProperty.call(body, 'planStatus');
+    const hasPlanTier = Object.prototype.hasOwnProperty.call(body, 'planTier');
+    const planStatus = typeof body.planStatus === 'string' ? body.planStatus.trim().toUpperCase() : undefined;
+    const planTier = typeof body.planTier === 'string' ? body.planTier.trim().toUpperCase() : undefined;
+
+    if ((!hasPlanStatus && !hasPlanTier) ||
+        (hasPlanStatus && (!planStatus || !ALLOWED_PLAN_STATUSES.has(planStatus))) ||
+        (hasPlanTier && (!planTier || !SAAS_PLANS.some((plan) => plan.tier === planTier)))) {
+      return res.status(400).json({ error: 'Provide at least one valid planStatus or planTier.' });
+    }
+    const actorId = req.user?.userId;
+    if (!actorId) return res.status(401).json({ error: 'Unauthenticated' });
 
     const now = new Date().toISOString();
-    this.db.execute(
-      `UPDATE organizations SET
-        plan_status = COALESCE(?, plan_status),
-        plan_tier = COALESCE(?, plan_tier),
-        updated_at = ?
-       WHERE id = ?`,
-      [planStatus || null, planTier || null, now, id]
-    );
+    const updated = this.db.transaction(() => {
+      const current = this.db.queryOne<any>(`SELECT id, plan_status, plan_tier FROM organizations WHERE id = ?`, [id]);
+      if (!current) return null;
 
-    res.json({ success: true, message: `Organization ${id} updated` });
+      const nextPlanStatus = planStatus ?? current.plan_status;
+      const nextPlanTier = planTier ?? current.plan_tier;
+      this.db.execute(
+        `UPDATE organizations SET plan_status = ?, plan_tier = ?, updated_at = ? WHERE id = ?`,
+        [nextPlanStatus, nextPlanTier, now, id]
+      );
+      this.userRepo.logAuditEvent({
+        id: crypto.randomUUID(),
+        actorUserId: actorId,
+        actorRole: req.user?.role,
+        organizationId: id,
+        action: 'PLATFORM_MERCHANT_STATUS_UPDATED',
+        targetType: 'ORGANIZATION',
+        targetId: id,
+        outcome: 'SUCCESS',
+        ipAddress: req.ip,
+        details: {
+          previous: { planStatus: current.plan_status, planTier: current.plan_tier },
+          next: { planStatus: nextPlanStatus, planTier: nextPlanTier },
+        },
+        createdAt: now,
+      });
+      return { planStatus: nextPlanStatus, planTier: nextPlanTier };
+    });
+
+    if (!updated) return res.status(404).json({ error: 'Organization not found.' });
+    return res.json({ success: true, organization: { id, ...updated } });
   };
 
   public getPlans = (req: Request, res: Response) => {

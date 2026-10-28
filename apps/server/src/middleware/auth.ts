@@ -2,6 +2,8 @@ import { Request, Response, NextFunction } from 'express';
 import { UserRole } from '@inklly/shared';
 import { DatabaseService } from '@inklly/db';
 import { hashSessionToken, verifySessionToken } from './session-token';
+import * as crypto from 'node:crypto';
+import { AgentRepository } from '@inklly/db';
 
 export interface AuthenticatedUser {
   sessionId: string;
@@ -36,6 +38,55 @@ export function authenticate(db: DatabaseService) {
   }
 
   const token = authHeader.substring(7);
+  if (token.startsWith('ink_test_') || token.startsWith('ink_live_')) {
+    if (process.env.ENABLE_EXTERNAL_API_ACCESS !== 'true') {
+      res.status(403).json({ code: 'EXTERNAL_API_ACCESS_DISABLED', error: 'External API access is disabled.' });
+      return;
+    }
+    const requestedEnvironment = token.startsWith('ink_live_') ? 'LIVE' : 'TEST';
+    const runtimeEnvironment = process.env.NODE_ENV === 'production' ? 'LIVE' : 'TEST';
+    if (requestedEnvironment !== runtimeEnvironment || token.length !== 41) {
+      res.status(401).json({ error: 'Invalid API key or environment.' });
+      return;
+    }
+    const hash = crypto.createHash('sha256').update(token).digest('hex');
+    const key = new AgentRepository(db).authenticateDeveloperKey(hash, runtimeEnvironment);
+    if (!key) {
+      res.status(401).json({ error: 'Invalid, expired, or revoked API key.' });
+      return;
+    }
+    const membership = db.queryOne<any>(
+      `SELECT m.role, m.permissions, s.organization_id, s.is_active AS shop_active, u.email, u.is_active AS user_active
+       FROM memberships m JOIN shops s ON s.id = m.shop_id JOIN users u ON u.id = m.user_id
+       WHERE m.user_id = ? AND m.organization_id = ? AND m.shop_id = ?`,
+      [key.createdByUserId, key.organizationId, key.shopId]
+    );
+    if (!membership || !membership.user_active || !membership.shop_active || membership.organization_id !== key.organizationId) {
+      res.status(401).json({ error: 'API key owner or shop membership is no longer active.' });
+      return;
+    }
+    const scopePermissions: Record<string, string[]> = {
+      'orders:read': ['orders:view'],
+      'orders:write': ['orders:process'],
+      'printers:read': ['printers:view'],
+      'printers:spool': ['live_print:manage'],
+      'ledger:read': ['finance:view'],
+    };
+    const permissions = [...new Set(key.scopes.flatMap((scope) => scopePermissions[scope] || []))];
+    req.user = {
+      sessionId: `api-key:${key.id}`,
+      userId: key.createdByUserId,
+      email: membership.email,
+      // Never inherit owner/manager bypasses from the key creator. API keys are
+      // a separate principal whose authority is the intersection of key scopes.
+      role: 'SHOP_STAFF',
+      shopId: key.shopId,
+      organizationId: key.organizationId,
+      permissions,
+    };
+    next();
+    return;
+  }
   const session = verifySessionToken(token);
   if (session === 'expired') {
     res.status(401).json({ error: 'Token has expired' });

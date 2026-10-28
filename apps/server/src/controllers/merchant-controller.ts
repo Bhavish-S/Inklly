@@ -80,35 +80,34 @@ export class MerchantController {
 
   public getDashboard = (req: Request, res: Response) => {
     const shopId = this.getShopId(req);
-    const orders = this.orderRepo.getOrdersByShop(shopId);
+    const { statusCounts, recentOrders } = this.orderRepo.getDashboardSummaryByShop(shopId);
     const printers = this.printerRepo.getPrintersByShop(shopId);
-
-    const pendingReview = orders.filter((o) => o.status === 'AWAITING_REVIEW').length;
-    const readyForPrint = orders.filter((o) => o.status === 'READY_FOR_PRINT').length;
-    const inProgress = orders.filter((o) => o.status === 'IN_PROGRESS').length;
-    const readyForPickup = orders.filter((o) => o.status === 'READY_FOR_COLLECTION').length;
-    const completed = orders.filter((o) => o.status === 'COLLECTED').length;
+    const countStatuses = (...statuses: string[]) => statuses.reduce((sum, status) => sum + (statusCounts[status] || 0), 0);
 
     // Revenue reflects captured/collected financial entries only. Order status
     // alone is not evidence that a cash or online payment was received.
-    const totalRevenuePaise = this.ledgerRepo.calculateBalancePaise(shopId, 'CUSTOMER_PRINT_PAYMENT');
+    const totalRevenuePaise = this.ledgerRepo.calculateBalancePaise(shopId, 'CUSTOMER_PRINT_PAYMENT', 'INR');
 
     const onlinePrinters = printers.filter((p) => getPrinterHealthStatus(p.isOnline, p.lastHeartbeat) === 'ONLINE').length;
 
     res.json({
       shopId,
       metrics: {
-        totalOrders: orders.length,
-        pendingReview,
-        readyForPrint,
-        inProgress,
-        readyForPickup,
-        completed,
+        totalOrders: Object.values(statusCounts).reduce((sum, count) => sum + count, 0),
+        pendingReview: countStatuses('AWAITING_REVIEW'),
+        readyForPrint: countStatuses('READY_FOR_PRINT', 'PENDING_AGENT_SPOOL'),
+        inProgress: countStatuses('IN_PROGRESS'),
+        readyForPickup: countStatuses('READY_FOR_COLLECTION'),
+        completed: countStatuses('COLLECTED'),
+        awaitingPayment: countStatuses('AWAITING_PAYMENT'),
+        failed: countStatuses('PRINT_FAILED', 'PRINT_UNCONFIRMED', 'FAILED_REQUIRES_SUPPORT'),
+        cancelled: countStatuses('CANCELLED'),
         totalRevenuePaise,
         activePrinters: onlinePrinters,
         totalPrinters: printers.length,
+        statusCounts,
       },
-      recentOrders: orders.slice(0, 5).map((order) => this.presentOrder(order)),
+      recentOrders: recentOrders.map((order) => this.presentOrder(order)),
     });
   };
 
@@ -827,41 +826,10 @@ export class MerchantController {
   };
 
   public removeWhatsAppAccount = (req: Request, res: Response) => {
-    const shopId = this.getShopId(req);
-    const accountId = String(req.params.id);
-
-    const account = this.db.queryOne<any>(
-      `SELECT id, status FROM whatsapp_accounts WHERE id = ? AND shop_id = ?`,
-      [accountId, shopId]
-    );
-    if (!account) return res.status(404).json({ error: 'WhatsApp account not found.' });
-
-    this.db.execute(`DELETE FROM whatsapp_accounts WHERE id = ?`, [accountId]);
-
-    this.db.execute(
-      `INSERT INTO whatsapp_events (id, shop_id, event_type, message, created_at)
-       VALUES (?, ?, 'ACCOUNT_REMOVED', 'WhatsApp account removed. Connection terminated.', ?)`,
-      [`wa-evt-${crypto.randomUUID()}`, shopId, new Date().toISOString()]
-    );
-
-    res.json({ success: true, message: 'WhatsApp account removed.' });
+    res.status(503).json({ error: 'WhatsApp account management is unavailable because Meta onboarding and account persistence are not configured. No account was removed.' });
   };
 
   public getWhatsAppEvents = (req: Request, res: Response) => {
-    const shopId = this.getShopId(req);
-    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50));
-    const offset = Math.min(10000, Math.max(0, Number(req.query.offset) || 0));
-
-    const rows = this.db.query<any>(
-      `SELECT * FROM whatsapp_events WHERE shop_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-      [shopId, limit, offset]
-    );
-
-    res.json(rows.map((e) => ({
-      id: e.id,
-      eventType: e.event_type,
-      message: e.message,
-      createdAt: e.created_at,
-    })));
+    res.status(503).json({ error: 'WhatsApp event history is unavailable because Meta onboarding and event persistence are not configured.' });
   };
 }
