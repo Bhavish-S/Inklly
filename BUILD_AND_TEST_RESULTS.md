@@ -12,7 +12,7 @@ The test suite covers deterministic Paise pricing, tenant boundaries, signed/rev
 
 ## Deployment and integration limits
 
-- These results are from the local source tree. They do not prove the hosted Vercel or Render services are running this revision.
+- These results are from the local source tree. After pushing `749ac97`, Vercel still serves `assets/index-BeUK2xKp.js`, while this build produced `assets/index-CPgLLU-_.js`; the frontend deployment is not yet current. Render `/health` returns HTTP 200 but omits a source revision, so its deployed commit remains unverified.
 - The latest Render log connected to Supabase PostgreSQL and then exited because `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and/or the configured private Storage bucket are missing or invalid.
 - Supabase Storage tests mock the HTTP API. Live bucket permissions and file retention have not been verified against the production project.
 - Razorpay tests use test doubles; a live sandbox checkout/webhook round trip has not been verified here.

@@ -12,7 +12,7 @@
 - Merchant vault categories now persist, but there is no vault document-upload route or connected UI workflow. The new storage schema has local API coverage; PostgreSQL deployment is unverified.
 - Web build emits a bundle-size warning (main JavaScript bundle is about 1.22 MB before gzip).
 - Latest supplied Render log: PostgreSQL connects, then startup exits while validating private Supabase Storage configuration. Render requires `STORAGE_DRIVER=supabase`, the Supabase HTTPS project URL, service-role key, and an existing private bucket. The logs use an older generic error than the current source, so the deployed revision is also unverified.
-- Current Vercel page availability and current Render source revision have not been rechecked in this work cycle. A prior check saw Vercel serving a different asset from the local production build, while Render health did not expose a revision. Verify both after deploying.
+- After pushing `749ac97`, `/p/campus1` still serves Vercel asset `index-BeUK2xKp.js`; the local build generated `index-CPgLLU-_.js`. Render `/health` returns HTTP 200 but does not expose a revision. Neither deployment is verified on the current source.
 - Public upload has a per-process concurrency cap before JSON parsing. Per-IP/distributed rate limiting and production-like load validation remain open.
 - Public enquiries are now durably stored and shown in the authenticated platform console. No email/WhatsApp notification is configured, and an approved retention period for enquiry contact details/message text is still required. Rate limiting is process-local; a shared edge/WAF limit is needed before horizontal scaling.
 
