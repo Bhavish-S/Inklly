@@ -66,6 +66,43 @@ const detectPdfPageCount = async (file: File): Promise<number> => {
   return 1;
 };
 
+const loadLocalImage = (file: File): Promise<{ image: HTMLImageElement; objectUrl: string }> => new Promise((resolve, reject) => {
+  const objectUrl = URL.createObjectURL(file);
+  const image = new Image();
+  image.onload = () => resolve({ image, objectUrl });
+  image.onerror = () => {
+    URL.revokeObjectURL(objectUrl);
+    reject(new Error(`Could not read image ${file.name}. Choose a JPG or PNG image.`));
+  };
+  image.src = objectUrl;
+});
+
+const canvasToPngFile = (canvas: HTMLCanvasElement, fileName: string): Promise<File> => new Promise((resolve, reject) => {
+  canvas.toBlob((blob) => {
+    if (!blob) return reject(new Error('The print sheet could not be generated. Please try again.'));
+    resolve(new File([blob], fileName, { type: 'image/png', lastModified: Date.now() }));
+  }, 'image/png');
+});
+
+const drawContainedImage = (context: CanvasRenderingContext2D, image: HTMLImageElement, x: number, y: number, width: number, height: number) => {
+  const scale = Math.min(width / image.naturalWidth, height / image.naturalHeight);
+  const drawWidth = image.naturalWidth * scale;
+  const drawHeight = image.naturalHeight * scale;
+  context.drawImage(image, x + (width - drawWidth) / 2, y + (height - drawHeight) / 2, drawWidth, drawHeight);
+};
+
+const drawCoveredImage = (context: CanvasRenderingContext2D, image: HTMLImageElement, x: number, y: number, width: number, height: number) => {
+  const scale = Math.max(width / image.naturalWidth, height / image.naturalHeight);
+  const drawWidth = image.naturalWidth * scale;
+  const drawHeight = image.naturalHeight * scale;
+  context.save();
+  context.beginPath();
+  context.rect(x, y, width, height);
+  context.clip();
+  context.drawImage(image, x + (width - drawWidth) / 2, y + (height - drawHeight) / 2, drawWidth, drawHeight);
+  context.restore();
+};
+
 interface DocumentItem {
   id: string;
   file?: File;
@@ -85,12 +122,10 @@ interface DocumentItem {
     colorMode: 'bw' | 'color' | 'mixed';
     colorPages?: string;
     duplexMode: 'simplex' | 'duplex_auto';
-    paperSize: 'A4' | 'A3' | 'Legal';
-    paperType?: 'standard_75' | 'bond_85' | 'executive_100' | 'glossy_180' | 'card_250';
+    paperSize: 'A4' | 'A3' | 'PHOTO_4X6' | 'PHOTO_5X7';
     orientation: 'auto' | 'portrait' | 'landscape';
     copies: number;
     pageRange: string;
-    finishing?: 'none' | 'staple' | 'spiral' | 'thermal' | 'lamination';
   };
 }
 
@@ -119,6 +154,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
       color_duplex: 9.0,
     },
     onlinePaymentAvailable: false,
+    rateRules: [],
   });
 
   useEffect(() => {
@@ -138,6 +174,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
               color_duplex: 9.0,
             },
             onlinePaymentAvailable: Boolean(data.onlinePaymentAvailable),
+            rateRules: data.rates?.ratesList || [],
           });
         }
       })
@@ -148,6 +185,10 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
 
   // State - Initialized empty for real customer uploads
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
+  const [serverQuote, setServerQuote] = useState<any>(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const quoteRequestSequence = useRef(0);
 
   const [activeDocIndex, setActiveDocIndex] = useState<number>(0);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
@@ -159,7 +200,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
   const [customerName, setCustomerName] = useState<string>('');
   const [customerPhone, setCustomerPhone] = useState<string>('');
   const [paymentMethod, setPaymentMethod] = useState<'CASH_ON_COLLECTION' | 'ONLINE_RAZORPAY'>('CASH_ON_COLLECTION');
-  const [pendingOnlineOrder, setPendingOnlineOrder] = useState<{ orderId: string; orderNumber: string } | null>(null);
+  const [pendingOnlineOrder, setPendingOnlineOrder] = useState<{ orderId: string; orderNumber: string; totalAmountPaise: number } | null>(null);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [reviewModalOpen, setReviewModalOpen] = useState<boolean>(false);
   const [copiedToken, setCopiedToken] = useState<boolean>(false);
@@ -189,8 +230,8 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
   const [intakeMode, setIntakeMode] = useState<'documents' | 'id_card' | 'passport_photo' | 'whatsapp_lookup'>('documents');
 
   // ID Card 2-in-1 Mode State
-  const [idCardFront, setIdCardFront] = useState<{ url: string; name: string } | null>(null);
-  const [idCardBack, setIdCardBack] = useState<{ url: string; name: string } | null>(null);
+  const [idCardFront, setIdCardFront] = useState<{ url: string; name: string; file: File } | null>(null);
+  const [idCardBack, setIdCardBack] = useState<{ url: string; name: string; file: File } | null>(null);
   const [idCardLayout, setIdCardLayout] = useState<'stacked' | 'side_by_side'>('stacked');
   const [idCardColor, setIdCardColor] = useState<'bw' | 'color'>('bw');
   const [idCardToast, setIdCardToast] = useState<string | null>(null);
@@ -198,121 +239,90 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
   const idBackInputRef = useRef<HTMLInputElement>(null);
 
   // Passport Photo Sheet Generator State
-  const [passportPhoto, setPassportPhoto] = useState<{ url: string; name: string } | null>(null);
+  const [passportPhoto, setPassportPhoto] = useState<{ url: string; name: string; file: File } | null>(null);
   const [passportGrid, setPassportGrid] = useState<'8_pack_4x6' | '16_pack_a4'>('8_pack_4x6');
   const [passportBg, setPassportBg] = useState<'original' | 'white' | 'blue' | 'gray'>('white');
   const [passportGuides, setPassportGuides] = useState<boolean>(true);
   const [passportToast, setPassportToast] = useState<string | null>(null);
   const passportInputRef = useRef<HTMLInputElement>(null);
 
-  // WhatsApp Order Retrieval State
-  const [lookupPhoneOrToken, setLookupPhoneOrToken] = useState<string>('');
-  const [lookupLoading, setLookupLoading] = useState<boolean>(false);
-  const [lookupFeedback, setLookupFeedback] = useState<{ text: string; isError: boolean } | null>(null);
-
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const activeDoc = documents[activeDocIndex] || documents[0];
 
-  // Upload handler with real server intake, validation and error recovery
-  const handleFileSelect = (files: FileList | null) => {
-    if (!files || files.length === 0) return;
+  // Upload every source or generated sheet through the same private server path.
+  const handleFileSelect = async (
+    files: FileList | null,
+    optionOverrides?: Partial<DocumentItem['options']>,
+  ): Promise<boolean> => {
+    if (!files || files.length === 0) return false;
 
     setUploadError(null);
     const fileList = Array.from(files);
-
-    // Validate size limit (max 25MB per file)
-    const oversized = fileList.find((f) => f.size > 25 * 1024 * 1024);
+    const oversized = fileList.find((file) => file.size > 25 * 1024 * 1024);
     if (oversized) {
       setUploadError(`File "${oversized.name}" exceeds the 25 MB limit. Please select a smaller file.`);
-      return;
+      return false;
     }
 
     setUploadProgress(25);
-
-    Promise.all(
-      fileList.map((f, i) => {
-        return new Promise<DocumentItem>((resolve, reject) => {
+    try {
+      const newDocs = await Promise.all(fileList.map(async (file, index): Promise<DocumentItem> => {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
-          reader.onerror = () => {
-            reject(new Error(`Failed to read file ${f.name}`));
-          };
-          reader.onload = async () => {
-            const base64 = (reader.result as string) || '';
-            const detectedPages = await detectPdfPageCount(f);
-            const localBlobUrl = URL.createObjectURL(f);
-            let storageKey = '';
-            let serverFileUrl = '';
-            let serverPageCount = detectedPages;
-
-            try {
-              const uploadRes = await api.uploadDocument({
-                fileName: f.name,
-                fileData: base64,
-                mimeType: f.type || 'application/pdf',
-                shopId: shop.id || 'shop-campus-1',
-                pageCount: detectedPages,
-              });
-              if (Number.isInteger(uploadRes?.pageCount) && uploadRes.pageCount > 0) serverPageCount = uploadRes.pageCount;
-              if (uploadRes?.storageKey) {
-                storageKey = uploadRes.storageKey;
-              }
-              if (uploadRes?.fileUrl) {
-                serverFileUrl = uploadRes.fileUrl;
-              }
-            } catch (err) {
-              URL.revokeObjectURL(localBlobUrl);
-              reject(new Error(`Could not securely upload "${f.name}". Check your connection and try again.`));
-              return;
-            }
-            if (!storageKey) {
-              URL.revokeObjectURL(localBlobUrl);
-              reject(new Error(`The server did not confirm storage for "${f.name}". Please upload it again.`));
-              return;
-            }
-
-            resolve({
-              id: `doc-${Date.now()}-${i}`,
-              file: f,
-              fileName: f.name,
-              fileSizeText: `${(f.size / (1024 * 1024)).toFixed(1)} MB`,
-              pageCount: serverPageCount,
-              previewUrl: localBlobUrl,
-              storageKey,
-              fileUrl: localBlobUrl,
-              rotation: 0,
-              filter: 'natural',
-              brightness: 100,
-              contrast: 100,
-              cropBox: { x: 5, y: 5, width: 90, height: 90 },
-              options: {
-                colorMode: 'bw',
-                duplexMode: 'simplex',
-                paperSize: 'A4',
-                orientation: 'portrait',
-                copies: 1,
-                pageRange: 'All',
-              },
-            });
-          };
-          reader.readAsDataURL(f);
+          reader.onerror = () => reject(new Error(`Failed to read file ${file.name}`));
+          reader.onload = () => resolve(String(reader.result || ''));
+          reader.readAsDataURL(file);
         });
-      })
-    )
-      .then((newDocs) => {
-        setUploadProgress(100);
-        setTimeout(() => {
-          setDocuments((current) => [...current, ...newDocs]);
-          setActiveDocIndex(documents.length);
-          setUploadProgress(null);
-        }, 300);
-      })
-      .catch((err: any) => {
-        console.error('File read error:', err);
-        setUploadProgress(null);
-        setUploadError(err.message || 'Failed to upload document. Please try again.');
-      });
+        const detectedPages = await detectPdfPageCount(file);
+        const upload = await api.uploadDocument({
+          fileName: file.name,
+          fileData: dataUrl,
+          mimeType: file.type || 'application/octet-stream',
+          shopId: shop.id || 'shop-campus-1',
+          pageCount: detectedPages,
+        });
+        if (typeof upload?.storageKey !== 'string' || !upload.storageKey) {
+          throw new Error(`The server did not confirm private storage for "${file.name}".`);
+        }
+        const localBlobUrl = URL.createObjectURL(file);
+        return {
+          id: `doc-${Date.now()}-${index}`,
+          file,
+          fileName: file.name,
+          fileSizeText: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
+          pageCount: Number.isInteger(upload.pageCount) && upload.pageCount > 0 ? upload.pageCount : detectedPages,
+          previewUrl: localBlobUrl,
+          storageKey: upload.storageKey,
+          fileUrl: localBlobUrl,
+          rotation: 0,
+          filter: 'natural',
+          brightness: 100,
+          contrast: 100,
+          cropBox: { x: 5, y: 5, width: 90, height: 90 },
+          options: {
+            colorMode: 'bw',
+            duplexMode: 'simplex',
+            paperSize: 'A4',
+            orientation: 'portrait',
+            copies: 1,
+            pageRange: 'All',
+            ...optionOverrides,
+          },
+        };
+      }));
+      setUploadProgress(100);
+      const firstNewIndex = documents.length;
+      setDocuments((current) => [...current, ...newDocs]);
+      setActiveDocIndex(firstNewIndex);
+      setUploadProgress(null);
+      return true;
+    } catch (error) {
+      setUploadProgress(null);
+      setUploadError(error instanceof Error ? error.message : 'Could not securely upload the document. Please try again.');
+      return false;
+    }
   };
 
   const removeDocument = (index: number, e: React.MouseEvent) => {
@@ -379,182 +389,200 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
     );
   };
 
-  // Price Calculation in Rupees & integer minor units with exact Mixed Color support
-  const calculateTotal = () => {
-    let total = 0;
-    documents.forEach((doc) => {
-      const selectedPages = parsePageNumbers(doc.options.pageRange || 'All', doc.pageCount);
-      const effectivePages = selectedPages.length > 0 ? selectedPages.length : Math.max(1, doc.pageCount);
+  const totalPagesCount = documents.reduce((acc, d) => acc + parsePageRangeCount(d.options.pageRange || 'All', d.pageCount) * (d.options.copies || 1), 0) * globalCopies;
+  const grandTotalPaise = Number.isSafeInteger(serverQuote?.totalPaise) ? serverQuote.totalPaise : null;
+  const formatPaise = (paise: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(paise / 100);
+  const availablePaperSizes = (['A4', 'A3', 'PHOTO_4X6', 'PHOTO_5X7'] as const).filter((paperSize) => {
+    const requiredModes = activeDoc?.options.colorMode === 'mixed'
+      ? ['bw', 'color']
+      : [activeDoc?.options.colorMode || 'bw'];
+    return requiredModes.every((colorMode) => (shop.rateRules || []).some((rule: any) =>
+      rule.paperSize === paperSize && rule.colorMode === colorMode &&
+      (activeDoc?.options.duplexMode === 'simplex' ? rule.duplexMode === 'simplex' : rule.duplexMode !== 'simplex')
+    ));
+  });
+  useEffect(() => {
+    if (!activeDoc || !availablePaperSizes.length || availablePaperSizes.includes(activeDoc.options.paperSize as any)) return;
+    updateActiveOptions({ paperSize: availablePaperSizes[0] });
+  }, [activeDoc?.id, activeDoc?.options.colorMode, activeDoc?.options.duplexMode, availablePaperSizes.join(',')]);
 
-      let colorPagesCount = 0;
-      let bwPagesCount = 0;
-
-      if (doc.options.colorMode === 'color') {
-        colorPagesCount = effectivePages;
-        bwPagesCount = 0;
-      } else if (doc.options.colorMode === 'mixed') {
-        const customColorPages = parsePageNumbers(doc.options.colorPages || '', doc.pageCount);
-        // Intersect with selectedPages so we only charge color for pages that are actually being printed
-        const actualColorList = customColorPages.filter((p) => selectedPages.includes(p));
-        colorPagesCount = actualColorList.length;
-        bwPagesCount = Math.max(0, effectivePages - colorPagesCount);
-      } else {
-        colorPagesCount = 0;
-        bwPagesCount = effectivePages;
-      }
-
-      const bwRate = doc.options.duplexMode === 'simplex'
-        ? (shop.rates?.bw_simplex || 2.0)
-        : (shop.rates?.bw_duplex || 1.5);
-      const colorRate = doc.options.duplexMode === 'simplex'
-        ? (shop.rates?.color_simplex || 10.0)
-        : (shop.rates?.color_duplex || 8.0);
-
-      let docCost = (colorPagesCount * colorRate) + (bwPagesCount * bwRate);
-
-      // Paper type surcharges
-      let paperSurcharge = 0;
-      if (doc.options.paperType === 'bond_85') paperSurcharge = 0.5;
-      else if (doc.options.paperType === 'executive_100') paperSurcharge = 1.5;
-      else if (doc.options.paperType === 'glossy_180') paperSurcharge = 12.0;
-      else if (doc.options.paperType === 'card_250') paperSurcharge = 8.0;
-
-      docCost += (paperSurcharge * effectivePages);
-
-      if (doc.options.paperSize === 'A3') docCost *= 2.0;
-
-      // Finishing add-ons
-      let finishingCost = 0;
-      if (doc.options.finishing === 'staple') finishingCost = 2.0;
-      else if (doc.options.finishing === 'spiral') finishingCost = 35.0;
-      else if (doc.options.finishing === 'thermal') finishingCost = 60.0;
-      else if (doc.options.finishing === 'lamination') finishingCost = 25.0;
-
-      total += (docCost * (doc.options.copies || 1)) + finishingCost;
-    });
-    return total * globalCopies;
-  };
-
-  // Add synthesized ID Card 2-in-1 Document to Order
-  const handleAddIdCardToOrder = () => {
-    if (!idCardFront) {
-      setIdCardToast('Please upload at least the Front side of the ID card.');
-      setTimeout(() => setIdCardToast(null), 3000);
+  useEffect(() => {
+    const requestId = ++quoteRequestSequence.current;
+    if (!documents.length) {
+      setServerQuote(null);
+      setQuoteError(null);
+      setQuoteLoading(false);
       return;
     }
+    setServerQuote(null);
+    setQuoteLoading(true);
+    setQuoteError(null);
+    const quoteRequest = {
+      shopId: shop.id || 'shop-campus-1',
+      files: documents.map((document) => ({
+        fileName: document.fileName,
+        pageCount: document.pageCount,
+        options: {
+          colorMode: document.options.colorMode,
+          colorPages: document.options.colorPages,
+          duplexMode: document.options.duplexMode,
+          paperSize: document.options.paperSize,
+          orientation: document.options.orientation,
+          pageRange: document.options.pageRange,
+          copies: document.options.copies * globalCopies,
+          fitMode: 'fit',
+          pagesPerSheet: 1,
+          collation: true,
+        },
+      })),
+    };
+    let active = true;
+    const timer = window.setTimeout(() => {
+      api.getQuote(quoteRequest).then((quote) => {
+        if (!active || requestId !== quoteRequestSequence.current) return;
+        if (!Number.isSafeInteger(quote?.totalPaise) || quote.totalPaise < 1 || !quote?.quoteId || !quote?.expiresAt) {
+          throw new Error('The shop did not return a complete quote. Please try again.');
+        }
+        setServerQuote(quote);
+      }).catch((error) => {
+        if (!active || requestId !== quoteRequestSequence.current) return;
+        setQuoteError(error instanceof Error ? error.message : 'The shop could not price this order.');
+      }).finally(() => {
+        if (active && requestId === quoteRequestSequence.current) setQuoteLoading(false);
+      });
+    }, 200);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [documents, globalCopies, shop.id]);
 
-    const newDoc: DocumentItem = {
-      id: `idcard-${Date.now()}`,
-      fileName: `ID_Card_2in1_${idCardLayout === 'stacked' ? 'Stacked' : 'SideBySide'}.pdf`,
-      fileSizeText: '1.2 MB',
-      pageCount: 1,
-      previewUrl: idCardFront.url,
-      rotation: 0,
-      filter: idCardColor === 'bw' ? 'bw_doc' : 'natural',
-      brightness: 100,
-      contrast: 100,
-      cropBox: { x: 5, y: 5, width: 90, height: 90 },
-      options: {
+  // Generate an A4 raster sheet from the selected originals, then upload the
+  // exact generated output through the same private storage path as any upload.
+  const handleAddIdCardToOrder = async () => {
+    if (!idCardFront || !idCardBack) {
+      setIdCardToast('Upload both the front and back images to make a 2-in-1 sheet.');
+      return;
+    }
+    setUploadError(null);
+    const localPreviewUrls: string[] = [];
+    try {
+      const front = await loadLocalImage(idCardFront.file);
+      localPreviewUrls.push(front.objectUrl);
+      const back = await loadLocalImage(idCardBack.file);
+      localPreviewUrls.push(back.objectUrl);
+      const canvas = document.createElement('canvas');
+      canvas.width = 2480;
+      canvas.height = 3508;
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Your browser could not create the print sheet.');
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      const margin = 180;
+      const gap = 160;
+      const cardWidth = idCardLayout === 'side_by_side' ? (canvas.width - margin * 2 - gap) / 2 : canvas.width - margin * 2;
+      const cardHeight = idCardLayout === 'side_by_side' ? canvas.height - margin * 2 : (canvas.height - margin * 2 - gap) / 2;
+      const positions = idCardLayout === 'side_by_side'
+        ? [{ x: margin, y: margin }, { x: margin + cardWidth + gap, y: margin }]
+        : [{ x: margin, y: margin }, { x: margin, y: margin + cardHeight + gap }];
+      [front.image, back.image].forEach((image, index) => {
+        const { x, y } = positions[index];
+        context.fillStyle = '#ffffff';
+        context.fillRect(x, y, cardWidth, cardHeight);
+        drawContainedImage(context, image, x + 12, y + 12, cardWidth - 24, cardHeight - 24);
+        context.strokeStyle = '#9ca3af';
+        context.lineWidth = 4;
+        context.setLineDash([16, 12]);
+        context.strokeRect(x, y, cardWidth, cardHeight);
+      });
+      const generated = await canvasToPngFile(canvas, `id-card-2-in-1-${idCardLayout}.png`);
+      const transfer = new DataTransfer();
+      transfer.items.add(generated);
+      const uploaded = await handleFileSelect(transfer.files, {
         colorMode: idCardColor,
         duplexMode: 'simplex',
         paperSize: 'A4',
-        paperType: 'card_250',
         orientation: 'portrait',
         copies: 1,
         pageRange: '1',
-        finishing: 'none',
-      },
-    };
-
-    setDocuments((prev) => [...prev, newDoc]);
-    setActiveDocIndex(documents.length);
-    setIntakeMode('documents');
-    setIdCardToast('ID Card 2-in-1 layout added to order! ✓');
-    setTimeout(() => setIdCardToast(null), 3000);
+      });
+      if (uploaded) {
+        setIntakeMode('documents');
+        setIdCardToast('Generated ID card sheet uploaded securely and added to your order.');
+      }
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'Could not generate the ID card sheet.');
+    } finally {
+      localPreviewUrls.forEach((url) => URL.revokeObjectURL(url));
+    }
   };
 
-  // Add synthesized Passport Photo Sheet to Order
-  const handleAddPassportPhotoToOrder = () => {
+  const handleAddPassportPhotoToOrder = async () => {
     if (!passportPhoto) {
       setPassportToast('Please upload a photo first.');
-      setTimeout(() => setPassportToast(null), 3000);
       return;
     }
+    setUploadError(null);
+    const count = passportGrid === '8_pack_4x6' ? 8 : 16;
+    let localPreviewUrl: string | null = null;
+    try {
+      const { image, objectUrl } = await loadLocalImage(passportPhoto.file);
+      localPreviewUrl = objectUrl;
+      const isPhotoPaper = passportGrid === '8_pack_4x6';
+      const canvas = document.createElement('canvas');
+      canvas.width = isPhotoPaper ? 1200 : 2480;
+      canvas.height = isPhotoPaper ? 1800 : 3508;
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Your browser could not create the photo sheet.');
+      const background = passportBg === 'blue' ? '#d0e8ff' : passportBg === 'gray' ? '#eaeaea' : '#ffffff';
+      context.fillStyle = background;
+      context.fillRect(0, 0, canvas.width, canvas.height);
 
-    const copiesCount = passportGrid === '8_pack_4x6' ? 8 : 16;
-    const newDoc: DocumentItem = {
-      id: `passport-${Date.now()}`,
-      fileName: `Passport_Photos_${copiesCount}x_Sheet.pdf`,
-      fileSizeText: '2.4 MB',
-      pageCount: 1,
-      previewUrl: passportPhoto.url,
-      rotation: 0,
-      filter: 'natural',
-      brightness: 100,
-      contrast: 100,
-      cropBox: { x: 5, y: 5, width: 90, height: 90 },
-      options: {
+      // 300-DPI sheet. The 4x6 option uses 25x35 mm photos so all eight
+      // copies fit; the A4 option uses standard 35x45 mm cells.
+      const cols = isPhotoPaper ? 2 : 4;
+      const rows = isPhotoPaper ? 4 : 4;
+      const dpi = 300;
+      const photoWidth = Math.round((isPhotoPaper ? 25 : 35) / 25.4 * dpi);
+      const photoHeight = Math.round((isPhotoPaper ? 35 : 45) / 25.4 * dpi);
+      const gap = Math.round(3 / 25.4 * dpi);
+      const gridWidth = cols * photoWidth + (cols - 1) * gap;
+      const gridHeight = rows * photoHeight + (rows - 1) * gap;
+      const startX = Math.round((canvas.width - gridWidth) / 2);
+      const startY = Math.round((canvas.height - gridHeight) / 2);
+      for (let index = 0; index < count; index++) {
+        const x = startX + (index % cols) * (photoWidth + gap);
+        const y = startY + Math.floor(index / cols) * (photoHeight + gap);
+        drawCoveredImage(context, image, x, y, photoWidth, photoHeight);
+        if (passportGuides) {
+          context.strokeStyle = '#555555';
+          context.lineWidth = 2;
+          context.setLineDash([10, 8]);
+          context.strokeRect(x, y, photoWidth, photoHeight);
+        }
+      }
+      context.setLineDash([]);
+      const generated = await canvasToPngFile(canvas, `passport-photo-sheet-${count}.png`);
+      const transfer = new DataTransfer();
+      transfer.items.add(generated);
+      const uploaded = await handleFileSelect(transfer.files, {
         colorMode: 'color',
         duplexMode: 'simplex',
-        paperSize: 'A4',
-        paperType: 'glossy_180',
+        paperSize: isPhotoPaper ? 'PHOTO_4X6' : 'A4',
         orientation: 'portrait',
         copies: 1,
         pageRange: '1',
-        finishing: 'none',
-      },
-    };
-
-    setDocuments((prev) => [...prev, newDoc]);
-    setActiveDocIndex(documents.length);
-    setIntakeMode('documents');
-    setPassportToast(`Passport photo sheet (${copiesCount} photos) added to order! ✓`);
-    setTimeout(() => setPassportToast(null), 3000);
-  };
-
-  // Lookup Order from WhatsApp
-  const handleLookupWhatsAppOrder = () => {
-    const query = lookupPhoneOrToken.trim();
-    if (!query) {
-      setLookupFeedback({ text: 'Please enter a 10-digit mobile number or 4-digit token.', isError: true });
-      return;
+      });
+      if (uploaded) {
+        setIntakeMode('documents');
+        setPassportToast(`Generated ${count}-photo sheet uploaded securely and added to your order.`);
+      }
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'Could not generate the passport photo sheet.');
+    } finally {
+      if (localPreviewUrl) URL.revokeObjectURL(localPreviewUrl);
     }
-
-    setLookupLoading(true);
-    setLookupFeedback(null);
-
-    setTimeout(() => {
-      setLookupLoading(false);
-      const cleanToken = query.toUpperCase().startsWith('INK-') ? query.toUpperCase() : `INK-${query.toUpperCase()}`;
-      setLookupFeedback({ text: `Synced WhatsApp session for ${query}. Order file attached!`, isError: false });
-      const loadedDoc: DocumentItem = {
-        id: `wa-synced-${Date.now()}`,
-        fileName: `WhatsApp_Attachment_${cleanToken}.pdf`,
-        fileSizeText: '2.1 MB',
-        pageCount: 3,
-        previewUrl: '',
-        rotation: 0,
-        filter: 'natural',
-        brightness: 100,
-        contrast: 100,
-        cropBox: { x: 5, y: 5, width: 90, height: 90 },
-        options: {
-          colorMode: 'bw',
-          duplexMode: 'duplex_auto',
-          paperSize: 'A4',
-          orientation: 'portrait',
-          copies: 1,
-          pageRange: 'All',
-        },
-      };
-      setDocuments((prev) => [...prev, loadedDoc]);
-      setActiveDocIndex(documents.length);
-      setTimeout(() => setIntakeMode('documents'), 1200);
-    }, 600);
   };
-
-  const totalPagesCount = documents.reduce((acc, d) => acc + parsePageRangeCount(d.options.pageRange || 'All', d.pageCount) * (d.options.copies || 1), 0) * globalCopies;
-  const grandTotal = calculateTotal();
 
   // Open Document Editor
   const openEditorForActiveDoc = () => {
@@ -734,78 +762,60 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
     drawCropOverlay();
   }, [editorOpen, editorRotation, editorFilter, editorBrightness, editorContrast, editorCrop, activeDoc]);
 
-  // Create a real server order. Do not invent a local success when the API fails.
+  // Submit only with a fresh server quote; the server rechecks the amount against its current rates.
   const handlePlaceOrder = async () => {
     const normalizedPhone = customerPhone.replace(/\D/g, '').replace(/^91(?=\d{10}$)/, '');
     if (!customerName.trim() || !/^[6-9]\d{9}$/.test(normalizedPhone)) {
       setSubmitError('Enter your name and a valid 10-digit Indian mobile number.');
       return;
     }
+    if (!pendingOnlineOrder && (!serverQuote || quoteLoading || quoteError || !Number.isSafeInteger(serverQuote.totalPaise))) {
+      setSubmitError(quoteError || 'Wait for the shop to finish calculating your exact quote.');
+      return;
+    }
+    if (!pendingOnlineOrder && documents.some((document) => !document.storageKey || !document.file)) {
+      setSubmitError('One or more files are not securely uploaded. Remove and upload them again before placing the order.');
+      return;
+    }
 
     setIsSubmitting(true);
     setSubmitError(null);
-
     try {
       let order = pendingOnlineOrder;
+      let totalAmountPaise = pendingOnlineOrder?.totalAmountPaise ?? serverQuote.totalPaise;
       if (!order) {
-      const data = await api.submitOrder({
-        shopId: shop.id || 'shop-campus-1',
-        customerName: customerName.trim(),
-        customerPhone: normalizedPhone,
-        paymentMethod,
-        quote: {
-          quoteId: `quote-${Date.now()}`,
-          version: 'v2.4',
-          currency: 'INR',
-          totalPaise: Math.round(grandTotal * 100),
-          items: documents.map((d) => ({
-            fileName: d.fileName,
-            pageCount: d.pageCount,
-            lineSubtotalPaise: Math.round(d.pageCount * 150),
-          })),
-        },
-        files: documents.map((d) => {
-          const selected = parsePageNumbers(d.options.pageRange || 'All', d.pageCount);
-          const effCount = selected.length;
-          let cCount = 0;
-          let bCount = effCount;
-          if (d.options.colorMode === 'color') {
-            cCount = effCount;
-            bCount = 0;
-          } else if (d.options.colorMode === 'mixed') {
-            const cPages = parsePageNumbers(d.options.colorPages || '', d.pageCount).filter((p) => selected.includes(p));
-            cCount = cPages.length;
-            bCount = Math.max(0, effCount - cCount);
-          }
-          const bRate = d.options.duplexMode === 'simplex' ? (shop.rates?.bw_simplex || 2.0) : (shop.rates?.bw_duplex || 1.5);
-          const cRate = d.options.duplexMode === 'simplex' ? (shop.rates?.color_simplex || 10.0) : (shop.rates?.color_duplex || 8.0);
-          const docTotal = ((cCount * cRate) + (bCount * bRate)) * (d.options.copies || 1);
-
-          return {
-            fileName: d.fileName,
-            fileSizeBytes: d.file ? d.file.size : 1024 * 1024,
-            storageKey: d.storageKey || `uploads/${shop.id || 'shop-campus-1'}/${Date.now()}-${d.fileName}`,
-            fileUrl: d.fileUrl || '',
-            pageCount: d.pageCount,
+        const data = await api.submitOrder({
+          shopId: shop.id || 'shop-campus-1',
+          customerName: customerName.trim(),
+          customerPhone: normalizedPhone,
+          paymentMethod,
+          quote: serverQuote,
+          files: documents.map((document) => ({
+            fileName: document.fileName,
+            fileSizeBytes: document.file!.size,
+            storageKey: document.storageKey,
+            pageCount: document.pageCount,
             options: {
-              ...d.options,
-              rotation: d.rotation || 0,
-              filter: d.filter || 'natural',
-              brightness: d.brightness || 100,
-              contrast: d.contrast || 100,
-              cropBox: d.cropBox,
-              note: d.note || '',
+              colorMode: document.options.colorMode,
+              colorPages: document.options.colorPages,
+              duplexMode: document.options.duplexMode,
+              paperSize: document.options.paperSize,
+              orientation: document.options.orientation,
+              pageRange: document.options.pageRange,
+              copies: document.options.copies * globalCopies,
+              fitMode: 'fit',
+              pagesPerSheet: 1,
+              collation: true,
             },
-            subtotalPaise: Math.round(docTotal * 100),
-          };
-        }),
-      });
+          })),
+        });
 
-      if (!data?.orderId || !data?.orderNumber) {
-        throw new Error('The order service did not confirm your request. Please try again.');
-      }
-      order = { orderId: data.orderId, orderNumber: data.orderNumber };
-      if (paymentMethod === 'ONLINE_RAZORPAY') setPendingOnlineOrder(order);
+        if (!data?.orderId || !data?.orderNumber || !Number.isSafeInteger(data.totalAmountPaise)) {
+          throw new Error('The order service did not confirm an exact order total. Please try again.');
+        }
+        order = { orderId: data.orderId, orderNumber: data.orderNumber, totalAmountPaise: data.totalAmountPaise };
+        totalAmountPaise = data.totalAmountPaise;
+        if (paymentMethod === 'ONLINE_RAZORPAY') setPendingOnlineOrder(order);
       }
 
       if (!order) throw new Error('The order service did not confirm your request. Please try again.');
@@ -814,6 +824,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
       if (onlineCheckout) {
         if (!shop.onlinePaymentAvailable) throw new Error('Online payment is not available for this shop. Choose cash at collection.');
         const intent = await api.createPaymentIntent(order.orderId);
+        totalAmountPaise = Number(intent.amount);
         await loadRazorpayCheckout();
         await new Promise<void>((resolve, reject) => {
           if (!window.Razorpay) { reject(new Error('Razorpay Checkout could not be loaded.')); return; }
@@ -843,12 +854,14 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
         token: order.orderNumber,
         orderId: order.orderId,
         placedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        totalAmount: grandTotal.toFixed(2),
+        totalAmount: (totalAmountPaise / 100).toFixed(2),
         paymentMode: onlineCheckout ? 'ONLINE' : 'CASH',
       });
       setPendingOnlineOrder(null);
       setReviewModalOpen(false);
     } catch (err) {
+      const changedQuote = err instanceof Error ? (err as Error & { currentQuote?: any }).currentQuote : undefined;
+      if (changedQuote && Number.isSafeInteger(changedQuote.totalPaise)) setServerQuote(changedQuote);
       setSubmitError(err instanceof Error ? err.message : 'We could not submit your order. Please try again.');
     } finally {
       setIsSubmitting(false);
@@ -1253,11 +1266,14 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                 <input
                   ref={idFrontInputRef}
                   type="file"
-                  accept="image/*,.pdf"
+                  accept="image/png,image/jpeg,image/webp"
                   className="hidden"
                   onChange={(e) => {
                     const f = e.target.files?.[0];
-                    if (f) setIdCardFront({ url: URL.createObjectURL(f), name: f.name });
+                    if (f) {
+                      if (idCardFront) URL.revokeObjectURL(idCardFront.url);
+                      setIdCardFront({ url: URL.createObjectURL(f), name: f.name, file: f });
+                    }
                   }}
                 />
                 <div className="text-xs font-bold text-slate-800 mb-1">
@@ -1278,11 +1294,14 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                 <input
                   ref={idBackInputRef}
                   type="file"
-                  accept="image/*,.pdf"
+                  accept="image/png,image/jpeg,image/webp"
                   className="hidden"
                   onChange={(e) => {
                     const f = e.target.files?.[0];
-                    if (f) setIdCardBack({ url: URL.createObjectURL(f), name: f.name });
+                    if (f) {
+                      if (idCardBack) URL.revokeObjectURL(idCardBack.url);
+                      setIdCardBack({ url: URL.createObjectURL(f), name: f.name, file: f });
+                    }
                   }}
                 />
                 <div className="text-xs font-bold text-slate-800 mb-1">
@@ -1398,7 +1417,10 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                 className="hidden"
                 onChange={(e) => {
                   const f = e.target.files?.[0];
-                  if (f) setPassportPhoto({ url: URL.createObjectURL(f), name: f.name });
+                  if (f) {
+                    if (passportPhoto) URL.revokeObjectURL(passportPhoto.url);
+                    setPassportPhoto({ url: URL.createObjectURL(f), name: f.name, file: f });
+                  }
                 }}
               />
               <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-600 mx-auto flex items-center justify-center mb-1.5">
@@ -1482,7 +1504,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
           </div>
         )}
 
-        {/* 1D. WHATSAPP / TOKEN RETRIEVAL MODE */}
+        {/* 1D. WHATSAPP INTAKE AVAILABILITY */}
         {intakeMode === 'whatsapp_lookup' && (
           <div className="bg-white rounded-2xl p-4 sm:p-5 shadow-sm border border-slate-100 space-y-4 animate-fadeIn">
             <div>
@@ -1490,38 +1512,16 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                 <span className="w-5 h-5 rounded-full bg-emerald-50 text-emerald-600 font-bold text-xs flex items-center justify-center">
                   <MessageSquareIcon size={13} />
                 </span>
-                Sync WhatsApp Order
+                WhatsApp intake
               </h2>
               <p className="text-[11px] text-slate-500">
-                Already submitted a request? Open its tracking link to check the latest shop status.
+                WhatsApp document retrieval is not connected for this shop yet. No files or orders will be created from this screen.
               </p>
             </div>
 
-            <div className="space-y-2">
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="e.g. 9876543210 or 4092"
-                  value={lookupPhoneOrToken}
-                  onChange={(e) => setLookupPhoneOrToken(e.target.value)}
-                  className="flex-1 p-2.5 rounded-xl border border-slate-200 text-xs text-slate-900 font-mono focus:ring-2 focus:ring-indigo-500"
-                />
-                <button
-                  type="button"
-                  disabled={lookupLoading}
-                  onClick={handleLookupWhatsAppOrder}
-                  className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
-                >
-                  {lookupLoading ? 'Syncing...' : 'Fetch Order'}
-                </button>
-              </div>
-
-              {lookupFeedback && (
-                <div className={`p-2.5 rounded-xl text-xs font-medium ${lookupFeedback.isError ? 'bg-rose-50 text-rose-700 border border-rose-200' : 'bg-emerald-50 text-emerald-800 border border-emerald-200'}`}>
-                  {lookupFeedback.text}
-                </div>
-              )}
-            </div>
+            <button type="button" onClick={() => setIntakeMode('documents')} className="w-full min-h-[44px] px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl transition-colors">
+              Upload a document instead
+            </button>
           </div>
         )}
 
@@ -1724,6 +1724,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                           type="button"
                           onClick={() => updateActiveOptions({ copies: (activeDoc.options.copies || 1) + 1 })}
                           className="w-8 h-8 rounded-lg bg-white shadow-xs font-bold text-sm text-slate-700 hover:bg-slate-50 flex items-center justify-center cursor-pointer"
+                          disabled={(activeDoc.options.copies || 1) * globalCopies >= 500}
                         >
                           +
                         </button>
@@ -1776,7 +1777,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                           <div className="w-3 h-3 rounded-full bg-slate-800 border border-slate-600 shrink-0" />
                           <div className="font-bold text-[11px] truncate">B&W</div>
                         </div>
-                        <div className="text-[9px] text-slate-500 font-medium">₹{shop.rates?.bw_simplex ? shop.rates.bw_simplex.toFixed(2) : '1.50'}/p</div>
+                        <div className="text-[9px] text-slate-500 font-medium">Exact quote below</div>
                       </button>
 
                       <button
@@ -1792,7 +1793,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                           <div className="w-3 h-3 rounded-full bg-gradient-to-tr from-rose-500 via-amber-400 to-indigo-500 shrink-0" />
                           <div className="font-bold text-[11px] truncate">Colour</div>
                         </div>
-                        <div className="text-[9px] text-slate-500 font-medium">₹{shop.rates?.color_simplex ? shop.rates.color_simplex.toFixed(2) : '8.00'}/p</div>
+                        <div className="text-[9px] text-slate-500 font-medium">Exact quote below</div>
                       </button>
 
                       <button
@@ -1919,16 +1920,14 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                       <label className="block text-slate-700 font-semibold mb-1">Paper Size</label>
                       <select
                         value={activeDoc.options.paperSize}
-                        onChange={(e) =>
-                          updateActiveOptions({
-                            paperSize: e.target.value as 'A4' | 'A3' | 'Legal',
-                          })
-                        }
+                        onChange={(e) => updateActiveOptions({ paperSize: e.target.value as DocumentItem['options']['paperSize'] })}
                         className="w-full min-h-[44px] p-2.5 rounded-xl border border-slate-200 text-slate-800 bg-white font-medium"
                       >
-                        <option value="A4">A4 (Standard Xerox)</option>
-                        <option value="A3">A3 (Large Ledger - 2x Rate)</option>
-                        <option value="Legal">Legal (8.5×14")</option>
+                        {availablePaperSizes.map((paperSize) => (
+                          <option key={paperSize} value={paperSize}>
+                            {paperSize === 'PHOTO_4X6' ? 'Photo 4×6' : paperSize === 'PHOTO_5X7' ? 'Photo 5×7' : paperSize}
+                          </option>
+                        ))}
                       </select>
                     </div>
                     <div>
@@ -1949,59 +1948,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                     </div>
                   </div>
 
-                  {/* Paper Quality & GSM Media Selection */}
-                  <div>
-                    <label className="block text-slate-700 font-bold mb-1 flex items-center justify-between">
-                      <span>Paper Media & GSM</span>
-                      <span className="text-[10px] text-slate-500 font-normal">Grade surcharge</span>
-                    </label>
-                    <select
-                      value={activeDoc.options.paperType || 'standard_75'}
-                      onChange={(e) =>
-                        updateActiveOptions({
-                          paperType: e.target.value as any,
-                        })
-                      }
-                      className="w-full min-h-[44px] p-2.5 rounded-xl border border-slate-200 text-slate-800 bg-white font-medium"
-                    >
-                      <option value="standard_75">Standard 75 GSM Copier Paper (Base Rate)</option>
-                      <option value="bond_85">Bond Paper 85 GSM (+₹0.50/sheet)</option>
-                      <option value="executive_100">Executive Bond 100 GSM (+₹1.50/sheet)</option>
-                      <option value="glossy_180">Glossy Photo Paper 180 GSM (+₹12.00/sheet)</option>
-                      <option value="card_250">Heavy Card Stock 250 GSM (+₹8.00/sheet)</option>
-                    </select>
-                  </div>
-
-                  {/* Finishing & Binding Add-ons with 44px min touch targets */}
-                  <div>
-                    <label className="block text-slate-700 font-bold mb-1 flex items-center justify-between">
-                      <span>Post-Print Finishing & Binding</span>
-                      <span className="text-[10px] text-indigo-600 font-semibold">Optional</span>
-                    </label>
-                    <div className="grid grid-cols-2 gap-2">
-                      {[
-                        { id: 'none', label: 'No Finishing', price: '₹0' },
-                        { id: 'staple', label: 'Corner Staple', price: '+₹2.00' },
-                        { id: 'spiral', label: 'Spiral Coil Binding', price: '+₹35.00' },
-                        { id: 'thermal', label: 'Thermal Soft Binding', price: '+₹60.00' },
-                        { id: 'lamination', label: 'Lamination', price: '+₹25.00' },
-                      ].map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => updateActiveOptions({ finishing: item.id as any })}
-                          className={`min-h-[44px] p-2.5 rounded-xl border text-left transition-all ${
-                            (activeDoc.options.finishing || 'none') === item.id
-                              ? 'border-indigo-600 bg-indigo-50/70 text-indigo-950 font-bold ring-1 ring-indigo-500/30'
-                              : 'border-slate-200 text-slate-700 hover:bg-slate-50'
-                          }`}
-                        >
-                          <div className="text-[11px] font-bold">{item.label}</div>
-                          <div className="text-[10px] text-slate-500">{item.price}</div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+                  <p className="text-[10px] text-slate-500">The quote uses this shop’s saved rates for the selected paper size, colour mode and sides.</p>
 
                   {/* Tray Status Banner */}
                   <div className="p-2.5 bg-blue-50/70 border border-blue-100 rounded-lg text-[11px] text-blue-700 flex items-center gap-1.5">
@@ -2023,8 +1970,8 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
             <div className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">
               Total Quote
             </div>
-            <div className="text-xl font-extrabold text-slate-900 leading-tight">
-              ₹{grandTotal.toFixed(2)}
+              <div className="text-xl font-extrabold text-slate-900 leading-tight">
+              {pendingOnlineOrder ? formatPaise(pendingOnlineOrder.totalAmountPaise) : quoteLoading ? 'Calculating…' : grandTotalPaise !== null ? formatPaise(grandTotalPaise) : '—'}
             </div>
             <div className="text-[10px] text-slate-500 truncate">
               {totalPagesCount}p • {documents.length} doc{documents.length > 1 ? 's' : ''}
@@ -2047,7 +1994,8 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
             </span>
             <button
               type="button"
-              onClick={() => setGlobalCopies(globalCopies + 1)}
+              onClick={() => setGlobalCopies(Math.min(globalCopies + 1, ...documents.map((doc) => Math.floor(500 / Math.max(1, doc.options.copies || 1)))))}
+              disabled={documents.length === 0 || globalCopies >= Math.min(...documents.map((doc) => Math.floor(500 / Math.max(1, doc.options.copies || 1))))}
               className="w-10 h-10 min-w-[40px] min-h-[40px] sm:w-11 sm:h-11 sm:min-w-[44px] sm:min-h-[44px] rounded-lg bg-white text-slate-800 font-bold hover:bg-slate-50 flex items-center justify-center shadow-xs text-base active:bg-slate-200 transition-colors cursor-pointer"
               title="Increase copies"
               aria-label="Increase number of copies"
@@ -2060,7 +2008,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
           <div className="flex items-center gap-1.5 flex-1 justify-end min-w-[130px]">
             <button
               type="button"
-              disabled={documents.length === 0 || isSubmitting}
+              disabled={documents.length === 0 || isSubmitting || quoteLoading || grandTotalPaise === null}
               onClick={() => {
                 setPaymentMethod('CASH_ON_COLLECTION');
                 setSubmitError(null);
@@ -2075,7 +2023,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
 
             <button
               type="button"
-              disabled={documents.length === 0 || isSubmitting || !shop.onlinePaymentAvailable}
+              disabled={documents.length === 0 || isSubmitting || quoteLoading || grandTotalPaise === null || !shop.onlinePaymentAvailable}
               onClick={() => {
                 setPaymentMethod('ONLINE_RAZORPAY');
                 setSubmitError(null);
@@ -2168,9 +2116,25 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                 <span className="text-slate-500">Payment:</span>
               <span className="font-bold text-indigo-700">{paymentMethod === 'ONLINE_RAZORPAY' ? 'Pay securely online' : 'Pay cash at the counter'}</span>
               </div>
+              {serverQuote?.lineItems?.map((line: any, index: number) => (
+                <div key={`${line.fileName}-${index}`} className="border-t border-slate-200 pt-2 flex items-start justify-between gap-3">
+                  <span className="min-w-0 text-slate-600 break-all">{line.fileName} · {line.selectedPages} sides × {line.copies}</span>
+                  <span className="shrink-0 font-semibold text-slate-800">{formatPaise(line.subtotalPaise)}</span>
+                </div>
+              ))}
+              {serverQuote?.bulkDiscountPaise > 0 && (
+                <div className="flex justify-between text-emerald-700">
+                  <span>Shop bulk discount</span><span>−{formatPaise(serverQuote.bulkDiscountPaise)}</span>
+                </div>
+              )}
+              {serverQuote?.baseFeePaise > 0 && (
+                <div className="flex justify-between text-slate-700">
+                  <span>Shop service fee</span><span>{formatPaise(serverQuote.baseFeePaise)}</span>
+                </div>
+              )}
               <div className="pt-2 border-t border-slate-200 flex justify-between text-sm font-black text-slate-900">
                 <span>Total Amount:</span>
-                <span className="text-[#4D64E6] text-base">₹{grandTotal.toFixed(2)}</span>
+                <span className="text-[#4D64E6] text-base">{pendingOnlineOrder ? formatPaise(pendingOnlineOrder.totalAmountPaise) : grandTotalPaise !== null ? formatPaise(grandTotalPaise) : quoteLoading ? 'Calculating…' : 'Unavailable'}</span>
               </div>
             </div>
 
@@ -2179,11 +2143,16 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                 {submitError}
               </p>
             )}
+            {quoteError && !submitError && (
+              <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                {quoteError}
+              </p>
+            )}
 
             <div className="flex flex-col gap-2 pt-1">
               <button
                 type="button"
-                disabled={isSubmitting}
+                disabled={isSubmitting || ( !pendingOnlineOrder && (quoteLoading || grandTotalPaise === null || Boolean(quoteError)))}
                 onClick={handlePlaceOrder}
                 className="w-full min-h-[48px] bg-[#4D64E6] hover:bg-[#3B50D4] active:bg-[#2C3FA8] text-white font-bold rounded-xl text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
               >

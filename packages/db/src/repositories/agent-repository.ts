@@ -169,7 +169,10 @@ export class AgentRepository {
          LEFT JOIN print_attempts pa ON pa.id = (
            SELECT pa2.id FROM print_attempts pa2 WHERE pa2.print_job_id = pj.id ORDER BY pa2.created_at DESC LIMIT 1
          )
-         WHERE o.shop_id = ? AND (
+         WHERE o.shop_id = ?
+           AND o.status IN ('READY_FOR_PRINT', 'IN_PROGRESS')
+           AND (o.payment_method <> 'ONLINE_RAZORPAY' OR o.payment_status = 'VERIFIED')
+           AND (
            pj.status = 'RECEIVED' OR
            (pj.status = 'DISPATCHED' AND pa.status = 'DISPATCHED_TO_AGENT'
              AND pa.agent_id = ? AND pa.dispatch_acknowledged_at IS NULL AND pa.created_at > ?)

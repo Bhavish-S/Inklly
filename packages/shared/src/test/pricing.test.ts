@@ -135,6 +135,32 @@ describe('Pricing Engine & Math Invariants', () => {
     assert.equal(quote.lineItems[0].copyDiscountAppliedPaise, 400); // standard was 5 * 200 = 1000, discount is 400
   });
 
+  it('prices mixed colour pages with separate configured rates and copy discounts', () => {
+    const rates: RateRule[] = [
+      { id: 'bw', shopId: 'shop1', paperSize: 'A4', colorMode: 'bw', duplexMode: 'simplex', pricePerPrintedSidePaise: 200 },
+      { id: 'color', shopId: 'shop1', paperSize: 'A4', colorMode: 'color', duplexMode: 'simplex', pricePerPrintedSidePaise: 1000 },
+    ];
+    const copyRules: CopyDiscountRule[] = [
+      { id: 'bw-copy', shopId: 'shop1', paperSize: 'A4', colorMode: 'bw', duplexMode: 'simplex', copyOnePricePaise: 200, additionalCopyPricePaise: 100, isEnabled: true },
+      { id: 'color-copy', shopId: 'shop1', paperSize: 'A4', colorMode: 'color', duplexMode: 'simplex', copyOnePricePaise: 1000, additionalCopyPricePaise: 800, isEnabled: true },
+    ];
+    const quote = calculateQuote({
+      shopId: 'shop1',
+      files: [{
+        fileName: 'mixed.pdf', pageCount: 4,
+        options: {
+          colorMode: 'mixed', colorPages: '2,4', duplexMode: 'simplex', paperSize: 'A4', orientation: 'portrait',
+          pageRange: '1-3', copies: 2, fitMode: 'fit', pagesPerSheet: 1, collation: true,
+        },
+      }],
+    }, rates, copyRules);
+
+    // Per copy: two B&W sides and one colour side. Additional copies use each mode's configured rate.
+    assert.equal(quote.lineItems[0].subtotalPaise, (2 * 200 + 1 * 1000) + (2 * 100 + 1 * 800));
+    assert.equal(quote.lineItems[0].copyDiscountAppliedPaise, 400);
+    assert.equal(quote.totalPaise, 2400);
+  });
+
   it('applies bulk order discount percentage when threshold is reached', () => {
     const rates: RateRule[] = [
       {

@@ -5,7 +5,9 @@ export type Orientation = 'auto' | 'portrait' | 'landscape';
 export type FitMode = 'fit' | 'actual';
 
 export interface PrintOptions {
-  colorMode: ColorMode;
+  colorMode: ColorMode | 'mixed';
+  /** Required when colorMode is mixed; 1-based page range charged at the color rate. */
+  colorPages?: string;
   duplexMode: DuplexMode;
   paperSize: PaperSize;
   orientation: Orientation;

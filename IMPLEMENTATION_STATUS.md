@@ -5,7 +5,7 @@
 **Started:** 2026-10-25 (Asia/Kolkata)  
 **Current Phase:** Productization and workflow hardening (not release-ready)
 
-> **Verified snapshot (2026-10-28):** `npm run build` succeeds across all workspaces; Vite reports a large-bundle warning. `npm test` passes 171 tests (database 3, shared 12, agent 8, server 148). This proves local build and test behavior only; it does not certify production readiness.
+> **Verified snapshot (2026-10-28):** `npm run build` succeeds across all workspaces and `npm test` passes 176 tests (database 3, shared 13, agent 8, server 152). The build reports a large web-bundle warning. Agent polling is gated on merchant release and verified online payment. This local evidence does not certify production readiness.
 
 **Implemented and tested in source:**
 
@@ -15,10 +15,12 @@
 - PostgreSQL startup installs the baseline schema on a new database and applies the dispatch-ack migration; TLS certificate verification is enabled.
 - Private Supabase Storage is required in production. The latest Render log connects to PostgreSQL but exits because Storage environment settings/bucket are missing or invalid.
 - Agent results are persisted locally for retry, unacknowledged dispatch tickets replay with stable IDs, and expired handoffs become `OUTPUT_UNCERTAIN`. Physical printing is disabled by default for this pilot.
+- Agent polling now selects only orders released to `READY_FOR_PRINT` or `IN_PROGRESS`; online orders also require `payment_status=VERIFIED`. A regression test verifies customer-submitted orders are not dispatched before merchant release.
+- Merchant customer-payment revenue is read from the append-only payment ledger, not inferred from order status. Merchant storage categories/documents now have tenant-scoped relational tables; category persistence has API test coverage.
 - Printer profiles save through the API; registration no longer claims that hardware is online. Customer tracking distinguishes payment-pending and attention-required states.
 - Subscription checkout and per-successful-side SaaS billing are not implemented. Pilot prices remain configurable, and the dashboard now states that no subscription charge will be taken there. WhatsApp Meta messaging and a verified agent installer also remain unavailable.
 
-**Production verification still required:** configure Render's private Supabase bucket and service-role credentials; verify the running revision and health endpoint; exercise the live Supabase schema/storage path and Razorpay sandbox; and validate actual provider/billing workflows. Physical printer output is explicitly outside this build pass.
+**Production verification still required:** configure Render's private Supabase bucket and service-role credentials; verify the running revision and health endpoint; exercise the live Supabase schema/storage path and Razorpay sandbox; and validate actual provider/billing workflows. Physical printing remains in scope but pilot-gated until the executor and hardware workflow are safe and verified.
 
 > Historical phase checklists below contain earlier claims and are retained for traceability only. Some claims describe prototype behavior or integrations that are now explicitly unavailable. The checked boxes are not evidence that those features currently work. Use source, current tests, and deployment evidence above when assessing status.
 

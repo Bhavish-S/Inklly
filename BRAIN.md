@@ -15,7 +15,7 @@
   - **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, Lucide icons, HTML5 2D Canvas Editor
   - **Backend API:** Node.js, Express, TypeScript, JWT auth, Role-Based Access Control (RBAC)
   - **Desktop Edge Agent:** Node.js loopback daemon (Port 8765), Windows Spooler integration via PowerShell/PCL fallback
-  - **Database & Storage:** Native `node:sqlite` (`DatabaseSync` — zero external C++ dependencies), 16 relational tables with ACID transactions, embedded offline queue SQLite
+  - **Database & Storage:** Repository layer supports local SQLite and production PostgreSQL adapters; embedded offline agent queue uses SQLite. Production uses PostgreSQL and requires separately configured private Supabase Storage.
 
 ---
 
@@ -259,7 +259,7 @@ npm run build
 ```cmd
 npm test
 ```
-*(Executes all 33 unit and integration tests across all packages; 100% pass rate).*
+*(Runs the workspace test suites; see `BUILD_AND_TEST_RESULTS.md` for the latest verified count and coverage limits).*
 
 ### Step 4: Start All Services (Windows 1-Click)
 Double-click `start-all.bat` or run:

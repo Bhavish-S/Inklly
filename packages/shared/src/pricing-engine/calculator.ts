@@ -75,46 +75,45 @@ export function calculateQuote(
     const printedSides = selectedPages; // Each selected page is a printed side
     const copies = Math.max(1, file.options.copies);
 
-    // Resolve matching rate rule
-    const matchingRate = rates.find(
-      (r) =>
-        r.paperSize === file.options.paperSize &&
-        r.colorMode === file.options.colorMode &&
+    const usesRate = (mode: 'bw' | 'color') => rates.find(
+      (r) => r.paperSize === file.options.paperSize && r.colorMode === mode &&
         (isDuplex ? r.duplexMode !== 'simplex' : r.duplexMode === 'simplex')
     );
-
-    if (!matchingRate) {
-      throw new Error(
-        `No rate configured for ${file.options.paperSize} - ${file.options.colorMode} - ${file.options.duplexMode}`
-      );
+    const selected = new Set(selectedPageList);
+    const colorPageList = file.options.colorMode === 'mixed' && file.options.colorPages?.trim()
+      ? parsePageRange(file.options.colorPages, file.pageCount).filter((page) => selected.has(page))
+      : file.options.colorMode === 'color' ? selectedPageList : [];
+    const colorCount = colorPageList.length;
+    const bwCount = selectedPages - colorCount;
+    const bwRate = bwCount > 0 ? usesRate('bw') : undefined;
+    const colorRate = colorCount > 0 ? usesRate('color') : undefined;
+    if ((bwCount > 0 && !bwRate) || (colorCount > 0 && !colorRate)) {
+      throw new Error(`No rate configured for ${file.options.paperSize} - ${file.options.colorMode} - ${file.options.duplexMode}`);
     }
 
-    const standardUnitPricePaise = matchingRate.pricePerPrintedSidePaise;
-
-    // Check for copy discount rule
-    const copyRule = copyDiscountRules.find(
-      (cr) =>
-        cr.isEnabled &&
-        cr.paperSize === file.options.paperSize &&
-        cr.colorMode === file.options.colorMode &&
-        (isDuplex ? cr.duplexMode !== 'simplex' : cr.duplexMode === 'simplex')
+    const findCopyRule = (mode: 'bw' | 'color') => copyDiscountRules.find(
+      (rule) => rule.isEnabled && rule.paperSize === file.options.paperSize && rule.colorMode === mode &&
+        (isDuplex ? rule.duplexMode !== 'simplex' : rule.duplexMode === 'simplex')
     );
-
-    let lineSubtotalPaise = 0;
-    let copyDiscountAppliedPaise = 0;
-
-    if (copyRule && copyRule.isEnabled && copies > 1) {
-      // Copy 1 uses copyOnePricePaise
-      const copy1Amount = printedSides * copyRule.copyOnePricePaise;
-      // Copies 2..N use additionalCopyPricePaise
-      const additionalCopiesAmount = (copies - 1) * printedSides * copyRule.additionalCopyPricePaise;
-      lineSubtotalPaise = copy1Amount + additionalCopiesAmount;
-
-      const undiscountedAmount = copies * printedSides * standardUnitPricePaise;
-      copyDiscountAppliedPaise = Math.max(0, undiscountedAmount - lineSubtotalPaise);
-    } else {
-      lineSubtotalPaise = copies * printedSides * standardUnitPricePaise;
-    }
+    const lineForMode = (pageCount: number, mode: 'bw' | 'color', unitPrice: number) => {
+      if (!pageCount) return { total: 0, undiscounted: 0 };
+      const copyRule = findCopyRule(mode);
+      const undiscounted = copies * pageCount * unitPrice;
+      if (copyRule && copies > 1) {
+        return {
+          total: pageCount * (copyRule.copyOnePricePaise + (copies - 1) * copyRule.additionalCopyPricePaise),
+          undiscounted,
+        };
+      }
+      return { total: undiscounted, undiscounted };
+    };
+    const bwLine = lineForMode(bwCount, 'bw', bwRate?.pricePerPrintedSidePaise || 0);
+    const colorLine = lineForMode(colorCount, 'color', colorRate?.pricePerPrintedSidePaise || 0);
+    const lineSubtotalPaise = bwLine.total + colorLine.total;
+    const copyDiscountAppliedPaise = Math.max(0, bwLine.undiscounted + colorLine.undiscounted - lineSubtotalPaise);
+    const standardUnitPricePaise = file.options.colorMode === 'color'
+      ? (colorRate?.pricePerPrintedSidePaise || 0)
+      : (bwRate?.pricePerPrintedSidePaise || 0);
 
     subtotalPaise += lineSubtotalPaise;
 

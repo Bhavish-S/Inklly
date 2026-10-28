@@ -269,6 +269,55 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(order.totalAmountPaise, 200);
   });
 
+  it('requires customer confirmation when a complete quote no longer matches current shop pricing', async () => {
+    const uploadRes = await fetch(`${baseUrl}/api/v1/portal/upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopId: 'shop-campus-1', fileName: 'quote-check.pdf', fileData: makeTestPdf(1).toString('base64') }),
+    });
+    assert.equal(uploadRes.status, 201);
+    const upload = await uploadRes.json() as any;
+    const file = {
+      fileName: 'quote-check.pdf',
+      pageCount: upload.pageCount,
+      options: {
+        colorMode: 'bw', duplexMode: 'simplex', paperSize: 'A4', orientation: 'portrait',
+        copies: 1, fitMode: 'fit', pagesPerSheet: 1, collation: true,
+      },
+    };
+    const quoteRes = await fetch(`${baseUrl}/api/v1/portal/quote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopId: 'shop-campus-1', files: [file] }),
+    });
+    assert.equal(quoteRes.status, 200);
+    const quote = await quoteRes.json() as any;
+    const staleQuote = { ...quote, totalPaise: quote.totalPaise + 1 };
+    const staleOrderRes = await fetch(`${baseUrl}/api/v1/portal/orders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopId: 'shop-campus-1', paymentMethod: 'CASH_ON_COLLECTION', quote: staleQuote,
+        files: [{ ...file, storageKey: upload.storageKey }],
+      }),
+    });
+    assert.equal(staleOrderRes.status, 409);
+    const staleBody = await staleOrderRes.json() as any;
+    assert.equal(staleBody.currentQuote.totalPaise, quote.totalPaise);
+
+    const acceptedOrderRes = await fetch(`${baseUrl}/api/v1/portal/orders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopId: 'shop-campus-1', paymentMethod: 'CASH_ON_COLLECTION', quote,
+        files: [{ ...file, storageKey: upload.storageKey }],
+      }),
+    });
+    assert.equal(acceptedOrderRes.status, 201);
+    const acceptedOrder = await acceptedOrderRes.json() as any;
+    assert.equal(acceptedOrder.totalAmountPaise, quote.totalPaise);
+  });
+
   it('Authenticates merchant owner and returns JWT session payload', async () => {
     const loginRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
       method: 'POST',
@@ -281,6 +330,45 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.ok(loginBody.token);
     assert.equal(loginBody.user.role, 'MERCHANT_OWNER');
     merchantToken = loginBody.token;
+  });
+
+  it('persists merchant storage categories in the tenant-scoped database', async () => {
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` };
+    const create = await fetch(`${baseUrl}/api/v1/merchant/storage/categories`, {
+      method: 'POST', headers, body: JSON.stringify({ name: 'Customer Archive', description: 'Shop-owned vault category' }),
+    });
+    assert.equal(create.status, 201);
+    const created = await create.json() as any;
+    assert.ok(created.category.id);
+
+    const list = await fetch(`${baseUrl}/api/v1/merchant/storage/categories`, { headers });
+    assert.equal(list.status, 200);
+    assert.ok((await list.json() as any[]).some((category) => category.id === created.category.id));
+
+    const remove = await fetch(`${baseUrl}/api/v1/merchant/storage/categories/${encodeURIComponent(created.category.id)}`, { method: 'DELETE', headers });
+    assert.equal(remove.status, 200);
+  });
+
+  it('blocks print release for an online order until payment is verified', async () => {
+    assert.ok(cashOrderId);
+    db.execute(
+      `UPDATE orders SET status = 'AWAITING_PAYMENT', payment_status = 'NOT_STARTED', payment_method = 'ONLINE_RAZORPAY' WHERE id = ?`,
+      [cashOrderId]
+    );
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` };
+    const transition = await fetch(`${baseUrl}/api/v1/merchant/orders/${cashOrderId}/status`, {
+      method: 'PATCH', headers, body: JSON.stringify({ status: 'IN_PROGRESS' }),
+    });
+    assert.equal(transition.status, 409);
+    const dispatch = await fetch(`${baseUrl}/api/v1/merchant/orders/${cashOrderId}/print`, { method: 'POST', headers });
+    assert.equal(dispatch.status, 409);
+    const unpaid = db.queryOne<any>(`SELECT status, payment_status FROM orders WHERE id = ?`, [cashOrderId]);
+    assert.equal(unpaid.status, 'AWAITING_PAYMENT');
+    assert.equal(unpaid.payment_status, 'NOT_STARTED');
+    db.execute(
+      `UPDATE orders SET status = 'AWAITING_REVIEW', payment_status = 'PENDING', payment_method = 'CASH_ON_COLLECTION' WHERE id = ?`,
+      [cashOrderId]
+    );
   });
 
   it('enforces revocable server-side sessions and price-management permission', async () => {
@@ -339,6 +427,24 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.ok(Array.isArray(orders));
   });
 
+  it('does not count an unpaid collected order as merchant revenue', async () => {
+    const original = db.queryOne<any>(`SELECT status, payment_status FROM orders WHERE id = ?`, [cashOrderId]);
+    assert.ok(original);
+    db.execute(`UPDATE orders SET status = 'COLLECTED', payment_status = 'PENDING' WHERE id = ?`, [cashOrderId]);
+    try {
+      const expected = db.queryOne<any>(
+        `SELECT COALESCE(SUM(amount_paise), 0) AS total FROM ledger_entries WHERE shop_id = ? AND domain = 'CUSTOMER_PRINT_PAYMENT'`,
+        ['shop-campus-1']
+      ).total;
+      const response = await fetch(`${baseUrl}/api/v1/merchant/dashboard`, { headers: { Authorization: `Bearer ${merchantToken}` } });
+      assert.equal(response.status, 200);
+      const dashboard = await response.json();
+      assert.equal(dashboard.metrics.totalRevenuePaise, expected);
+    } finally {
+      db.execute(`UPDATE orders SET status = ?, payment_status = ? WHERE id = ?`, [original.status, original.payment_status, cashOrderId]);
+    }
+  });
+
   it('Enforces valid state transition on order status update', async () => {
     const ordersRes = await fetch(`${baseUrl}/api/v1/merchant/orders`, {
       headers: { Authorization: `Bearer ${merchantToken}` },
@@ -371,6 +477,9 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       body: JSON.stringify({ status: 'COLLECTED' }),
     });
     assert.equal(invalidRes.status, 422);
+
+    // The later dispatch test verifies the pre-approval queue boundary for this fixture.
+    db.execute(`UPDATE orders SET status = 'AWAITING_REVIEW' WHERE id = ?`, [demoOrder.id]);
   });
 
   it('Desktop Print Agent pairs, receives heartbeat, and polls queued tickets', async () => {
@@ -399,6 +508,15 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       Authorization: `Bearer ${enrollData.agentSecret}`,
     };
 
+    const targetJob = db.queryOne<any>(`SELECT id FROM print_jobs WHERE order_id = ? ORDER BY created_at LIMIT 1`, [cashOrderId]);
+    assert.ok(targetJob, 'submitted customer order should have a print job record');
+
+    // A newly submitted order remains out of the agent queue until merchant release.
+    const beforeReleaseRes = await fetch(`${baseUrl}/api/v1/agent/poll-commands`, { headers: agentHeaders });
+    assert.equal(beforeReleaseRes.status, 200);
+    const beforeReleaseTickets = await beforeReleaseRes.json() as Array<{ jobId: string }>;
+    assert.ok(!beforeReleaseTickets.some((candidate) => candidate.jobId === targetJob.id), 'unreviewed order must not be dispatched');
+
     // 2. Heartbeat
     const hbRes = await fetch(`${baseUrl}/api/v1/agent/heartbeat`, {
       method: 'POST',
@@ -423,8 +541,6 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     const tickets = await pollRes.json() as Array<{ jobId: string; commandId: string; attemptId: string }>;
     assert.ok(Array.isArray(tickets));
 
-    const targetJob = db.queryOne<any>(`SELECT id FROM print_jobs WHERE order_id = ? ORDER BY created_at LIMIT 1`, [cashOrderId]);
-    assert.ok(targetJob, 'dispatched order should have a print job');
     const ticket = tickets.find((candidate) => candidate.jobId === targetJob.id);
     assert.ok(ticket, 'poll returns the dispatched order job');
 

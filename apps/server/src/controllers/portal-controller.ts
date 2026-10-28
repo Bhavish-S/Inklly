@@ -112,6 +112,7 @@ export class PortalController {
       customerPhone,
       customerEmail,
       paymentMethod,
+      quote: submittedQuote,
       files,
     } = req.body;
 
@@ -190,6 +191,22 @@ export class PortalController {
     }
     if (!Number.isSafeInteger(serverQuote.totalPaise) || serverQuote.totalPaise < 1 || serverQuote.totalPaise > 5_000_000_000) {
       return res.status(422).json({ error: 'The calculated order total is outside the supported range.' });
+    }
+    // New customer clients submit a complete quote and must confirm changes or expiry.
+    // Legacy/API clients without a quote ID remain safe because the order always uses
+    // this server-calculated quote and amount, never client-supplied totals.
+    if (submittedQuote?.quoteId && submittedQuote?.expiresAt) {
+      const quoteExpiry = typeof submittedQuote.expiresAt === 'string' ? Date.parse(submittedQuote.expiresAt) : Number.NaN;
+      if (!Number.isSafeInteger(submittedQuote.totalPaise) || !submittedQuote.quoteVersion || !Number.isFinite(quoteExpiry)) {
+        return res.status(422).json({ error: 'Get an exact shop quote before submitting this order.' });
+      }
+      if (quoteExpiry <= Date.now()) {
+        return res.status(409).json({ error: 'This quote has expired. Review the updated total before submitting again.', currentQuote: serverQuote });
+      }
+      if (submittedQuote.shopId !== shopId || submittedQuote.currency !== serverQuote.currency ||
+          submittedQuote.totalPaise !== serverQuote.totalPaise || submittedQuote.quoteVersion !== serverQuote.quoteVersion) {
+        return res.status(409).json({ error: 'The shop price changed. Review the updated total before submitting again.', currentQuote: serverQuote });
+      }
     }
 
     const orderId = `ord-${crypto.randomUUID()}`;

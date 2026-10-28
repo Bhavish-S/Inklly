@@ -1,29 +1,32 @@
 # Inklly Production Readiness — Open Work
 
 **Status:** Not ready for production; development and verification continue.
-**Updated:** 2026-10-27
+**Updated:** 2026-10-28
 
 ## Current verification
 
-- `packages/db`, `packages/shared`, `apps/server`, and `apps/web` production builds pass.
-- Full workspace test run after the website enquiry change: 153 passed, 0 failed (database 3, shared 12, agent 7, server 131). `npm run lint` completed but no workspace defines a lint script. Supabase Storage behavior is tested with a mocked HTTP transport; it has not yet been verified against the connected project.
+- `npm run build` passes for all workspaces. The Vite build still reports a large web bundle (~1.19 MB minified JavaScript, before gzip).
+- `npm test` passes 176 tests (database 3, shared 13, agent 8, server 152). These are local unit/integration tests, not live provider, storage, browser or hardware verification. `npm run lint` is not configured.
+- Agent command polling is now gated on merchant release (`READY_FOR_PRINT`/`IN_PROGRESS`) and verified online payment. Merchant dashboard revenue now comes from the customer-payment ledger rather than order status; both changes have regression coverage.
+- Physical print execution remains unsafe if manually enabled: the current Windows executor can substitute a printer, reduce output to page 1/copy 1, report process exit as `PRINT_CONFIRMED`, and fetch a ticket URL with the agent bearer token. A crash after setting `DISPATCHED_TO_SPOOLER` can strand a local job without startup reconciliation. Keep printing disabled until these are fixed.
+- Merchant vault categories now persist, but there is no vault document-upload route or connected UI workflow. The new storage schema has local API coverage; PostgreSQL deployment is unverified.
 - Web build emits a bundle-size warning (main JavaScript bundle is about 1.22 MB before gzip).
-- Before this turn, GitHub `main` contained commit `a27b0a4`; the current enquiry implementation is being prepared for push and deployment verification.
-- After that push, live Render returned HTTP 200 for `/health` but did not include the new `revision` field; unauthenticated `/api/v1/developer/keys` still returned HTTP 200 with `[]`. Render is not confirmed to be running current source. The pasted Render build log checked out older commit `33cd615` and failed startup for missing `JWT_SECRET`.
-- Public upload now has a per-process concurrency cap before JSON parsing. Per-IP/distributed rate limiting and production-like load validation remain open.
-- After pushing `eaafb6c`, Vercel serves the current frontend asset (`index-CQNKJYaq.js`, matching the local production build), but Render still returns HTTP 200 from the previous health handler without a `revision` field. The backend deploy is not verified and is demonstrably behind source. The frontend now rejects the old backend's legacy enquiry response, so it will display an update/retry error instead of claiming the enquiry was saved. No Render control/API or deploy hook is available in this workspace to trigger or inspect it directly.
+- Latest supplied Render log: PostgreSQL connects, then startup exits while validating private Supabase Storage configuration. Render requires `STORAGE_DRIVER=supabase`, the Supabase HTTPS project URL, service-role key, and an existing private bucket. The logs use an older generic error than the current source, so the deployed revision is also unverified.
+- Current Vercel page availability and current Render source revision have not been rechecked in this work cycle. A prior check saw Vercel serving a different asset from the local production build, while Render health did not expose a revision. Verify both after deploying.
+- Public upload has a per-process concurrency cap before JSON parsing. Per-IP/distributed rate limiting and production-like load validation remain open.
 - Public enquiries are now durably stored and shown in the authenticated platform console. No email/WhatsApp notification is configured, and an approved retention period for enquiry contact details/message text is still required. Rate limiting is process-local; a shared edge/WAF limit is needed before horizontal scaling.
 
 ## Release blockers and follow-up
 
-1. Deploy the backend commit `eaafb6c` on Render; configure a stable `JWT_SECRET`, `STORAGE_DRIVER=supabase`, Supabase URL, service-role key, bucket name, and production database URL. Verify `/health.revision` matches `eaafb6c` and unauthenticated `/api/v1/developer/keys` returns 401. The provided Render log showed startup rejected a missing/weak/example `JWT_SECRET`; the latest service configuration/logs are not accessible here.
+1. Configure Render with a stable `JWT_SECRET`, `STORAGE_DRIVER=supabase`, Supabase URL, service-role key, private bucket name, and production database URL. Redeploy current `main`; verify `/health.revision` matches the deployed Git SHA and unauthenticated `/api/v1/developer/keys` returns 401. Current provided log fails at Storage initialization after PostgreSQL connects.
 2. Exercise upload, private preview, authenticated agent download, and 24-hour deletion against the real private Supabase bucket. Confirm saved files survive Render restarts and expired objects are physically removed.
    - Implemented locally: PDF page counts and file MIME are derived from stored bytes at upload and order submission; a regression test verifies a forged client page count cannot undercharge an order. Production rollout remains pending.
 3. Provide and verify a signed Windows agent installer, checksum, and owner-scoped delivery. The API reports installer availability as false (503) and does not fabricate a checksum.
 4. Validate Razorpay end to end with shop-owned Key ID, API Secret, and webhook secret; confirm secrets are encrypted and never returned after save. Use test credentials before production credentials.
 5. Verify the real Windows print-agent workflow on supported hardware, including printer discovery, spooler outcomes, network interruption, and `OUTPUT_UNCERTAIN` recovery. No physical print has been verified.
-6. Review remaining merchant, admin, developer, billing, support, and WhatsApp screens against the reference package and acceptance matrix. Existing historical phase checkmarks are not sufficient evidence of completeness.
-7. Confirm production CORS, rate limits, backups, monitoring, incident handling, privacy/legal statements, and account recovery before accepting customer data.
+6. Complete exact printer targeting, full requested print settings, origin-restricted authenticated file downloads, and crash recovery to `OUTPUT_UNCERTAIN` before enabling physical printing.
+7. Review remaining merchant, admin, developer, billing, support, vault, and WhatsApp screens against the reference package and acceptance matrix. Existing historical phase checkmarks are not sufficient evidence of completeness.
+8. Confirm production CORS, rate limits, backups, monitoring, incident handling, privacy/legal statements, and account recovery before accepting customer data.
 
 ## Product scope choices
 

@@ -68,8 +68,10 @@ export const api = {
       body: JSON.stringify(orderPayload),
     });
     if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.error || 'Failed to submit order');
+      const err = await res.json().catch(() => ({}));
+      const error = new Error(err.error || 'Failed to submit order') as Error & { currentQuote?: any };
+      error.currentQuote = err.currentQuote;
+      throw error;
     }
     return res.json();
   },

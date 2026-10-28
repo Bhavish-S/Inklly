@@ -335,7 +335,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
 
   // Orders queue state
   const [ordersTab, setOrdersTab] = useState<
-    'pending' | 'processing' | 'printing' | 'rejected' | 'print_failed' | 'done' | 'all'
+    'pending' | 'payment_pending' | 'processing' | 'printing' | 'rejected' | 'print_failed' | 'done' | 'all'
   >('pending');
   const [dateFilter, setDateFilter] = useState<string>('today');
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
@@ -769,8 +769,9 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     const file = o.files?.[0];
     const printOpts = file?.printOptions || {};
 
-    let tab: 'pending' | 'processing' | 'printing' | 'rejected' | 'print_failed' | 'done' = 'pending';
-    if (o.status === 'READY_FOR_PRINT') tab = 'processing';
+    let tab: 'pending' | 'payment_pending' | 'processing' | 'printing' | 'rejected' | 'print_failed' | 'done' = 'pending';
+    if (o.status === 'AWAITING_PAYMENT') tab = 'payment_pending';
+    else if (o.status === 'READY_FOR_PRINT') tab = 'processing';
     else if (o.status === 'IN_PROGRESS' || o.status === 'SPOOLING') tab = 'printing';
     else if (o.status === 'CANCELLED' || o.status === 'REJECTED') tab = 'rejected';
     else if (o.status === 'FAILED' || o.status === 'OUTPUT_UNCERTAIN') tab = 'print_failed';
@@ -815,7 +816,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       tab,
       status: o.status,
       paymentStatus: o.paymentStatus,
-      paymentMode: o.paymentMethod === 'ONLINE_UPI' ? 'Online UPI' : 'Cash on Counter',
+      paymentMode: o.paymentMethod === 'ONLINE_RAZORPAY' ? 'Razorpay' : 'Cash at counter',
       paymentMethod: o.paymentMethod,
       storageKey: undefined,
       fileUrl: file?.fileUrl,
@@ -1223,6 +1224,7 @@ start "Inklly Agent" "InkllyAgent.exe"
 
   // Order Counts & Filtered Lists
   const pendingOrders = ordersList.filter((o) => o.tab === 'pending');
+  const paymentPendingOrders = ordersList.filter((o) => o.tab === 'payment_pending');
   const processingOrders = ordersList.filter((o) => o.tab === 'processing');
   const printingOrders = ordersList.filter((o) => o.tab === 'printing');
   const rejectedOrders = ordersList.filter((o) => o.tab === 'rejected');
@@ -2130,6 +2132,7 @@ start "Inklly Agent" "InkllyAgent.exe"
                   </h2>
                   <p className="text-xs text-gray-400">
                     {ordersTab === 'pending' && 'New and downloaded orders awaiting merchant action'}
+                    {ordersTab === 'payment_pending' && 'Online orders waiting for verified customer payment'}
                     {ordersTab === 'processing' && 'Rasterized documents ready for local edge spooler'}
                     {ordersTab === 'printing' && 'Print jobs currently spooling or outputting on hardware'}
                     {ordersTab === 'rejected' && 'Orders rejected by merchant or customer'}
@@ -2200,6 +2203,15 @@ start "Inklly Agent" "InkllyAgent.exe"
                 }`}
               >
                 Pending {screenshotEmptyMode ? 0 : pendingOrders.length}
+              </button>
+              <button
+                type="button"
+                onClick={() => setOrdersTab('payment_pending')}
+                className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all ${
+                  ordersTab === 'payment_pending' ? 'bg-[#4E65F6] text-white shadow-xs' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
+                }`}
+              >
+                Payment Pending {screenshotEmptyMode ? 0 : paymentPendingOrders.length}
               </button>
               <button
                 type="button"
@@ -2348,6 +2360,12 @@ start "Inklly Agent" "InkllyAgent.exe"
                               Awaiting Action
                             </span>
                           )}
+                          {ord.tab === 'payment_pending' && (
+                            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-orange-50 dark:bg-orange-950/40 text-orange-800 dark:text-orange-200 flex items-center gap-1.5 w-max">
+                              <span className="w-1.5 h-1.5 rounded-full bg-orange-500" />
+                              Customer payment pending
+                            </span>
+                          )}
                           {ord.tab === 'processing' && (
                             <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 flex items-center gap-1.5 w-max">
                               <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
@@ -2384,16 +2402,17 @@ start "Inklly Agent" "InkllyAgent.exe"
                           <div className="text-[9px] text-gray-400 font-normal">{ord.paymentMode}</div>
                         </td>
                         <td className="py-4 px-4 text-right space-x-1.5">
-                          {ord.tab === 'pending' && (
+                          {(ord.tab === 'pending' || ord.tab === 'payment_pending') && (
                             <>
                               <button
                                 type="button"
                                 onClick={() => setSelectedOrder(ord)}
                                 className="px-2.5 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition-all border border-indigo-200 cursor-pointer shadow-xs"
-                                title="Review Customer Order Specifications"
+                                title="Review order details and payment status"
                               >
                                 Review
                               </button>
+                              {ord.tab === 'pending' && <>
                               <button
                                 type="button"
                                 onClick={() => handleOneClickPrint(ord.id)}
@@ -2416,6 +2435,7 @@ start "Inklly Agent" "InkllyAgent.exe"
                               >
                                 Reject
                               </button>
+                              </>}
                             </>
                           )}
                           {(ord.tab === 'processing' || ord.tab === 'printing') && (
@@ -2535,7 +2555,7 @@ start "Inklly Agent" "InkllyAgent.exe"
                     <div className="p-3 bg-gray-50 dark:bg-gray-800/60 rounded-xl">
                       <span className="text-[10px] text-gray-400 uppercase font-bold block">Payment Mode</span>
                       <div className="font-bold text-green-600 dark:text-green-400">{selectedOrder.amount || '₹0.00'}</div>
-                      <div className="text-gray-400 text-[10px]">{selectedOrder.paymentMode || 'Cash on Collection'}</div>
+                      <div className="text-gray-400 text-[10px]">{selectedOrder.paymentMode || 'Cash at counter'} · {selectedOrder.paymentStatus || 'PENDING'}</div>
                     </div>
                   </div>
 
@@ -2560,7 +2580,13 @@ start "Inklly Agent" "InkllyAgent.exe"
                     )}
                   </div>
 
+                  {selectedOrder.tab === 'payment_pending' && (
+                    <p className="rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-xs text-orange-900">
+                      Waiting for Razorpay confirmation. Printing and completion actions unlock after payment is verified.
+                    </p>
+                  )}
                   <div className="pt-2 flex flex-wrap gap-2">
+                    {selectedOrder.tab !== 'payment_pending' && <>
                     <button
                       type="button"
                       onClick={() => {
@@ -2580,6 +2606,7 @@ start "Inklly Agent" "InkllyAgent.exe"
                       <span>✓</span>
                       <span>Complete Order</span>
                     </button>
+                    </>}
                     {selectedOrder.tab === 'pending' && (
                       <button
                         type="button"

@@ -164,6 +164,38 @@ CREATE TABLE IF NOT EXISTS bulk_discount_rules (
     FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE
 );
 
+-- Merchant vault records are separate from temporary customer-order uploads.
+CREATE TABLE IF NOT EXISTS storage_categories (
+    id TEXT PRIMARY KEY,
+    shop_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    document_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    UNIQUE (shop_id, id),
+    UNIQUE (shop_id, name),
+    FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_storage_categories_shop ON storage_categories(shop_id, created_at);
+
+CREATE TABLE IF NOT EXISTS storage_documents (
+    id TEXT PRIMARY KEY,
+    shop_id TEXT NOT NULL,
+    category_id TEXT,
+    file_name TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    file_size_bytes INTEGER NOT NULL,
+    page_count INTEGER NOT NULL DEFAULT 1,
+    storage_key TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE,
+    FOREIGN KEY (shop_id, category_id) REFERENCES storage_categories(shop_id, id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_storage_documents_shop_created ON storage_documents(shop_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_storage_documents_category ON storage_documents(category_id);
+
 CREATE TABLE IF NOT EXISTS orders (
     id TEXT PRIMARY KEY,
     shop_id TEXT NOT NULL,

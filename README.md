@@ -1,9 +1,11 @@
 # Inklly — Smart Print-Shop Automation & Self-Service Document OS
 
+[![Architecture diagram](https://gitdiagram.com/diagram-badge.svg)](https://gitdiagram.com/diagram/bhavish-s/inklly?utm_source=readme&utm_medium=badge)
+
 > 🧠 **AI Agent & Multi-Machine Portable Notice:**  
 > When unzipping this project on any new machine or using Antigravity CLI / AI coding assistants, **read [`BRAIN.md`](./BRAIN.md) first**. It contains complete persistent context, project scope, architecture map, implementation state, and build instructions.
 
-Inklly is an independent, production-oriented multi-tenant SaaS platform built for existing print shops, photocopy centers, and document-service businesses. It replaces chaotic counter queues and WhatsApp file sharing with countertop QR code customer ordering, real-time deterministic quotation in Paise, edge desktop print spooling, and append-only financial ledgers.
+Inklly is an early-stage multi-tenant SaaS product for existing print shops, photocopy centers, and document-service businesses. It is being built around countertop QR ordering, server-calculated prices in integer Paise, merchant operations, a separately installed desktop agent, and auditable financial records. See [`REMAINING_ISSUES.md`](./REMAINING_ISSUES.md) before using production data; the application is not yet production-ready.
 
 ---
 
@@ -14,17 +16,17 @@ D:\Inkly\Source Code\
 ├── BRAIN.md                    # Master memory & AI agent operational context
 ├── README.md                   # Public project documentation & quick start
 ├── IMPLEMENTATION_STATUS.md    # Phase-by-phase implementation ledger
-├── BUILD_AND_TEST_RESULTS.md   # Test execution log (33 passing automated tests - 100% pass rate)
+├── BUILD_AND_TEST_RESULTS.md   # Current local build/test evidence and production limitations
 ├── REMAINING_ISSUES.md         # Production readiness & scope boundary documentation
 │
 ├── apps/
 │   ├── web/        # React + Vite Single Page Application (Marketing, Customer QR Portal, Merchant Dashboard, Platform Admin, Developer Hub)
-│   ├── server/     # Multi-tenant Node.js Express REST API & Edge Command Dispatch Gateway
-│   └── agent/      # Desktop Edge Print Agent Daemon (Windows / macOS Spooler Connector on localhost:8765)
+│   ├── server/     # Multi-tenant Node.js Express REST API and agent command gateway
+│   └── agent/      # Separately installed desktop agent; Windows physical printing is pilot-gated
 │
 ├── packages/
 │   ├── shared/     # Domain TypeScript models, state machines (Order, Payment, PrintJob), & deterministic pricing engine
-│   └── db/         # Relational database schema (16 tables), ACID transactions via native node:sqlite, & seed data
+│   └── db/         # Relational database and repository layer; local SQLite and production PostgreSQL adapters
 ```
 
 ---
@@ -46,7 +48,7 @@ npm run build
 ```bash
 npm run test
 ```
-*Executes all 33 unit, integration, and state machine tests across `@inklly/shared`, `@inklly/db`, `@inklly/agent`, and `@inklly/server`.*
+*Runs the current tests across `@inklly/shared`, `@inklly/db`, `@inklly/agent`, and `@inklly/server`. See [`BUILD_AND_TEST_RESULTS.md`](./BUILD_AND_TEST_RESULTS.md) for the last verified count and deployment limits.*
 
 ### 4. Running the Development Services
 

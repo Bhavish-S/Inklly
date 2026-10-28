@@ -88,9 +88,9 @@ export class MerchantController {
     const readyForPickup = orders.filter((o) => o.status === 'READY_FOR_COLLECTION').length;
     const completed = orders.filter((o) => o.status === 'COLLECTED').length;
 
-    const totalRevenuePaise = orders
-      .filter((o) => o.paymentStatus === 'VERIFIED' || o.status === 'COLLECTED')
-      .reduce((sum, o) => sum + o.totalAmountPaise, 0);
+    // Revenue reflects captured/collected financial entries only. Order status
+    // alone is not evidence that a cash or online payment was received.
+    const totalRevenuePaise = this.ledgerRepo.calculateBalancePaise(shopId, 'CUSTOMER_PRINT_PAYMENT');
 
     const onlinePrinters = printers.filter((p) => p.isOnline).length;
 
@@ -170,6 +170,10 @@ export class MerchantController {
     }
 
     const targetStatus = (status === 'COMPLETED' ? 'COLLECTED' : status) as OrderStatus;
+    const printReleaseStatuses: OrderStatus[] = ['READY_FOR_PRINT', 'IN_PROGRESS', 'PENDING_AGENT_SPOOL', 'READY_FOR_COLLECTION', 'COLLECTED'];
+    if (order.paymentMethod === 'ONLINE_RAZORPAY' && order.paymentStatus !== 'VERIFIED' && printReleaseStatuses.includes(targetStatus)) {
+      return res.status(409).json({ error: 'Online payment must be verified before this order can be released or completed.' });
+    }
     try {
       this.orderRepo.updateOrderStatus(id, targetStatus);
       const updated = this.orderRepo.getOrderById(id);
@@ -198,6 +202,10 @@ export class MerchantController {
         requestedShopId: order.shopId,
         userShopId: effectiveShopId,
       });
+    }
+
+    if (order.paymentMethod === 'ONLINE_RAZORPAY' && order.paymentStatus !== 'VERIFIED') {
+      return res.status(409).json({ error: 'Online payment must be verified before print dispatch.' });
     }
 
     try {
@@ -546,7 +554,8 @@ export class MerchantController {
   public getStorageCategories = (req: Request, res: Response) => {
     const shopId = this.getShopId(req);
     const rows = this.db.query<any>(
-      `SELECT * FROM storage_categories WHERE shop_id = ? ORDER BY created_at DESC`,
+      `SELECT sc.*, (SELECT COUNT(*) FROM storage_documents sd WHERE sd.shop_id = sc.shop_id AND sd.category_id = sc.id) AS document_count
+       FROM storage_categories sc WHERE sc.shop_id = ? ORDER BY sc.created_at DESC`,
       [shopId]
     );
     res.json(rows.map((r) => ({
@@ -647,13 +656,15 @@ export class MerchantController {
     catch { return res.status(503).json({ error: 'Private file storage is temporarily unavailable.' }); }
     if (!content) return res.status(404).json({ error: 'Document is unavailable.' });
 
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
-    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(row.file_name)}"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${path.basename(String(row.file_name)).replace(/[\r\n"\\]/g, '_')}"`);
     res.setHeader('Content-Length', String(content.length));
     res.send(content);
   };
 
-  public deleteStorageDocument = (req: Request, res: Response) => {
+  public deleteStorageDocument = async (req: Request, res: Response) => {
     const shopId = this.getShopId(req);
     const docId = String(req.params.id);
 
@@ -664,7 +675,12 @@ export class MerchantController {
     if (!row) return res.status(404).json({ error: 'Document not found.' });
 
     if (!String(row.storage_key).startsWith('expired:')) {
-      try { this.fileStorage.remove(String(row.storage_key)); } catch { /* best effort */ }
+      try {
+        const removed = await this.fileStorage.remove(String(row.storage_key));
+        if (!removed) return res.status(503).json({ error: 'Document could not be deleted from private storage. Please retry.' });
+      } catch {
+        return res.status(503).json({ error: 'Document could not be deleted from private storage. Please retry.' });
+      }
     }
 
     this.db.execute(`DELETE FROM storage_documents WHERE id = ?`, [docId]);
