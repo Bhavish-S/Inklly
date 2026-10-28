@@ -1109,23 +1109,34 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       const pollRes = await fetch(`${baseUrl}/api/v1/agent/poll-commands`, { headers: agentSetup.headers });
       assert.equal(pollRes.status, 200);
       const tickets = await pollRes.json() as any[];
-      const ticket = tickets.find((item) => item.correlationId === `corr-${orderId}`);
+      const orderJobIds = new Set(db.query<any>(`SELECT id FROM print_jobs WHERE order_id = ?`, [orderId]).map((row) => row.id));
+      const ticket = tickets.find((item) => orderJobIds.has(item.jobId));
       assert.ok(ticket, JSON.stringify({ tickets, printers: db.query<any>(`SELECT id, shop_id, name, is_online, agent_id FROM printers`), jobs: db.query<any>(`SELECT id, order_id, printer_id, status FROM print_jobs WHERE order_id = ?`, [orderId]) }));
       const ackRes = await fetch(`${baseUrl}/api/v1/agent/acknowledge-command`, { method: 'POST', headers: agentSetup.headers, body: JSON.stringify({ commandId: ticket.commandId, attemptId: ticket.attemptId }) });
       assert.equal(ackRes.status, 200);
 
-      // 4. Agent reports PRINT_CONFIRMED
-      const confirmRes = await fetch(`${baseUrl}/api/v1/agent/command-result`, {
+      // 4. Agent reports spooler submission; the operator must inspect physical output.
+      const submittedRes = await fetch(`${baseUrl}/api/v1/agent/command-result`, {
         method: 'POST',
         headers: agentSetup.headers,
         body: JSON.stringify({
           jobId: ticket.jobId,
           attemptId: ticket.attemptId,
-          status: 'PRINT_CONFIRMED',
+          status: 'SUBMITTED_TO_SPOOLER',
           timestamp: new Date().toISOString(),
         }),
       });
-      assert.equal(confirmRes.status, 200);
+      assert.equal(submittedRes.status, 200);
+      const beforeInspection = await fetch(`${baseUrl}/api/v1/portal/orders/${orderId}`);
+      assert.equal((await beforeInspection.json() as any).status, 'IN_PROGRESS');
+
+      const reconcileRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${orderId}/reconcile-output`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+        body: JSON.stringify({ physicalOutputConfirmed: true, reason: 'Inspected each printed page against the submitted job before pickup.' }),
+      });
+      assert.equal(reconcileRes.status, 200, await reconcileRes.clone().text());
+      const reconciled = await reconcileRes.json() as any;
+      assert.equal(reconciled.order.status, 'READY_FOR_COLLECTION');
     });
 
     it('T3.4: Rejects online payment orders until shop Razorpay credentials are configured', async () => {
@@ -1273,26 +1284,31 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
         body: JSON.stringify({ status: 'READY_FOR_PRINT' }),
       });
 
+      const agentSetup = await pairTestAgent('DISSERTATION-PRINT-AGENT');
+
       const printDispatch = await fetch(`${baseUrl}/api/v1/merchant/orders/${orderId}/print`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${merchantToken}`,
         },
-        body: JSON.stringify({ printerName: 'HP LaserJet Pro M401 PCL6' }),
+        body: JSON.stringify({ printerId: agentSetup.printerId }),
       });
       assert.equal(printDispatch.status, 200);
 
-      // Step 6: Edge agent polls command and marks READY_FOR_COLLECTION
-      const agentConfirm = await fetch(`${baseUrl}/api/v1/merchant/orders/${orderId}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${merchantToken}`,
-        },
-        body: JSON.stringify({ status: 'READY_FOR_COLLECTION' }),
+      // Step 6: Agent submits to the spooler; the merchant physically verifies output.
+      const polled = await fetch(`${baseUrl}/api/v1/agent/poll-commands`, { headers: agentSetup.headers });
+      const ticket = (await polled.json() as any[]).find((item) => item.correlationId === `corr-${orderId}`);
+      assert.ok(ticket);
+      const acknowledged = await fetch(`${baseUrl}/api/v1/agent/acknowledge-command`, { method: 'POST', headers: agentSetup.headers, body: JSON.stringify({ commandId: ticket.commandId, attemptId: ticket.attemptId }) });
+      assert.equal(acknowledged.status, 200);
+      const submitted = await fetch(`${baseUrl}/api/v1/agent/command-result`, { method: 'POST', headers: agentSetup.headers, body: JSON.stringify({ jobId: ticket.jobId, attemptId: ticket.attemptId, status: 'SUBMITTED_TO_SPOOLER', timestamp: new Date().toISOString() }) });
+      assert.equal(submitted.status, 200);
+      const agentConfirm = await fetch(`${baseUrl}/api/v1/merchant/orders/${orderId}/reconcile-output`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+        body: JSON.stringify({ physicalOutputConfirmed: true, reason: 'Inspected each requested sheet and confirmed the complete dissertation before pickup.' }),
       });
-      assert.equal(agentConfirm.status, 200);
+      assert.equal(agentConfirm.status, 200, await agentConfirm.clone().text());
 
       // Step 7: Student collects printed thesis -> mark COLLECTED
       const collectedRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${orderId}/status`, {
@@ -1372,22 +1388,26 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       const orderData = (await orderRes.json()) as any;
       const orderId = orderData.orderId;
 
-      // Step 4: Operator marks ready for print, printing in progress, then ready for collection
-      await fetch(`${baseUrl}/api/v1/merchant/orders/${orderId}/status`, {
-        method: 'PATCH',
+      // Shop agent submits the order to the OS spooler; the operator inspects the paper.
+      const agentSetup = await pairTestAgent('WALK-IN-COPY-AGENT');
+      const dispatchRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${orderId}/print`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
-        body: JSON.stringify({ status: 'READY_FOR_PRINT' }),
+        body: JSON.stringify({ printerId: agentSetup.printerId }),
       });
-      await fetch(`${baseUrl}/api/v1/merchant/orders/${orderId}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
-        body: JSON.stringify({ status: 'IN_PROGRESS' }),
+      assert.equal(dispatchRes.status, 200);
+      const polled = await fetch(`${baseUrl}/api/v1/agent/poll-commands`, { headers: agentSetup.headers });
+      const ticket = (await polled.json() as any[]).find((job) => job.correlationId === `corr-${orderId}`);
+      assert.ok(ticket);
+      const ackRes = await fetch(`${baseUrl}/api/v1/agent/acknowledge-command`, { method: 'POST', headers: agentSetup.headers, body: JSON.stringify({ commandId: ticket.commandId, attemptId: ticket.attemptId }) });
+      assert.equal(ackRes.status, 200);
+      const submitted = await fetch(`${baseUrl}/api/v1/agent/command-result`, { method: 'POST', headers: agentSetup.headers, body: JSON.stringify({ jobId: ticket.jobId, attemptId: ticket.attemptId, status: 'SUBMITTED_TO_SPOOLER', timestamp: new Date().toISOString() }) });
+      assert.equal(submitted.status, 200);
+      const reconcile = await fetch(`${baseUrl}/api/v1/merchant/orders/${orderId}/reconcile-output`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+        body: JSON.stringify({ physicalOutputConfirmed: true, reason: 'Inspected the two pages in the output tray before serving the customer.' }),
       });
-      await fetch(`${baseUrl}/api/v1/merchant/orders/${orderId}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
-        body: JSON.stringify({ status: 'READY_FOR_COLLECTION' }),
-      });
+      assert.equal(reconcile.status, 200, await reconcile.clone().text());
 
       // Step 5: Customer pays ₹4 cash at counter
       const cashRes = await fetch(`${baseUrl}/api/v1/payments/orders/${orderId}/collect-cash`, {
@@ -1516,13 +1536,10 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
 
       // 4. Invariant assertion: Blind auto-retry is forbidden
       // Operator performs physical check at machine, clears jammed paper, and resolves order
-      const resolvedRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${orderId}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${merchantToken}`,
-        },
-        body: JSON.stringify({ status: 'READY_FOR_COLLECTION' }),
+      const resolvedRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${orderId}/reconcile-output`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+        body: JSON.stringify({ physicalOutputConfirmed: true, reason: 'Cleared the jam and inspected the tray and every completed page; the full order is present.' }),
       });
       assert.equal(resolvedRes.status, 200);
     });
@@ -1745,22 +1762,25 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       // 12. Merchant reviews and prints the order
       const printRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${orderData.orderId}/print`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${merchantToken}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+        body: JSON.stringify({ printerId: db.queryOne<any>(`SELECT id FROM printers WHERE agent_id = ? AND name = ?`, [agent.agentId, 'Canon LBP2900']).id }),
       });
       assert.equal(printRes.status, 200);
       const printData = await printRes.json();
       assert.equal(printData.order.status, 'IN_PROGRESS');
 
-      // 13. Merchant marks order as ready for collection
-      const readyRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${orderData.orderId}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${merchantToken}`,
-        },
-        body: JSON.stringify({ status: 'READY_FOR_COLLECTION' }),
+      const ticketResponse = await fetch(`${baseUrl}/api/v1/agent/poll-commands`, { headers: agentHeaders });
+      const ticket = (await ticketResponse.json() as any[])[0];
+      assert.ok(ticket);
+      const ack = await fetch(`${baseUrl}/api/v1/agent/acknowledge-command`, { method: 'POST', headers: agentHeaders, body: JSON.stringify({ commandId: ticket.commandId, attemptId: ticket.attemptId }) });
+      assert.equal(ack.status, 200);
+      const submitted = await fetch(`${baseUrl}/api/v1/agent/command-result`, { method: 'POST', headers: agentHeaders, body: JSON.stringify({ jobId: ticket.jobId, attemptId: ticket.attemptId, status: 'SUBMITTED_TO_SPOOLER', timestamp: new Date().toISOString() }) });
+      assert.equal(submitted.status, 200);
+      const readyRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${orderData.orderId}/reconcile-output`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+        body: JSON.stringify({ physicalOutputConfirmed: true, reason: 'Inspected the five pages and confirmed they match the complete print request.' }),
       });
-      assert.equal(readyRes.status, 200);
+      assert.equal(readyRes.status, 200, await readyRes.clone().text());
 
       // 14. Customer mentions token number; merchant confirms collection
       const collectRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${orderData.orderId}/status`, {

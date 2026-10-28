@@ -282,6 +282,17 @@ export const api = {
     return body;
   },
 
+  async reconcilePrintOutput(orderId: string, reason: string) {
+    const res = await fetch(`${API_BASE}/merchant/orders/${encodeURIComponent(orderId)}/reconcile-output`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ physicalOutputConfirmed: true, reason }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not reconcile print output');
+    return body;
+  },
+
   async addPrinter(printerData: any) {
     const res = await fetch(`${API_BASE}/merchant/printers`, {
       method: 'POST',

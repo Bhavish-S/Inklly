@@ -245,10 +245,10 @@ export class AgentRepository {
   public recordCommandResult(result: SpoolerResult, agentId: string, shopId: string): boolean {
     const now = new Date().toISOString();
 
-    if (!['SUBMITTED_TO_SPOOLER', 'PRINT_CONFIRMED', 'OUTPUT_UNCERTAIN', 'FAILED'].includes(result.status)) return false;
+    if (!['SUBMITTED_TO_SPOOLER', 'OUTPUT_UNCERTAIN', 'FAILED'].includes(result.status)) return false;
     return this.db.transaction(() => {
     const ownedAttempt = this.db.queryOne<any>(
-      `SELECT pa.status AS attempt_status, pa.dispatch_acknowledged_at
+      `SELECT pa.status AS attempt_status, pa.dispatch_acknowledged_at, pj.status AS job_status
        FROM print_attempts pa
        JOIN print_jobs pj ON pj.id = pa.print_job_id
        JOIN orders o ON o.id = pj.order_id
@@ -257,15 +257,15 @@ export class AgentRepository {
     );
     if (!ownedAttempt) return false;
     if (!ownedAttempt.dispatch_acknowledged_at) return false;
+    // A later operator reconciliation is authoritative for the job state. A
+    // delayed agent report may be acknowledged, but must never regress it.
+    if (ownedAttempt.job_status === 'PRINT_CONFIRMED') return true;
 
     // Map spooler result to PrintJobStatus
     let nextJobStatus: PrintJobStatus;
     let nextAttemptStatus: string;
 
-    if (result.status === 'PRINT_CONFIRMED') {
-      nextJobStatus = 'PRINT_CONFIRMED';
-      nextAttemptStatus = 'SUCCESS';
-    } else if (result.status === 'OUTPUT_UNCERTAIN') {
+    if (result.status === 'OUTPUT_UNCERTAIN') {
       // CRITICAL HARDWARE SAFETY: Must NEVER blind retry
       nextJobStatus = 'OUTPUT_UNCERTAIN';
       nextAttemptStatus = 'OUTPUT_UNCERTAIN';
@@ -294,23 +294,6 @@ export class AgentRepository {
       [nextJobStatus, now, result.jobId]
     );
 
-    // If all print jobs in the order are PRINT_CONFIRMED, move order to READY_FOR_COLLECTION
-    const jobRow = this.db.queryOne<any>(
-      `SELECT pj.order_id FROM print_jobs pj JOIN orders o ON o.id = pj.order_id WHERE pj.id = ? AND o.shop_id = ?`,
-      [result.jobId, shopId]
-    );
-    if (jobRow && nextJobStatus === 'PRINT_CONFIRMED') {
-      const remainingIncomplete = this.db.queryOne<any>(
-        `SELECT COUNT(*) as cnt FROM print_jobs WHERE order_id = ? AND status != 'PRINT_CONFIRMED'`,
-        [jobRow.order_id]
-      );
-      if (remainingIncomplete && remainingIncomplete.cnt === 0) {
-        this.db.execute(
-          `UPDATE orders SET status = 'READY_FOR_COLLECTION', updated_at = ? WHERE id = ?`,
-          [now, jobRow.order_id]
-        );
-      }
-    }
     return true;
     });
   }

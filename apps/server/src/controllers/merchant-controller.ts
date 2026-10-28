@@ -11,7 +11,7 @@ import {
   LedgerRepository,
   AgentRepository,
 } from '@inklly/db';
-import { OrderStatus, ROLE_PRESETS } from '@inklly/shared';
+import { OrderStatus, PrintJobStatus, ROLE_PRESETS, validatePrintJobTransition } from '@inklly/shared';
 import { ShopPaymentCredentialsService } from '../services/shop-payment-credentials';
 import { PrivateFileStorage } from '../services/private-file-storage';
 import { getPrinterHealthStatus, hasFreshOnlinePrinterEvidence } from '../services/printer-health';
@@ -204,6 +204,9 @@ export class MerchantController {
     }
 
     const targetStatus = (status === 'COMPLETED' ? 'COLLECTED' : status) as OrderStatus;
+    if (targetStatus === 'READY_FOR_COLLECTION') {
+      return res.status(409).json({ error: 'Print completion requires the audited physical-output reconciliation workflow.' });
+    }
     const printReleaseStatuses: OrderStatus[] = ['READY_FOR_PRINT', 'IN_PROGRESS', 'PENDING_AGENT_SPOOL', 'READY_FOR_COLLECTION', 'COLLECTED'];
     if (order.paymentMethod === 'ONLINE_RAZORPAY' && order.paymentStatus !== 'VERIFIED' && printReleaseStatuses.includes(targetStatus)) {
       return res.status(409).json({ error: 'Online payment must be verified before this order can be released or completed.' });
@@ -214,6 +217,81 @@ export class MerchantController {
       res.json({ success: true, order: updated });
     } catch (err: any) {
       res.status(422).json({ error: err.message });
+    }
+  };
+
+  public reconcilePrintOutput = (req: Request, res: Response) => {
+    const orderId = String(req.params.id);
+    const shopId = this.getShopId(req);
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
+    if (!shopId) return res.status(403).json({ error: 'An authenticated shop is required.' });
+    if (req.body?.physicalOutputConfirmed !== true || reason.length < 10 || reason.length > 500) {
+      return res.status(400).json({ error: 'Confirm that you physically inspected the complete output and provide a 10–500 character note.' });
+    }
+
+    const order = this.orderRepo.getOrderById(orderId);
+    if (!order || order.shopId !== shopId) return res.status(404).json({ error: 'Order not found.' });
+    if (order.paymentMethod === 'ONLINE_RAZORPAY' && order.paymentStatus !== 'VERIFIED') {
+      return res.status(409).json({ error: 'Online payment must be verified before print output can be reconciled.' });
+    }
+    if (!['IN_PROGRESS', 'PRINT_UNCONFIRMED', 'READY_FOR_COLLECTION'].includes(order.status)) {
+      return res.status(409).json({ error: 'Only an order with a dispatched print attempt can be reconciled.' });
+    }
+
+    const allowedStatuses: PrintJobStatus[] = [
+      'DISPATCHED', 'SUBMITTED_TO_SPOOLER', 'OUTPUT_PENDING_CONFIRMATION',
+      'OUTPUT_UNCERTAIN', 'NEEDS_PHYSICAL_VERIFICATION', 'PRINT_CONFIRMED',
+    ];
+    const actorId = req.user?.userId;
+    if (!actorId) return res.status(401).json({ error: 'Authentication required.' });
+    const now = new Date().toISOString();
+
+    try {
+      const result = this.db.transaction(() => {
+        const current = this.db.queryOne<any>(
+          `SELECT id, status FROM orders WHERE id = ? AND shop_id = ?`, [orderId, shopId]
+        );
+        if (!current || !['IN_PROGRESS', 'PRINT_UNCONFIRMED', 'READY_FOR_COLLECTION'].includes(current.status)) {
+          throw new Error('RECONCILIATION_CONFLICT: order state changed; refresh and review it.');
+        }
+        const jobs = this.db.query<any>(
+          `SELECT id, status FROM print_jobs WHERE order_id = ? ORDER BY id`, [orderId]
+        );
+        if (!jobs.length || jobs.some((job) => !allowedStatuses.includes(job.status as PrintJobStatus))) {
+          throw new Error('RECONCILIATION_CONFLICT: one or more print jobs are not eligible for physical-output confirmation. Do not retry them blindly.');
+        }
+
+        const changedJobs: Array<{ id: string; previousStatus: string }> = [];
+        for (const job of jobs) {
+          if (job.status === 'PRINT_CONFIRMED') continue;
+          let from = job.status as PrintJobStatus;
+          if (from === 'OUTPUT_UNCERTAIN') {
+            validatePrintJobTransition(from, 'NEEDS_PHYSICAL_VERIFICATION');
+            this.db.execute(`UPDATE print_jobs SET status = 'NEEDS_PHYSICAL_VERIFICATION', updated_at = ? WHERE id = ? AND status = ?`, [now, job.id, from]);
+            from = 'NEEDS_PHYSICAL_VERIFICATION';
+          }
+          validatePrintJobTransition(from, 'PRINT_CONFIRMED');
+          this.db.execute(`UPDATE print_jobs SET status = 'PRINT_CONFIRMED', updated_at = ? WHERE id = ? AND status = ?`, [now, job.id, from]);
+          changedJobs.push({ id: job.id, previousStatus: job.status });
+        }
+
+        if (current.status !== 'READY_FOR_COLLECTION') this.orderRepo.updateOrderStatus(orderId, 'READY_FOR_COLLECTION');
+        this.userRepo.logAuditEvent({
+          id: crypto.randomUUID(), actorUserId: actorId, actorRole: req.user?.role,
+          shopId, organizationId: req.user?.organizationId,
+          action: 'MERCHANT_PRINT_OUTPUT_RECONCILED', targetType: 'ORDER', targetId: orderId,
+          outcome: 'SUCCESS', ipAddress: req.ip,
+          details: { confirmationSource: 'OPERATOR_PHYSICAL_INSPECTION', physicalOutputConfirmed: true, reason, changedJobs },
+          createdAt: now,
+        });
+        return { order: this.orderRepo.getOrderById(orderId), reconciledJobs: changedJobs.length };
+      });
+      return res.json({ success: true, ...result });
+    } catch (error: any) {
+      if (typeof error?.message === 'string' && error.message.startsWith('RECONCILIATION_CONFLICT:')) {
+        return res.status(409).json({ error: error.message.slice('RECONCILIATION_CONFLICT:'.length).trim() });
+      }
+      return res.status(422).json({ error: error instanceof Error ? error.message : 'Print output could not be reconciled.' });
     }
   };
 

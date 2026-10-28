@@ -5,7 +5,7 @@ import { RequestHandler } from 'express';
  * Node process. Mount before express.json() so rejected requests do not first
  * allocate their decoded request body.
  */
-export function createPublicUploadConcurrencyGuard(maxConcurrent = 2): RequestHandler {
+export function createUploadConcurrencyGuard(maxConcurrent = 2, capacityCode = 'UPLOAD_CAPACITY'): RequestHandler {
   const limit = Math.max(1, Math.min(8, Math.floor(maxConcurrent) || 2));
   let inFlight = 0;
 
@@ -13,7 +13,7 @@ export function createPublicUploadConcurrencyGuard(maxConcurrent = 2): RequestHa
     if (inFlight >= limit) {
       res.setHeader('Retry-After', '2');
       res.status(429).json({
-        code: 'PUBLIC_UPLOAD_CAPACITY',
+        code: capacityCode,
         error: 'Uploads are busy. Retry in a moment.',
       });
       return;
@@ -32,4 +32,8 @@ export function createPublicUploadConcurrencyGuard(maxConcurrent = 2): RequestHa
     res.once('close', release);
     next();
   };
+}
+
+export function createPublicUploadConcurrencyGuard(maxConcurrent = 2): RequestHandler {
+  return createUploadConcurrencyGuard(maxConcurrent, 'PUBLIC_UPLOAD_CAPACITY');
 }

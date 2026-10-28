@@ -51,6 +51,7 @@ describe('Decoupled State Machines & Safety Invariants', () => {
       assert.ok(canTransitionPrintJob('VALIDATING', 'CONFIGURED'));
       assert.ok(canTransitionPrintJob('CONFIGURED', 'READY'));
       assert.ok(canTransitionPrintJob('READY', 'DISPATCHING'));
+      assert.ok(canTransitionPrintJob('DISPATCHED', 'PRINT_CONFIRMED'));
       assert.ok(canTransitionPrintJob('DISPATCHING', 'SUBMITTED_TO_SPOOLER'));
       assert.ok(canTransitionPrintJob('SUBMITTED_TO_SPOOLER', 'PRINT_CONFIRMED'));
     });
@@ -59,6 +60,7 @@ describe('Decoupled State Machines & Safety Invariants', () => {
       assert.ok(canTransitionPrintJob('DISPATCHING', 'OUTPUT_UNCERTAIN'));
       assert.ok(canTransitionPrintJob('SUBMITTED_TO_SPOOLER', 'OUTPUT_UNCERTAIN'));
       assert.ok(canTransitionPrintJob('OUTPUT_UNCERTAIN', 'NEEDS_PHYSICAL_VERIFICATION'));
+      assert.ok(canTransitionPrintJob('NEEDS_PHYSICAL_VERIFICATION', 'PRINT_CONFIRMED'));
       // DIRECT RETRY FROM UNCERTAIN IS FORBIDDEN:
       assert.equal(canTransitionPrintJob('OUTPUT_UNCERTAIN', 'READY'), false);
       assert.equal(canTransitionPrintJob('OUTPUT_UNCERTAIN', 'PRINT_CONFIRMED'), false);

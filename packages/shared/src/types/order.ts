@@ -38,6 +38,7 @@ export type PrintJobStatus =
   | 'BLOCKED'
   | 'READY'
   | 'DISPATCHING'
+  | 'DISPATCHED'
   | 'SUBMITTED_TO_SPOOLER'
   | 'OUTPUT_PENDING_CONFIRMATION'
   | 'PRINT_CONFIRMED'

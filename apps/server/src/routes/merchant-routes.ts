@@ -47,6 +47,7 @@ export function createMerchantRoutes(db: DatabaseService, fileStorage: PrivateFi
   router.get('/orders/:id', requirePermission('orders:view'), controller.getOrderById);
   router.get('/orders/:id/files/:fileId', requirePermission('orders:view'), controller.downloadOrderFile);
   router.patch('/orders/:id/status', requirePermission('orders:process'), controller.updateOrderStatus);
+  router.post('/orders/:id/reconcile-output', requirePermission('orders:process'), controller.reconcilePrintOutput);
   router.post('/orders/:id/print', requirePermission('live_print:manage'), controller.printOrder);
 
   router.post('/agents/pairing-code', requireRole('MERCHANT_OWNER'), controller.createAgentPairingCode);

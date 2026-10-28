@@ -119,9 +119,11 @@ export class LocalOfflineQueue {
   }
 
   public completeReport(commandId: string, result: SpoolerResult): void {
-    const status: QueuedCommand['status'] = result.status === 'PRINT_CONFIRMED'
-      ? 'COMPLETED'
-      : result.status === 'OUTPUT_UNCERTAIN' ? 'OUTPUT_UNCERTAIN' : 'FAILED';
+    // COMPLETED means the server accepted this report; it does not assert
+    // that physical pages were produced.
+    const status: QueuedCommand['status'] = result.status === 'OUTPUT_UNCERTAIN'
+      ? 'OUTPUT_UNCERTAIN'
+      : result.status === 'FAILED' ? 'FAILED' : 'COMPLETED';
     this.db.prepare(`UPDATE local_commands SET status = ?, error_message = ?, result_json = NULL, updated_at = ? WHERE command_id = ?`)
       .run(status, result.errorMessage || null, new Date().toISOString(), commandId);
   }

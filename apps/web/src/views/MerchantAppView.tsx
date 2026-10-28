@@ -347,6 +347,9 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   >('pending');
   const [dateFilter, setDateFilter] = useState<string>('today');
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
+  const [reconcileReason, setReconcileReason] = useState('');
+  const [physicalOutputConfirmed, setPhysicalOutputConfirmed] = useState(false);
+  const [reconcilingOutput, setReconcilingOutput] = useState(false);
 
   // Credits state
   const [creditQuantity, setCreditQuantity] = useState<number>(100);
@@ -1096,9 +1099,24 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     setTimeout(() => setOrderActionToast(null), 3000);
   };
 
-  const handleRetryPrint = (orderId: string) => {
-    setOrderActionToast(`Order #${orderId} needs an operator review before retry. Check the printer and confirm the previous output to avoid duplicate pages.`);
-    setTimeout(() => setOrderActionToast(null), 5000);
+  const handleReconcilePrintOutput = async (orderId: string) => {
+    if (!physicalOutputConfirmed || reconcileReason.trim().length < 10) return;
+    const order = findCachedOrder(orderId);
+    const targetId = order?.rawId || orderId;
+    setReconcilingOutput(true);
+    try {
+      await api.reconcilePrintOutput(targetId, reconcileReason.trim());
+      await fetchLiveOrdersFromApi();
+      setSelectedOrder(null);
+      setReconcileReason('');
+      setPhysicalOutputConfirmed(false);
+      setOrderActionToast(`Order #${orderId}: physical output recorded and audit logged.`);
+    } catch (error) {
+      setOrderActionToast(error instanceof Error ? error.message : 'Print output could not be reconciled.');
+    } finally {
+      setReconcilingOutput(false);
+      setTimeout(() => setOrderActionToast(null), 5000);
+    }
   };
 
   const handleMarkCollected = async (orderId: string) => {
@@ -2304,14 +2322,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                               </button>
                               <button
                                 type="button"
-                                onClick={() => handleMarkCollected(ord.id)}
-                                className="px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-bold transition-all cursor-pointer"
-                                title="Mark Order as Completed & Delivered"
-                              >
-                                ✓ Complete
-                              </button>
-                              <button
-                                type="button"
                                 onClick={() => handleRejectOrder(ord.id)}
                                 className="px-2 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold transition-all cursor-pointer"
                               >
@@ -2329,29 +2339,19 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                               >
                                 Review
                               </button>
-                              <button
+                              {ord.rawStatus === 'IN_PROGRESS' && <button
                                 type="button"
-                                onClick={() => handleMarkCollected(ord.id)}
-                                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
+                                onClick={() => setSelectedOrder(ord)}
+                                className="px-2.5 py-1.5 rounded-lg border border-amber-300 text-amber-800 hover:bg-amber-50 text-xs font-bold transition-all cursor-pointer"
+                                title="Review print state and record physical output after inspection"
                               >
-                                ✓ Complete Order
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleOneClickPrint(ord.id)}
-                                className="px-2.5 py-1.5 rounded-lg border border-indigo-200 text-indigo-600 hover:bg-indigo-50 text-xs font-bold transition-all cursor-pointer"
-                              >
-                                Re-Spool
-                              </button>
+                                Review output
+                              </button>}
                             </>
                           )}
                           {ord.tab === 'print_failed' && (
-                            <button
-                              type="button"
-                              onClick={() => handleRetryPrint(ord.id)}
-                              className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
-                            >
-                              Clear Jam & Retry
+                            <button type="button" onClick={() => setSelectedOrder(ord)} className="px-3 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-bold transition-all cursor-pointer">
+                              Review output
                             </button>
                           )}
                           {ord.tab === 'done' && (
@@ -2362,13 +2362,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                                 className="px-2.5 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 text-gray-700 dark:text-gray-200 text-xs font-bold transition-all cursor-pointer"
                               >
                                 Details
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleOneClickPrint(ord.id)}
-                                className="px-2 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-100 text-xs font-bold transition-all cursor-pointer"
-                              >
-                                Reprint
                               </button>
                             </>
                           )}
@@ -2479,8 +2472,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                     </p>
                   )}
                   <div className="pt-2 flex flex-wrap gap-2">
-                    {selectedOrder.tab !== 'payment_pending' && <>
-                    <button
+                    {['AWAITING_REVIEW', 'READY_FOR_PRINT'].includes(selectedOrder.rawStatus) && selectedOrder.tab !== 'payment_pending' && <button
                       type="button"
                       onClick={() => {
                         handleOneClickPrint(selectedOrder.id);
@@ -2490,16 +2482,15 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                     >
                       <span>🖨️</span>
                       <span>Let it Print (Dispatch)</span>
-                    </button>
-                    <button
+                    </button>}
+                    {selectedOrder.rawStatus === 'READY_FOR_COLLECTION' && <button
                       type="button"
                       onClick={() => handleMarkCollected(selectedOrder.id)}
                       className="flex-1 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer flex items-center justify-center gap-1.5"
                     >
                       <span>✓</span>
-                      <span>Complete Order</span>
-                    </button>
-                    </>}
+                      <span>Mark collected</span>
+                    </button>}
                     {selectedOrder.tab === 'pending' && (
                       <button
                         type="button"
@@ -2513,6 +2504,26 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                       </button>
                     )}
                   </div>
+
+                  {['IN_PROGRESS', 'PRINT_UNCONFIRMED'].includes(selectedOrder.rawStatus) && (
+                    <section className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3 dark:border-amber-900 dark:bg-amber-950/30">
+                      <div>
+                        <h4 className="text-xs font-extrabold text-amber-950 dark:text-amber-100">Reconcile physical print output</h4>
+                        <p className="mt-1 text-[11px] leading-5 text-amber-900/80 dark:text-amber-200/80">Inspect the printer and every requested page. This confirms all files in the order are complete; spooler acceptance alone is not proof of printed output.</p>
+                      </div>
+                      <label className="flex items-start gap-2 text-[11px] font-semibold text-amber-950 dark:text-amber-100">
+                        <input type="checkbox" checked={physicalOutputConfirmed} onChange={(event) => setPhysicalOutputConfirmed(event.target.checked)} className="mt-0.5" />
+                        I physically inspected the output and confirmed every requested page was produced.
+                      </label>
+                      <label className="block text-[11px] font-semibold text-amber-950 dark:text-amber-100">
+                        Inspection note
+                        <textarea value={reconcileReason} onChange={(event) => setReconcileReason(event.target.value)} maxLength={500} minLength={10} rows={2} placeholder="Describe what you inspected (10–500 characters)" className="mt-1.5 w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs text-slate-900 dark:border-amber-800 dark:bg-slate-900 dark:text-white" />
+                      </label>
+                      <button type="button" disabled={!physicalOutputConfirmed || reconcileReason.trim().length < 10 || reconcilingOutput} onClick={() => { void handleReconcilePrintOutput(selectedOrder.id); }} className="w-full rounded-lg bg-amber-700 px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
+                        {reconcilingOutput ? 'Saving reconciliation…' : 'Confirm inspected output'}
+                      </button>
+                    </section>
+                  )}
                 </div>
               </div>
             )}

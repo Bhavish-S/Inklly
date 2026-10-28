@@ -15,7 +15,8 @@ import { createSubscriptionRoutes } from './routes/subscription-routes';
 import { assertSessionSecretConfigured } from './middleware/session-token';
 import { purgeExpiredPrintFiles } from './services/print-file-retention';
 import { PrivateFileStorage } from './services/private-file-storage';
-import { createPublicUploadConcurrencyGuard } from './middleware/public-upload-guard';
+import { createUploadConcurrencyGuard } from './middleware/public-upload-guard';
+import { authenticate, enforceTenantIsolation, requireActiveSubscription, requirePermission } from './middleware/auth';
 import { EnquiryRepository } from '@inklly/db';
 import { EnquiryController } from './controllers/enquiry-controller';
 import { createEnquiryRateLimit } from './middleware/enquiry-rate-limit';
@@ -33,12 +34,27 @@ export function createApp(db?: DatabaseService): express.Express {
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key'],
   }));
+  const database = db || DatabaseService.getInstance(process.env.DATABASE_URL || process.env.DB_PATH || path.join(process.cwd(), 'data', 'inklly.db'));
   const maxConcurrentUploads = Number(process.env.MAX_CONCURRENT_PUBLIC_UPLOADS) || 2;
-  // This must run before express.json so capacity-rejected uploads do not
-  // allocate/decode large base64 request bodies first.
-  app.use('/api/v1/portal/upload', createPublicUploadConcurrencyGuard(maxConcurrentUploads));
+  const uploadCapacityGuard = createUploadConcurrencyGuard(maxConcurrentUploads);
+  const maxFileSizeMb = Math.max(1, Math.min(35, Number(process.env.MAX_FILE_SIZE_MB) || 25));
+  const fileUploadJsonParser = express.json({ limit: `${maxFileSizeMb * 2}mb` });
+
+  // Large base64 bodies are accepted only on the two file-upload routes. The
+  // merchant vault checks the persisted session, tenant, subscription, and
+  // permission before parsing; both routes share one in-flight capacity cap.
+  app.post('/api/v1/portal/upload', uploadCapacityGuard, fileUploadJsonParser);
+  app.post(
+    '/api/v1/merchant/storage/documents',
+    uploadCapacityGuard,
+    authenticate(database),
+    enforceTenantIsolation,
+    requireActiveSubscription(database),
+    requirePermission('storage:manage'),
+    fileUploadJsonParser
+  );
   app.use(express.json({
-    limit: `${Math.max(1, Math.min(35, Number(process.env.MAX_FILE_SIZE_MB) || 25)) * 2}mb`,
+    limit: '1mb',
     verify: (req, _res, buffer) => {
       if (req.url?.startsWith('/api/v1/payments/webhook/')) (req as any).rawBody = Buffer.from(buffer);
     },
@@ -51,7 +67,6 @@ export function createApp(db?: DatabaseService): express.Express {
   }
   // Public downloads are deliberately disabled. Agent installers need an owner-scoped flow.
 
-  const database = db || DatabaseService.getInstance(process.env.DATABASE_URL || process.env.DB_PATH || path.join(process.cwd(), 'data', 'inklly.db'));
   const fileStorage = new PrivateFileStorage();
   app.locals.privateFileStorage = fileStorage;
   seedDatabase(database);
@@ -90,6 +105,9 @@ export function createApp(db?: DatabaseService): express.Express {
 
   // Global Error Handler
   app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    if (err?.type === 'entity.too.large' || err?.status === 413) {
+      return res.status(413).json({ error: 'Request body is too large.' });
+    }
     const requestId = crypto.randomUUID();
     // Keep provider credentials, database details, and stack traces out of API
     // responses while giving operators a stable correlation handle.

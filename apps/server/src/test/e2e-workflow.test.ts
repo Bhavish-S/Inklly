@@ -211,7 +211,7 @@ describe('Inklly End-to-End Automated Printing & Multi-Plan Workflow Test Suite'
   // ─────────────────────────────────────────────────────────────
   // STEP 5: EDGE PRINT AGENT QUEUE POLLING & LIFECYCLE
   // ─────────────────────────────────────────────────────────────
-  it('Step 5: Edge Print Agent polls queue and updates order to READY_FOR_COLLECTION and COLLECTED', async () => {
+  it('Step 5: Agent reports spooler submission; merchant verifies output before collection', async () => {
     // 5a. Authenticated agent polls pending tickets
     const pollRes = await fetch(`${baseUrl}/api/v1/agent/poll-commands`, { headers: agentHeaders });
     assert.equal(pollRes.status, 200);
@@ -220,13 +220,22 @@ describe('Inklly End-to-End Automated Printing & Multi-Plan Workflow Test Suite'
     assert.ok(ticket, 'Agent should receive the submitted order ticket');
     const ackRes = await fetch(`${baseUrl}/api/v1/agent/acknowledge-command`, { method: 'POST', headers: agentHeaders, body: JSON.stringify({ commandId: ticket.commandId, attemptId: ticket.attemptId }) });
     assert.equal(ackRes.status, 200);
-    const resultRes = await fetch(`${baseUrl}/api/v1/agent/command-result`, { method: 'POST', headers: agentHeaders, body: JSON.stringify({ jobId: ticket.jobId, attemptId: ticket.attemptId, status: 'PRINT_CONFIRMED', timestamp: new Date().toISOString() }) });
+    const resultRes = await fetch(`${baseUrl}/api/v1/agent/command-result`, { method: 'POST', headers: agentHeaders, body: JSON.stringify({ jobId: ticket.jobId, attemptId: ticket.attemptId, status: 'SUBMITTED_TO_SPOOLER', timestamp: new Date().toISOString() }) });
     assert.equal(resultRes.status, 200);
 
-    // Successful agent confirmation moves the order to READY_FOR_COLLECTION.
-    const readyRes = await fetch(`${baseUrl}/api/v1/portal/orders/${createdOrderId}`);
+    // Spooler submission is not physical output confirmation.
+    let readyRes = await fetch(`${baseUrl}/api/v1/portal/orders/${createdOrderId}`);
     assert.equal(readyRes.status, 200);
-    const readyOrder = await readyRes.json();
+    let readyOrder = await readyRes.json();
+    assert.equal(readyOrder.status, 'IN_PROGRESS');
+    const reconcileRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${createdOrderId}/reconcile-output`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+      body: JSON.stringify({ physicalOutputConfirmed: true, reason: 'Verified completed pages at the assigned printer.' }),
+    });
+    assert.equal(reconcileRes.status, 200);
+    readyRes = await fetch(`${baseUrl}/api/v1/portal/orders/${createdOrderId}`);
+    readyOrder = await readyRes.json();
     assert.equal(readyOrder.status, 'READY_FOR_COLLECTION');
 
     // 5c. Customer collects printed job: transition to COLLECTED

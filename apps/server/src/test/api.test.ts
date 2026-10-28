@@ -86,6 +86,23 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(res.status, 401);
   });
 
+  it('checks vault authorization before parsing large uploads and caps ordinary JSON bodies', async () => {
+    const largeBody = JSON.stringify({ padding: 'x'.repeat(1024 * 1024 + 32) });
+    const unauthorizedVaultUpload = await fetch(`${baseUrl}/api/v1/merchant/storage/documents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: largeBody,
+    });
+    assert.equal(unauthorizedVaultUpload.status, 401);
+
+    const oversizedLogin = await fetch(`${baseUrl}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: largeBody,
+    });
+    assert.equal(oversizedLogin.status, 413);
+  });
+
   it('keeps merchant self-service API credentials disabled until governance approval', async () => {
     const loginRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
       method: 'POST',
@@ -758,6 +775,12 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(db.queryOne<any>(`SELECT status FROM print_attempts WHERE id = ?`, [expiredTicket.attemptId]).status, 'OUTPUT_UNCERTAIN');
 
     if (ticket) {
+      const agentClaimedPhysicalOutput = await fetch(`${baseUrl}/api/v1/agent/command-result`, {
+        method: 'POST', headers: agentHeaders,
+        body: JSON.stringify({ attemptId: ticket.attemptId, jobId: ticket.jobId, status: 'PRINT_CONFIRMED', timestamp: new Date().toISOString() }),
+      });
+      assert.equal(agentClaimedPhysicalOutput.status, 409, 'the agent cannot attest physical output');
+
       // Report Uncertain Output - safety invariant verification!
       const resultRes = await fetch(`${baseUrl}/api/v1/agent/command-result`, {
         method: 'POST',
@@ -773,6 +796,28 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       assert.equal(resultRes.status, 200);
       const resBody = await resultRes.json();
       assert.equal(resBody.recordedStatus, 'OUTPUT_UNCERTAIN');
+
+      const unsupportedDirectReady = await fetch(`${baseUrl}/api/v1/merchant/orders/${cashOrderId}/status`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+        body: JSON.stringify({ status: 'READY_FOR_COLLECTION' }),
+      });
+      assert.equal(unsupportedDirectReady.status, 409);
+
+      const reconciliation = await fetch(`${baseUrl}/api/v1/merchant/orders/${cashOrderId}/reconcile-output`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+        body: JSON.stringify({ physicalOutputConfirmed: true, reason: 'Inspected all pages in the output tray and confirmed the full order is present.' }),
+      });
+      assert.equal(reconciliation.status, 200, await reconciliation.clone().text());
+      assert.equal(db.queryOne<any>(`SELECT status FROM print_jobs WHERE id = ?`, [ticket.jobId]).status, 'PRINT_CONFIRMED');
+      assert.equal(db.queryOne<any>(`SELECT status FROM orders WHERE id = ?`, [cashOrderId]).status, 'READY_FOR_COLLECTION');
+      assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM audit_events WHERE action = 'MERCHANT_PRINT_OUTPUT_RECONCILED' AND target_id = ?`, [cashOrderId]).count), 1);
+
+      const delayedAgentReport = await fetch(`${baseUrl}/api/v1/agent/command-result`, {
+        method: 'POST', headers: agentHeaders,
+        body: JSON.stringify({ attemptId: ticket.attemptId, jobId: ticket.jobId, status: 'OUTPUT_UNCERTAIN', errorMessage: 'Delayed retry of the earlier agent report.', timestamp: new Date().toISOString() }),
+      });
+      assert.equal(delayedAgentReport.status, 200, 'a delayed result must not regress operator-reconciled output');
+      assert.equal(db.queryOne<any>(`SELECT status FROM print_jobs WHERE id = ?`, [ticket.jobId]).status, 'PRINT_CONFIRMED');
     }
   });
 
@@ -1142,6 +1187,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       '/merchant/orders/{id}': ['get'],
       '/merchant/orders/{id}/files/{fileId}': ['get'],
       '/merchant/orders/{id}/status': ['patch'],
+      '/merchant/orders/{id}/reconcile-output': ['post'],
       '/merchant/orders/{id}/print': ['post'],
       '/merchant/agents/pairing-code': ['post'],
       '/merchant/agents/{id}': ['delete'],

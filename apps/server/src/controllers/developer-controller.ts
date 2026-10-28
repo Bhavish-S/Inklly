@@ -12,6 +12,7 @@ const MERCHANT_ROUTE_DOCUMENTATION: Array<{ path: string; method: string; summar
   { path: '/merchant/orders/{id}', method: 'get', summary: 'Get a merchant order', access: 'Requires orders:view.' },
   { path: '/merchant/orders/{id}/files/{fileId}', method: 'get', summary: 'Download a private order file', access: 'Requires orders:view and order/file ownership.' },
   { path: '/merchant/orders/{id}/status', method: 'patch', summary: 'Update merchant order status', access: 'Requires orders:process.' },
+  { path: '/merchant/orders/{id}/reconcile-output', method: 'post', summary: 'Confirm physically inspected print output', access: 'Requires orders:process and an audited operator confirmation.' },
   { path: '/merchant/orders/{id}/print', method: 'post', summary: 'Release a merchant order to printing', access: 'Requires live_print:manage.' },
   { path: '/merchant/agents/pairing-code', method: 'post', summary: 'Create a desktop-agent pairing code', access: 'Restricted to MERCHANT_OWNER.' },
   { path: '/merchant/agents/{id}', method: 'delete', summary: 'Revoke a registered desktop agent', access: 'Restricted to MERCHANT_OWNER.' },

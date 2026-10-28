@@ -37,7 +37,9 @@ export interface PrintCommandTicket {
 export interface SpoolerResult {
   attemptId: string;
   jobId: string;
-  status: 'SUBMITTED_TO_SPOOLER' | 'PRINT_CONFIRMED' | 'OUTPUT_UNCERTAIN' | 'FAILED';
+  // The desktop agent can report spooler submission, not physical page output.
+  // PRINT_CONFIRMED is reserved for an audited merchant reconciliation.
+  status: 'SUBMITTED_TO_SPOOLER' | 'OUTPUT_UNCERTAIN' | 'FAILED';
   driverJobId?: number;
   pagesPrinted?: number;
   errorMessage?: string;
