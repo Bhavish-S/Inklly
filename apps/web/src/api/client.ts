@@ -641,6 +641,13 @@ export const api = {
     return res.json();
   },
 
+  async getPlatformPlans() {
+    const res = await fetch(`${API_BASE}/platform/plans`, { headers: getHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to load plan catalog');
+    return body;
+  },
+
   async createSubscription(data: { organizationId: string; planId: string; planTier: string; amountPaise: number; currency?: string }) {
     const res = await fetch(`${API_BASE}/platform/subscriptions`, {
       method: 'POST', headers: getHeaders(), body: JSON.stringify(data),

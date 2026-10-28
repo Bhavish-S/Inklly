@@ -363,7 +363,16 @@ export class AdminController {
   };
 
   public getPlans = (req: Request, res: Response) => {
-    res.json(SAAS_PLANS);
+    // Pilot pricing is intentionally configurable per tenant and no paid
+    // subscription checkout is active. Do not expose illustrative source
+    // prices as amounts merchants are currently charged.
+    res.json(SAAS_PLANS.map(({ monthlyPricePaise: _monthly, annualPricePaise: _annual, ...plan }) => ({
+      ...plan,
+      catalogStatus: 'PLANNED_NOT_ENFORCED',
+      pricing: 'CONFIGURED_PER_PILOT',
+      monthlyPricePaise: null,
+      annualPricePaise: null,
+    })));
   };
 
   public getPlatformLedger = (req: Request, res: Response) => {

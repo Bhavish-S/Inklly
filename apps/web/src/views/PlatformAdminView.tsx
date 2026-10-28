@@ -22,25 +22,6 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
   const [loading, setLoading] = useState(true);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Platform Runtime Configuration State
-  const [platformConfig, setPlatformConfig] = useState({
-    operatingCurrency: 'INR',
-    minorUnitMultiplier: 100,
-    platformFeeBasisPoints: 200, // 2.0%
-    minPayoutAmountPaise: 10000, // ₹100
-    loopbackPort: 8765,
-    heartbeatIntervalSeconds: 15,
-    heartbeatTimeoutSeconds: 45,
-    maxUploadSizeMb: 50,
-    maxPagesPerDoc: 250,
-    paperJamPolicy: 'OUTPUT_UNCERTAIN',
-    canvasCropEnabled: true,
-    upiDynamicQrEnabled: true,
-    whatsappGatewayEnabled: true,
-    emergencyOfflineQueueEnabled: true,
-    makerCheckerPayoutThresholdPaise: 5000000, // ₹50,000
-  });
-
   // Onboard Merchant Modal State
   const [showOnboardModal, setShowOnboardModal] = useState<boolean>(false);
   const [newOrgName, setNewOrgName] = useState('');
@@ -51,78 +32,9 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
   const [isOnboarding, setIsOnboarding] = useState(false);
   const [provisionedInvitationLink, setProvisionedInvitationLink] = useState('');
 
-  // Incidents Mock State
-  const [incidents, setIncidents] = useState([
-    {
-      id: 'INC-891',
-      severity: 'HIGH',
-      title: 'Spooler Paper Jam Halted (OUTPUT_UNCERTAIN)',
-      merchant: 'Campus Print Express (campus1)',
-      printer: 'Canon LBP2900 (USB Laser)',
-      slaMinutes: 12,
-      status: 'INVESTIGATING',
-      reportedAt: '10 mins ago',
-    },
-    {
-      id: 'INC-892',
-      severity: 'MEDIUM',
-      title: 'WhatsApp Cloud API Webhook Spike (Meta API)',
-      merchant: 'Printing Shopz Pune',
-      printer: 'Canon C3530i',
-      slaMinutes: 45,
-      status: 'RESOLVED',
-      reportedAt: '1 hour ago',
-    },
-    {
-      id: 'INC-893',
-      severity: 'LOW',
-      title: 'Delayed UPI Webhook Confirmation (Auto-Retried)',
-      merchant: 'Express Print Zone',
-      printer: 'Epson EcoTank',
-      slaMinutes: 120,
-      status: 'RESOLVED',
-      reportedAt: '3 hours ago',
-    },
-  ]);
-
   const [agentFleet, setAgentFleet] = useState<any[]>([]);
-
-  // SaaS Plans Catalog
-  const [plansCatalog, setPlansCatalog] = useState([
-    {
-      tier: 'starter',
-      name: 'Starter Plan',
-      priceMonthlyPaise: 49900,
-      priceYearlyPaise: 39900,
-      maxShops: 1,
-      maxPrinters: 2,
-      includedCredits: 500,
-      features: ['Countertop QR Ordering', 'Integer Paise Billing', 'Local Windows Spooler', 'Standard Email Support'],
-      activeSubscribers: 14,
-    },
-    {
-      tier: 'growth',
-      name: 'Growth Plan',
-      priceMonthlyPaise: 99900,
-      priceYearlyPaise: 79900,
-      maxShops: 3,
-      maxPrinters: 6,
-      includedCredits: 2500,
-      features: ['Priority Spooling Buffer', 'Auto-Responder WhatsApp Bot', 'Custom Store Branding', 'Paper Jam Safety SLA'],
-      activeSubscribers: 28,
-    },
-    {
-      tier: 'enterprise',
-      name: 'Enterprise Fleet',
-      priceMonthlyPaise: 249900,
-      priceYearlyPaise: 199900,
-      maxShops: 99,
-      maxPrinters: 99,
-      includedCredits: 10000,
-      features: ['Unlimited Spooler Nodes', 'Multi-Branch Tenant Scoping', 'Dedicated Account Manager', 'Custom API Webhooks'],
-      activeSubscribers: 8,
-    },
-  ]);
+  const [platformPlans, setPlatformPlans] = useState<any[]>([]);
+  const [subscriptions, setSubscriptions] = useState<any[]>([]);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -136,7 +48,7 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
   const loadPlatformData = async () => {
     try {
       setLoading(true);
-      const [ovData, merData, ledData, audData, enquiryData, agentData, retentionData] = await Promise.all([
+      const [ovData, merData, ledData, audData, enquiryData, agentData, retentionData, plansData, subscriptionData] = await Promise.all([
         api.getPlatformOverview(),
         api.getPlatformMerchants(),
         api.getPlatformLedger(selectedDomain === 'ALL' ? undefined : selectedDomain),
@@ -144,6 +56,8 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
         api.getPlatformEnquiries(),
         api.getPlatformAgents(),
         api.getPlatformRetentionStats(),
+        api.getPlatformPlans(),
+        api.getSubscriptions(),
       ]);
       setOverview(ovData);
       setMerchants(merData);
@@ -152,6 +66,8 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
       setEnquiries(enquiryData);
       setAgentFleet(agentData);
       setStorageStats(retentionData);
+      setPlatformPlans(plansData);
+      setSubscriptions(subscriptionData);
     } catch (err: any) {
       console.error('Failed to load platform data:', err);
     } finally {
@@ -176,96 +92,8 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
     }
   };
 
-  const handleResolveIncident = (incId: string) => {
-    setIncidents((prev) =>
-      prev.map((inc) => (inc.id === incId ? { ...inc, status: 'RESOLVED' } : inc))
-    );
-    showToast(`Incident ${incId} marked as Resolved.`);
-  };
-
-  // Agent Builds Catalog
-  const [agentBuilds, setAgentBuilds] = useState([
-    {
-      id: 'bld-v161-win64',
-      name: 'Inklly Edge Spooler for Windows 10/11 (64-bit)',
-      filename: 'Inklly-Agent-1.6.1-win-x64.msi',
-      channel: 'STABLE (RECOMMENDED)',
-      targetOS: 'Windows 10/11 x64',
-      sizeMb: '18.4 MB',
-      sha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-      releasedAt: '2026-10-25',
-      isRecommended: true,
-      downloadsCount: 1420,
-    },
-    {
-      id: 'bld-v155-win7',
-      name: 'Inklly Legacy Agent (Windows 7/8 32-bit & 64-bit)',
-      filename: 'Inklly-LegacyAgent-1.5.5-win7-x86.msi',
-      channel: 'LEGACY FALLBACK',
-      targetOS: 'Windows 7/8/XP (x86 & x64)',
-      sizeMb: '14.1 MB',
-      sha256: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08',
-      releasedAt: '2026-09-12',
-      isRecommended: false,
-      downloadsCount: 388,
-    },
-    {
-      id: 'bld-setup-bat',
-      name: 'Inklly Portable Zero-Install Windows Runner',
-      filename: 'Inklly-Agent-Setup.bat',
-      channel: 'PORTABLE SCRIPT',
-      targetOS: 'Any Windows with Node.js 18+',
-      sizeMb: '2.4 KB',
-      sha256: '5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8',
-      releasedAt: '2026-10-25',
-      isRecommended: false,
-      downloadsCount: 924,
-    },
-  ]);
-
   const [storageStats, setStorageStats] = useState<any>(null);
   const [isPurgingRetention, setIsPurgingRetention] = useState(false);
-
-  const handleDownloadBuild = (filename: string, fileTitle: string) => {
-    let payloadContent = '';
-    let mimeType = 'application/octet-stream';
-
-    if (filename.endsWith('.bat')) {
-      mimeType = 'application/x-bat';
-      payloadContent = `@echo off
-echo =======================================================
-echo Inklly Edge Spooler Daemon Installer (Production)
-echo =======================================================
-echo Checking Node.js runtime...
-node -v >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ERROR] Node.js 18+ is required. Please install from https://nodejs.org
-    pause
-    exit /b 1
-)
-echo [OK] Node.js detected.
-echo Configuring local loopback daemon on port 8765...
-mkdir "%ProgramData%\\Inklly" 2>nul
-echo Initializing Windows Spooler WMI integration...
-echo Inklly Desktop Agent successfully deployed!
-echo Listening on http://127.0.0.1:8765
-pause
-`;
-    } else {
-      payloadContent = `Inklly Enterprise Windows Installer Package: ${filename}\nVersion: 1.6.1-win-x64\nSignature: SHA-256 Verified\nTarget: Microsoft Windows 10/11 x64\nLocal Spooler Port: 8765\nPublisher: Inklly Technologies India Pvt Ltd`;
-    }
-
-    const blob = new Blob([payloadContent], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    showToast(`📥 Started download: ${fileTitle} (${filename})`);
-  };
 
   const handleTriggerRetentionPurge = async () => {
     setIsPurgingRetention(true);
@@ -383,20 +211,6 @@ pause
     } finally {
       setIsOnboarding(false);
     }
-  };
-
-  const handleSaveConfig = (e: React.FormEvent) => {
-    e.preventDefault();
-    const auditRecord = {
-      id: `aud-${Date.now().toString(36)}`,
-      actor_user_id: 'usr_platform_owner',
-      action: 'UPDATE_PLATFORM_RUNTIME_CONFIG (System Rules & Thresholds Saved)',
-      entity_id: 'config_global',
-      ip_address: '127.0.0.1 (Loopback Console)',
-      created_at: new Date().toISOString(),
-    };
-    setAuditLogs([auditRecord, ...auditLogs]);
-    showToast('⚙️ Platform Runtime Configuration & System Rules saved successfully!');
   };
 
   const filteredMerchants = merchants.filter((m) => {
@@ -594,8 +408,8 @@ pause
                   onClick={() => setActiveTab('incidents')}
                   className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800/60 text-red-700 dark:text-red-300 rounded-xl font-bold hover:bg-red-100/50 cursor-pointer text-left"
                 >
-                  🚨 Active Incidents ({incidents.filter((i) => i.status !== 'RESOLVED').length})
-                  <div className="text-[10px] font-normal opacity-80 mt-1">Paper jam & webhook alerts</div>
+                  🚨 Incident management unavailable
+                  <div className="text-[10px] font-normal opacity-80 mt-1">No persistent incident service is configured</div>
                 </button>
                 <button
                   type="button"
@@ -603,7 +417,7 @@ pause
                   className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 text-emerald-700 dark:text-emerald-300 rounded-xl font-bold hover:bg-emerald-100/50 cursor-pointer text-left"
                 >
                   💎 Review SaaS Plans
-                  <div className="text-[10px] font-normal opacity-80 mt-1">Starter, Growth, Enterprise</div>
+                  <div className="text-[10px] font-normal opacity-80 mt-1">Code-managed pilot tiers; checkout is inactive</div>
                 </button>
               </div>
             </div>
@@ -777,160 +591,41 @@ pause
           TAB 3: WINDOWS AGENT BUILDS & DISTRIBUTION
       ═══════════════════════════════════════════════════════════════ */}
       {activeTab === 'builds' && (
-        <div className="space-y-6">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-xs">
-            <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 pb-5 border-b border-slate-100 dark:border-slate-800">
-              <div>
-                <h2 className="text-base font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
-                  <span>📦</span>
-                  <span>Windows Desktop Agent Releases & Fleet Binaries</span>
-                </h2>
-                <p className="text-xs text-slate-400 mt-1">
-                  Distribution channel for Inklly Desktop Spooler nodes, MSI installers, and legacy print fallback engines
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="px-3 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 border border-indigo-200/50">
-                  Loopback: 127.0.0.1:8765
-                </span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
-              {agentBuilds.map((build) => (
-                <div
-                  key={build.id}
-                  className={`rounded-2xl border p-5 flex flex-col justify-between transition-all ${
-                    build.isRecommended
-                      ? 'border-[#4D64E6] bg-indigo-50/20 dark:bg-indigo-950/20 ring-2 ring-[#4D64E6]/20'
-                      : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900'
-                  }`}
-                >
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
-                        build.isRecommended
-                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                          : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
-                      }`}>
-                        {build.channel}
-                      </span>
-                      <span className="text-xs font-mono text-slate-400">{build.sizeMb}</span>
-                    </div>
-
-                    <div>
-                      <h3 className="text-sm font-bold text-slate-900 dark:text-white leading-snug">
-                        {build.name}
-                      </h3>
-                      <p className="text-xs text-slate-500 mt-1">Target: {build.targetOS}</p>
-                    </div>
-
-                    <div className="bg-slate-100 dark:bg-slate-800/80 rounded-xl p-2.5 text-[10px] font-mono text-slate-500 space-y-1">
-                      <div className="truncate">File: {build.filename}</div>
-                      <div className="truncate">SHA-256: {build.sha256.slice(0, 20)}...</div>
-                      <div>Released: {build.releasedAt} • {build.downloadsCount} installs</div>
-                    </div>
-                  </div>
-
-                  <div className="pt-4 mt-2">
-                    <button
-                      type="button"
-                      onClick={() => handleDownloadBuild(build.filename, build.name)}
-                      className={`w-full py-2.5 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                        build.isRecommended
-                          ? 'bg-[#4D64E6] hover:bg-indigo-600 text-white shadow-md shadow-[#4D64E6]/25'
-                          : 'bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200'
-                      }`}
-                    >
-                      <DownloadIcon size={14} />
-                      <span>Download {build.filename.endsWith('.msi') ? 'MSI Package' : 'Runner Script'}</span>
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-6 p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400 space-y-2">
-              <div className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <span>🛡️</span>
-                <span>Hardware Safety & Loopback Architecture Guidelines</span>
-              </div>
-              <p>
-                Inklly's desktop agent runs natively on the counter computer, listening exclusively on loopback interface <code className="font-mono text-indigo-600 dark:text-indigo-400">http://127.0.0.1:8765</code>. It interfaces with the Windows Print Spooler via native WMI (<code className="font-mono">Win32_Printer</code>) and handles direct raw PDF submission through verified headless binaries (SumatraPDF) to avoid CAPT and GDI driver freezes.
-              </p>
-            </div>
-          </div>
-        </div>
+        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100" role="status">
+          <h2 className="text-base font-extrabold">Verified agent installer unavailable</h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6">This deployment has no signed, verified installer configured. Download links are disabled until a real artifact, checksum, signature, and release record are available.</p>
+        </section>
       )}
 
       {/* ═══════════════════════════════════════════════════════════════
           TAB 4: SAAS PLANS & ENTITLEMENTS
       ═══════════════════════════════════════════════════════════════ */}
       {activeTab === 'plans' && (
-        <div className="space-y-6">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs flex justify-between items-center">
-            <div>
-              <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
-                SaaS Subscription Plans & Quotas (v2.4 Active)
-              </h2>
-              <p className="text-xs text-slate-400">
-                Deterministic billing tiers, printer limits, and conversion credit allowances
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => showToast('Plan catalog is locked to versioned config v2.4.')}
-              className="px-3.5 py-1.5 bg-[#4D64E6] text-white rounded-xl text-xs font-bold cursor-pointer"
-            >
-              + Create Plan Version
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {plansCatalog.map((plan) => (
-              <div key={plan.tier} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-xs space-y-4">
-                <div className="flex justify-between items-center">
-                  <h3 className="font-extrabold text-base text-slate-900 dark:text-white">{plan.name}</h3>
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-100 text-blue-700">
-                    {plan.activeSubscribers} Subscribers
-                  </span>
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+          <h2 className="text-base font-extrabold text-slate-900 dark:text-white">Pilot plan tiers</h2>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Tier definitions come from the API catalog. Prices are configured per pilot; checkout, printed-side billing, and quota enforcement are not active.</p>
+          <div className="mt-5 grid gap-4 md:grid-cols-2">
+            {platformPlans.map((plan: any) => (
+              <article key={plan.id} className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+                <div className="flex items-start justify-between gap-3">
+                  <div><h3 className="font-bold text-slate-900 dark:text-white">{plan.name}</h3><p className="text-xs text-slate-500">{plan.tier}</p></div>
+                  <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-300">{subscriptions.filter((sub: any) => sub.planTier === plan.tier && ['ACTIVE', 'TRIALING', 'GRACE'].includes(sub.status)).length} active or trial</span>
                 </div>
-                <div className="text-2xl font-black text-slate-900 dark:text-white">
-                  ₹{(plan.priceMonthlyPaise / 100).toFixed(0)} <span className="text-xs font-normal text-slate-400">/ month</span>
-                </div>
-                <div className="space-y-2 text-xs border-t border-b border-slate-100 dark:border-slate-800 py-3 text-slate-600 dark:text-slate-300">
-                  <div className="flex justify-between">
-                    <span>Max Counter Branches:</span>
-                    <span className="font-bold">{plan.maxShops}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Max Connected Spoolers:</span>
-                    <span className="font-bold">{plan.maxPrinters}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Included Credits:</span>
-                    <span className="font-bold">{plan.includedCredits} / mo</span>
-                  </div>
-                </div>
-                <div className="space-y-1.5 text-xs text-slate-500">
-                  {plan.features.map((feat, idx) => (
-                    <div key={idx} className="flex items-center gap-1.5">
-                      <span className="text-emerald-500 font-bold">✓</span>
-                      <span>{feat}</span>
-                    </div>
-                  ))}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => showToast(`Updated quotas for ${plan.name}.`)}
-                  className="w-full py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 font-bold text-xs rounded-xl cursor-pointer"
-                >
-                  Configure Entitlements
-                </button>
-              </div>
+                <p className="mt-3 text-sm font-semibold text-slate-700 dark:text-slate-200">Pricing: configured per pilot</p>
+                <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">Listed quotas and features are catalog values; enforcement and entitlement editing are not active.</p>
+                <dl className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600 dark:text-slate-300">
+                  <div><dt className="text-slate-400">Monthly order limit</dt><dd className="font-bold">{plan.orderLimitMonthly.toLocaleString()}</dd></div>
+                  <div><dt className="text-slate-400">Printer limit</dt><dd className="font-bold">{plan.printerLimit}</dd></div>
+                  <div><dt className="text-slate-400">Max file size</dt><dd className="font-bold">{plan.fileSizeMaxMB} MB</dd></div>
+                  <div><dt className="text-slate-400">Included conversion credits</dt><dd className="font-bold">{plan.includedConversionCredits}</dd></div>
+                </dl>
+                <ul className="mt-3 space-y-1 text-xs text-slate-500">{plan.features.map((feature: string) => <li key={feature}>• {feature}</li>)}</ul>
+              </article>
             ))}
+            {platformPlans.length === 0 && <p className="text-sm text-slate-500">The plan catalog could not be loaded.</p>}
           </div>
-        </div>
+          <div className="mt-5 border-t border-slate-100 pt-4 text-xs text-amber-700 dark:border-slate-800 dark:text-amber-300">Plan catalog and quota editing are code-managed. No plan changes or charges can be made from this page.</div>
+        </section>
       )}
 
       {/* ═══════════════════════════════════════════════════════════════
@@ -1103,147 +798,10 @@ pause
           TAB 6: INCIDENTS
       ═══════════════════════════════════════════════════════════════ */}
       {activeTab === 'incidents' && (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xs overflow-hidden">
-          <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
-            <div>
-              <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
-                Platform Incident & Hardware Escalation Queue
-              </h2>
-              <p className="text-xs text-slate-400">
-                Spooler paper jam halts, webhook latency spikes, and automated failure tickets
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => showToast('New incident ticket opened.')}
-              className="px-3.5 py-1.5 bg-red-600 text-white rounded-xl text-xs font-bold cursor-pointer"
-            >
-              + Create Incident
-            </button>
-          </div>
-
-          <div className="divide-y divide-slate-100 dark:divide-slate-800">
-            {incidents.map((inc) => (
-              <div key={inc.id} className="p-4 flex flex-col sm:flex-row justify-between sm:items-center gap-3 hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
-                        inc.severity === 'HIGH'
-                          ? 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'
-                          : inc.severity === 'MEDIUM'
-                          ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                          : 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
-                      }`}
-                    >
-                      {inc.severity}
-                    </span>
-                    <span className="font-mono text-xs text-slate-400 font-bold">{inc.id}</span>
-                    <h3 className="font-bold text-xs text-slate-900 dark:text-white">{inc.title}</h3>
-                  </div>
-                  <div className="text-[11px] text-slate-500">
-                    Store: <span className="font-semibold text-slate-700 dark:text-slate-300">{inc.merchant}</span> · Hardware: {inc.printer} · Reported {inc.reportedAt}
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold ${
-                      inc.status === 'RESOLVED'
-                        ? 'bg-emerald-100 text-emerald-800'
-                        : 'bg-amber-100 text-amber-800'
-                    }`}
-                  >
-                    {inc.status}
-                  </span>
-                  {inc.status !== 'RESOLVED' && (
-                    <button
-                      type="button"
-                      onClick={() => handleResolveIncident(inc.id)}
-                      className="px-3 py-1 bg-emerald-600 text-white rounded-lg font-bold text-[11px] hover:bg-emerald-700 cursor-pointer shadow-xs"
-                    >
-                      Mark Resolved
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ═══════════════════════════════════════════════════════════════
-          TAB: STORAGE & DATA RETENTION
-      ═══════════════════════════════════════════════════════════════ */}
-      {activeTab === 'retention' && (
-        <div className="space-y-6">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-xs">
-            <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 pb-5 border-b border-slate-100 dark:border-slate-800">
-              <div>
-                <h2 className="text-base font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
-                  <span>🧹</span>
-                  <span>Server Storage & Document Retention Policy</span>
-                </h2>
-                <p className="text-xs text-slate-400 mt-1">
-                  Database-backed estimates for temporary customer-order files. Merchant vault files are persistent and excluded.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleTriggerRetentionPurge}
-                disabled={isPurgingRetention || !storageStats}
-                className="flex items-center gap-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-rose-600/25 cursor-pointer disabled:cursor-wait"
-              >
-                <span>{isPurgingRetention ? 'Running Retention Pass…' : 'Run Retention Pass Now'}</span>
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mt-6">
-              <div className="bg-slate-50 dark:bg-slate-800/60 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">ACTIVE CUSTOMER FILES</span>
-                <div className="text-2xl font-extrabold text-slate-900 dark:text-white">
-                  {storageStats?.customerOrderFiles?.activeCount ?? '—'}
-                </div>
-                <span className="text-[11px] text-slate-500 font-medium mt-1 block">Database-tracked order files</span>
-              </div>
-
-              <div className="bg-slate-50 dark:bg-slate-800/60 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">TRACKED SIZE ESTIMATE</span>
-                <div className="text-2xl font-extrabold text-indigo-600 dark:text-indigo-400">
-                  {storageStats ? `${(storageStats.customerOrderFiles.storedBytesEstimate / (1024 * 1024)).toFixed(1)} MB` : '—'}
-                </div>
-                <span className="text-[11px] text-slate-500 font-medium mt-1 block">Order files only; excludes unclaimed objects</span>
-              </div>
-
-              <div className="bg-slate-50 dark:bg-slate-800/60 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">ELIGIBLE FOR DELETION</span>
-                <div className="text-2xl font-extrabold text-amber-600">
-                  {storageStats?.customerOrderFiles?.eligibleForDeletionCount ?? '—'} files
-                </div>
-                <span className="text-[11px] text-amber-600 font-medium mt-1 block">After 24h from collection or cancellation</span>
-              </div>
-
-              <div className="bg-slate-50 dark:bg-slate-800/60 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">AUTOMATIC SWEEP</span>
-                <div className="text-2xl font-extrabold text-emerald-600">
-                  Every {storageStats?.policy?.automaticSweepIntervalMinutes ?? '—'} min
-                </div>
-                <span className="text-[11px] text-emerald-600 font-medium mt-1 block">Unclaimed uploads: {storageStats?.policy?.unclaimedUploadRetentionHours ?? '—'}h</span>
-              </div>
-            </div>
-
-            <div className="mt-6 p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400 space-y-2">
-              <div className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <span>🔒</span>
-                <span>Customer Document Privacy Invariant</span>
-              </div>
-              <p>
-                Customer order files are stored in the configured private file store and are eligible for deletion 24 hours after an order is collected or cancelled. Unclaimed uploads are eligible after 48 hours. Merchant vault documents are persistent and are not part of this purge. Size figures are database estimates; unclaimed objects are not included in the counts above.
-              </p>
-            </div>
-          </div>
-        </div>
+        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100" role="status">
+          <h2 className="text-base font-extrabold">Incident management is not configured</h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6">Inklly does not yet have a persistent incident intake, assignment, or resolution workflow. Agent and printer heartbeat data is available in Fleet; it is not an incident queue.</p>
+        </section>
       )}
 
       {/* ═══════════════════════════════════════════════════════════════
@@ -1318,243 +876,37 @@ pause
           TAB 8: SYSTEM CONFIG & RUNTIME RULES
       ═══════════════════════════════════════════════════════════════ */}
       {activeTab === 'config' && (
-        <form onSubmit={handleSaveConfig} className="space-y-6">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-xs space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
-              <div>
-                <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
-                  Platform Runtime Configuration & Safety Rules
-                </h2>
-                <p className="text-xs text-slate-400">
-                  Global parameters, integer arithmetic invariants, edge spooler timeouts, and feature flags
-                </p>
-              </div>
-              <button
-                type="submit"
-                className="flex items-center gap-2 px-5 py-2.5 bg-[#4D64E6] hover:bg-indigo-600 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-[#4D64E6]/25 cursor-pointer shrink-0"
-              >
-                <span>Save Runtime Configuration</span>
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {/* Section 1: Money & Financial Rules */}
-              <div className="space-y-4 p-4 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/60">
-                <h3 className="font-extrabold text-xs uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                  <span>💰</span> Money & Currency Rules
-                </h3>
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                    System Currency
-                  </label>
-                  <input
-                    type="text"
-                    disabled
-                    value={`${platformConfig.operatingCurrency} (Indian Rupee · ₹)`}
-                    className="w-full text-xs p-2 rounded-lg bg-slate-200/60 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono text-slate-600 dark:text-slate-400"
-                  />
-                  <span className="text-[10px] text-slate-400 mt-0.5 block">Invariant: 100 Paise = ₹1.00 (Zero floats)</span>
-                </div>
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                    Platform SaaS Commission Fee
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={platformConfig.platformFeeBasisPoints / 100}
-                      onChange={(e) =>
-                        setPlatformConfig({
-                          ...platformConfig,
-                          platformFeeBasisPoints: Math.round(Number(e.target.value) * 100),
-                        })
-                      }
-                      className="w-full text-xs p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-bold"
-                    />
-                    <span className="text-xs font-bold text-slate-500">%</span>
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                    Minimum Merchant Withdrawal
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-slate-500">₹</span>
-                    <input
-                      type="number"
-                      value={platformConfig.minPayoutAmountPaise / 100}
-                      onChange={(e) =>
-                        setPlatformConfig({
-                          ...platformConfig,
-                          minPayoutAmountPaise: Number(e.target.value) * 100,
-                        })
-                      }
-                      className="w-full text-xs p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-bold"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Section 2: Edge Spooler Standards */}
-              <div className="space-y-4 p-4 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/60">
-                <h3 className="font-extrabold text-xs uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                  <span>🖨️</span> Edge Spooler Standards
-                </h3>
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                    Loopback Port Binding
-                  </label>
-                  <input
-                    type="number"
-                    value={platformConfig.loopbackPort}
-                    onChange={(e) =>
-                      setPlatformConfig({ ...platformConfig, loopbackPort: Number(e.target.value) })
-                    }
-                    className="w-full text-xs p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono font-bold"
-                  />
-                  <span className="text-[10px] text-slate-400 mt-0.5 block">Binds http://127.0.0.1:{platformConfig.loopbackPort}</span>
-                </div>
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                    Heartbeat Interval (Seconds)
-                  </label>
-                  <input
-                    type="number"
-                    value={platformConfig.heartbeatIntervalSeconds}
-                    onChange={(e) =>
-                      setPlatformConfig({
-                        ...platformConfig,
-                        heartbeatIntervalSeconds: Number(e.target.value),
-                      })
-                    }
-                    className="w-full text-xs p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-bold"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                    Paper Jam Safety Policy
-                  </label>
-                  <input
-                    type="text"
-                    disabled
-                    value={platformConfig.paperJamPolicy}
-                    className="w-full text-xs p-2 rounded-lg bg-slate-200/60 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono font-bold text-amber-600"
-                  />
-                  <span className="text-[10px] text-amber-600 mt-0.5 block">Blind retries strictly prohibited</span>
-                </div>
-              </div>
-
-              {/* Section 3: Feature Flags & Gateways */}
-              <div className="space-y-4 p-4 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/60">
-                <h3 className="font-extrabold text-xs uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                  <span>⚡</span> Feature Flags & Killswitches
-                </h3>
-                <div className="space-y-2">
-                  {[
-                    { key: 'canvasCropEnabled', label: 'HTML5 Canvas 2D Crop & Rotate' },
-                    { key: 'upiDynamicQrEnabled', label: 'Dynamic UPI QR Instant Release' },
-                    { key: 'whatsappGatewayEnabled', label: 'Meta WhatsApp Cloud Gateway' },
-                    { key: 'emergencyOfflineQueueEnabled', label: 'Offline SQLite Spool Buffer' },
-                  ].map((flag) => (
-                    <label key={flag.key} className="flex items-center justify-between text-xs cursor-pointer py-1">
-                      <span className="text-slate-700 dark:text-slate-300 font-medium">{flag.label}</span>
-                      <input
-                        type="checkbox"
-                        checked={(platformConfig as any)[flag.key]}
-                        onChange={(e) =>
-                          setPlatformConfig({ ...platformConfig, [flag.key]: e.target.checked })
-                        }
-                        className="rounded text-[#4D64E6] w-4 h-4 cursor-pointer"
-                      />
-                    </label>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        </form>
+        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100" role="status">
+          <h2 className="text-base font-extrabold">Runtime configuration is deployment-managed</h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6">This console cannot persist global runtime settings or feature flags. The previous form only changed browser state. Configure supported environment variables in the deployment provider; audited runtime configuration remains a product requirement.</p>
+        </section>
       )}
 
       {/* Inspect Tenant Modal */}
       {selectedMerchantDetail && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-lg w-full space-y-4 shadow-2xl">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4" role="presentation">
+          <section role="dialog" aria-modal="true" aria-labelledby="tenant-detail-title" className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-lg w-full space-y-4 shadow-2xl">
             <div className="flex justify-between items-center border-b pb-3 border-slate-100 dark:border-slate-800">
-              <h3 className="font-extrabold text-base text-slate-900 dark:text-white">
-                Tenant Diagnostic: {selectedMerchantDetail.name}
-              </h3>
-              <button
-                type="button"
-                onClick={() => setSelectedMerchantDetail(null)}
-                className="text-slate-400 hover:text-slate-700 font-bold"
-              >
-                ✕
+              <h3 id="tenant-detail-title" className="font-extrabold text-base text-slate-900 dark:text-white">Tenant details: {selectedMerchantDetail.name}</h3>
+              <button type="button" aria-label="Close tenant details" onClick={() => setSelectedMerchantDetail(null)} className="text-slate-400 hover:text-slate-700 font-bold">✕</button>
+            </div>
+            <dl className="space-y-3 text-xs text-slate-600 dark:text-slate-300">
+              <div className="flex justify-between gap-4"><dt>Organization ID</dt><dd className="font-mono break-all text-right">{selectedMerchantDetail.id}</dd></div>
+              <div className="flex justify-between gap-4"><dt>Owner</dt><dd className="font-bold text-right">{selectedMerchantDetail.owner?.name || '—'} ({selectedMerchantDetail.owner?.email || '—'})</dd></div>
+              <div className="flex justify-between"><dt>Plan tier</dt><dd className="font-bold">{selectedMerchantDetail.planTier}</dd></div>
+              <div className="flex justify-between"><dt>Access status</dt><dd className="font-bold">{selectedMerchantDetail.planStatus}</dd></div>
+              <div className="flex justify-between"><dt>Registered shops</dt><dd className="font-bold">{selectedMerchantDetail.shopsCount}</dd></div>
+              <div className="flex justify-between"><dt>Orders recorded</dt><dd className="font-bold">{selectedMerchantDetail.ordersCount}</dd></div>
+              <div className="flex justify-between"><dt>Created</dt><dd className="font-bold">{new Date(selectedMerchantDetail.createdAt).toLocaleString()}</dd></div>
+            </dl>
+            <p className="rounded-xl bg-slate-50 p-3 text-xs text-slate-500 dark:bg-slate-800">This view shows persistent organization data only. Printer health is available in Fleet; payment settlement and hardware details are not inferred here.</p>
+            {['ACTIVE', 'SUSPENDED'].includes(selectedMerchantDetail.planStatus) && (
+              <button type="button" onClick={() => { void handleToggleMerchantStatus(selectedMerchantDetail.id, selectedMerchantDetail.planStatus); setSelectedMerchantDetail(null); }} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold dark:border-slate-700">
+                {selectedMerchantDetail.planStatus === 'ACTIVE' ? 'Suspend tenant access' : 'Reactivate tenant access'}
               </button>
-            </div>
-            <div className="space-y-3 text-xs text-slate-600 dark:text-slate-300">
-              <div className="flex justify-between">
-                <span>Shop Code:</span>
-                <span className="font-mono font-bold text-[#4D64E6]">{selectedMerchantDetail.shopCode || 'campus1'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Owner:</span>
-                <span className="font-bold">{selectedMerchantDetail.owner?.name} ({selectedMerchantDetail.owner?.email})</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Current Plan:</span>
-                <span className="font-bold text-indigo-600">{selectedMerchantDetail.planTier} (₹999/mo)</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Connected Hardware:</span>
-                <span className="font-bold">2 Real Printers (HP M401dne, Canon C3530i)</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Edge Agent:</span>
-                <span className="font-bold text-emerald-600">Online on Port 8765</span>
-              </div>
-            </div>
-            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2">
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    showToast(`Dispatched hardware test page to Canon LBP2900 for ${selectedMerchantDetail.name}`);
-                  }}
-                  className="py-2 px-3 bg-indigo-50 dark:bg-indigo-950/60 text-[#4D64E6] border border-indigo-200 dark:border-indigo-800 rounded-xl text-xs font-bold hover:bg-indigo-100 transition-colors"
-                >
-                  🖨 Test Canon LBP2900
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMerchants(prev => prev.map(m => m.id === selectedMerchantDetail.id ? { ...m, planTier: 'ENTERPRISE' } : m));
-                    setSelectedMerchantDetail((prev: any) => ({ ...prev, planTier: 'ENTERPRISE' }));
-                    showToast(`Upgraded ${selectedMerchantDetail.name} to Enterprise Tier`);
-                  }}
-                  className="py-2 px-3 bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 rounded-xl text-xs font-bold hover:bg-purple-100 transition-colors"
-                >
-                  ⭐ Upgrade Tier
-                </button>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  showToast(`KYC & Ledger Verified: Zero-balance invariant confirmed for ${selectedMerchantDetail.name}`);
-                }}
-                className="w-full py-2 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 rounded-xl text-xs font-bold hover:bg-emerald-100 transition-colors"
-              >
-                ✓ Verify Double-Entry Settlement
-              </button>
-            </div>
-            <button
-              type="button"
-              onClick={() => setSelectedMerchantDetail(null)}
-              className="w-full py-2.5 bg-slate-100 dark:bg-slate-800 font-bold text-xs rounded-xl"
-            >
-              Close Tenant Details
-            </button>
-          </div>
+            )}
+            <button type="button" onClick={() => setSelectedMerchantDetail(null)} className="w-full py-2.5 bg-slate-100 dark:bg-slate-800 font-bold text-xs rounded-xl">Close tenant details</button>
+          </section>
         </div>
       )}
 

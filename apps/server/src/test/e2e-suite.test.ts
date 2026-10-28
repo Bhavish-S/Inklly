@@ -517,7 +517,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       assert.ok(merchants.length >= 1);
     });
 
-    it('T1.23: Retrieves versioned SaaS subscription plans catalog with quota limits', async () => {
+    it('T1.23: Retrieves the code-managed pilot plan catalog without publishing inactive prices', async () => {
       const res = await fetch(`${baseUrl}/api/v1/platform/plans`, {
         headers: { Authorization: `Bearer ${adminToken}` },
       });
@@ -526,6 +526,9 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       assert.equal(plans.length, 4);
       assert.ok(plans.some((p: any) => p.tier === 'STARTER'));
       assert.ok(plans.some((p: any) => p.tier === 'PRO'));
+      assert.ok(plans.every((p: any) => p.monthlyPricePaise === null && p.annualPricePaise === null));
+      assert.ok(plans.every((p: any) => p.pricing === 'CONFIGURED_PER_PILOT'));
+      assert.ok(plans.every((p: any) => p.catalogStatus === 'PLANNED_NOT_ENFORCED'));
     });
 
     it('T1.24: Generates official OpenAPI 3.0.3 specification tree for developer hub', async () => {

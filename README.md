@@ -154,13 +154,14 @@ sequenceDiagram
 
 ## Verified safety behavior and current limits
 
-- **Print uncertainty:** ambiguous dispatch outcomes become `OUTPUT_UNCERTAIN`; automatic retries are withheld pending operator reconciliation. Physical printing remains pilot-gated and has not been verified on hardware.
-- **Pricing:** the shared pricing engine calculates print quotes in integer Paise. Local tests cover core pricing rules; tax and other advanced billing policies remain incomplete.
-- **Tenant authorization:** merchant routes require a signed persisted session, active account, current shop membership, tenant scoping, and route-specific role/permission checks. Continue adding ownership tests for each resource type.
-- **Payment:** Razorpay checkout and webhook handlers validate signatures and payment records in source, but live credentials/provider round trips have not been verified. Subscription checkout and usage billing are not implemented.
-- **Financial records:** customer payment entries are stored and dashboard revenue reads the payment ledger. Database-level ledger immutability and comprehensive reconciliation are not yet established; do not describe the ledger as immutable.
-- **Developer integrations:** the OpenAPI endpoint is public. API-key management and webhook subscriptions are disabled unless explicitly enabled; generated API keys do not yet authenticate to business routes, and signed webhook delivery/retries are not implemented.
-- **WhatsApp and agent installer:** WhatsApp setup/pairing requests fail closed until Meta onboarding is built. A signed production agent installer is unavailable, and physical printing is disabled by default.
+- **Print uncertainty:** ambiguous dispatch outcomes become `OUTPUT_UNCERTAIN`; automatic retries are withheld pending operator reconciliation. Physical printing remains pilot-gated and has not been verified on supported hardware.
+- **Pricing:** the shared pricing engine calculates print quotes in integer Paise. Local tests cover core pricing rules; tax and advanced billing policies remain incomplete.
+- **Tenant authorization:** merchant routes require signed persisted sessions, active accounts, current shop membership, tenant scoping, and route-specific permissions. Continue adding ownership tests for each resource type.
+- **Payment:** Razorpay handlers validate provider records and webhook signatures in source, but live credentials/provider round trips have not been verified. Subscription checkout and per-printed-side billing are inactive.
+- **Financial records:** database migrations install append-only ledger protections and provider transaction uniqueness. SQLite tests cover these protections; live Supabase migration, database-owner bypass protection, and full reconciliation remain unverified.
+- **Developer integrations:** shop-bound API keys are available only when `ENABLE_EXTERNAL_API_ACCESS=true` and enforce environment, expiry, revocation, membership, and scopes. Webhook subscriptions can be stored, but signed delivery, SSRF-safe dispatch, retries, and delivery history are not implemented.
+- **Platform administration:** tenant, ledger, audit, enquiry, retention, and agent data use backend records. Installer distribution, incident management, audited runtime configuration, quota enforcement, and subscription billing are unavailable. The console labels these gaps instead of presenting sample records as live.
+- **WhatsApp and agent installer:** WhatsApp setup/pairing requests fail closed until provider onboarding is implemented. A signed production agent installer is unavailable, and physical printing is disabled by default.
 
 ## Current verification
 

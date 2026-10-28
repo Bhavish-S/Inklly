@@ -57,7 +57,7 @@ Latest local verification: build passed, 202 tests passed, and `npm audit --audi
 - Vault: authorized staff can upload inspected PDF/JPEG/PNG files, organize categories, download through the private storage API, and delete stored documents. Order-file 24-hour cleanup does not purge vault documents; vault records remain until staff delete them, so approve a retention/privacy policy before production use. Live Supabase behavior is unverified.
 - WhatsApp: no real Meta onboarding, credential lifecycle, inbound intake, or outbound delivery; setup/pairing fails closed.
 - Developer API keys can be created/revoked and authenticate merchant business routes only when `ENABLE_EXTERNAL_API_ACCESS=true`; they are bound to one shop and checked for environment, expiry, revocation, owner membership, and limited scopes. Webhook subscriptions are stored, but signed delivery, SSRF-safe dispatch, retries, and history are incomplete.
-- Platform incidents and runtime configuration are not fully backed by durable operational services. Subscription billing and plan quota enforcement are incomplete.
+- Platform incidents and runtime configuration are not fully backed by durable operational services. The admin console labels these workflows unavailable and does not fabricate records or success messages. Subscription billing and plan quota enforcement are incomplete.
 - Physical Windows printer output, capabilities, status fidelity, signed installer, and crash/recovery behavior still require supported hardware verification.
 - Production backups, recovery drills, shared rate limiting, monitoring, legal/privacy review, and account recovery need release work.
 
