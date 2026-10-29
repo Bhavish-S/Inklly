@@ -901,6 +901,9 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [storageCategories, setStorageCategories] = useState<Array<{ id: string; name: string; documentCount: number }>>([]);
   const [storageFiles, setStorageFiles] = useState<Record<string, MerchantStorageFileView[]>>({});
   const [storageLoading, setStorageLoading] = useState(false);
+  const [storageNextCursor, setStorageNextCursor] = useState<string | null>(null);
+  const [storageTotal, setStorageTotal] = useState(0);
+  const [storageLoadingMore, setStorageLoadingMore] = useState(false);
   const [storageError, setStorageError] = useState('');
   const [storageUploadBusy, setStorageUploadBusy] = useState(false);
   const storageUploadInputRef = useRef<HTMLInputElement>(null);
@@ -1080,11 +1083,11 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     ]);
     const categories = [
       ...apiCategories.map((category) => ({ id: category.id, name: category.name, documentCount: category.documentCount || 0 })),
-      { id: '__uncategorized', name: 'Uncategorized', documentCount: 0 },
+      { id: '__uncategorized', name: 'Uncategorized', documentCount: documents.uncategorizedCount || 0 },
     ];
     const grouped: Record<string, MerchantStorageFileView[]> = { __uncategorized: [] };
     for (const category of apiCategories) grouped[category.id] = [];
-    for (const document of documents) {
+    for (const document of documents.documents) {
       const categoryId = document.categoryId || '__uncategorized';
       grouped[categoryId] ??= [];
       grouped[categoryId].push({
@@ -1099,15 +1102,49 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
         mimeType: document.mimeType,
       });
     }
-    for (const category of categories) {
-      category.documentCount = grouped[category.id]?.length || 0;
-    }
     setStorageCategories(categories);
     setStorageFiles(grouped);
+    setStorageNextCursor(documents.nextCursor);
+    setStorageTotal(documents.total);
     setSelectedStorageCategory((current) => categories.some((category) => category.id === current) ? current : '__uncategorized');
     setSelectedStorageFile((current: MerchantStorageFileView | null) => current
       ? Object.values(grouped).flat().find((file) => file.id === current.id) || null
       : null);
+  };
+
+  const handleLoadMoreStorageDocuments = async () => {
+    if (!storageNextCursor || storageLoadingMore) return;
+    setStorageError('');
+    setStorageLoadingMore(true);
+    try {
+      const page = await api.getStorageDocuments({ cursor: storageNextCursor });
+      const grouped: Record<string, MerchantStorageFileView[]> = {};
+      for (const document of page.documents) {
+        const categoryId = document.categoryId || '__uncategorized';
+        grouped[categoryId] ??= [];
+        grouped[categoryId].push({
+          id: document.id,
+          name: document.fileName || document.name,
+          pages: document.pageCount,
+          size: document.fileSizeBytes < 1024 * 1024
+            ? `${Math.max(1, Math.round(document.fileSizeBytes / 1024))} KB`
+            : `${(document.fileSizeBytes / (1024 * 1024)).toFixed(1)} MB`,
+          date: new Date(document.createdAt).toLocaleDateString(),
+          type: document.mimeType.toUpperCase(),
+          mimeType: document.mimeType,
+        });
+      }
+      setStorageFiles((current) => {
+        const next = { ...current };
+        for (const [categoryId, files] of Object.entries(grouped)) next[categoryId] = [...(next[categoryId] || []), ...files];
+        return next;
+      });
+      setStorageNextCursor(page.nextCursor);
+    } catch (error: any) {
+      setStorageError(error?.message || 'Could not load more stored documents.');
+    } finally {
+      setStorageLoadingMore(false);
+    }
   };
 
   const handleStorageUpload = async (file?: File) => {
@@ -3106,7 +3143,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                           : 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300'
                       }`}
                     >
-                      {cat.name} ({storageFiles[cat.id]?.length || 0})
+                      {cat.name} ({cat.documentCount})
                     </button>
                   ))}
                 </div>
@@ -3116,7 +3153,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                   <div className="p-3.5 bg-gray-50 dark:bg-gray-700/50 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center text-xs font-bold">
                     <span>Documents in {storageCategories.find((c) => c.id === selectedStorageCategory)?.name}</span>
                     <span className="text-[10px] text-gray-400 uppercase">
-                      {storageFiles[selectedStorageCategory]?.length || 0} Files
+                      {storageFiles[selectedStorageCategory]?.length || 0} of {storageCategories.find((c) => c.id === selectedStorageCategory)?.documentCount || 0} Files
                     </span>
                   </div>
 
@@ -3155,10 +3192,19 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                       ))
                     ) : (
                       <div className="p-8 text-center text-xs text-gray-400">
-                        No files in this category yet. Choose Upload document to add a private shop file.
+                        {(storageCategories.find((category) => category.id === selectedStorageCategory)?.documentCount || 0) > 0
+                          ? 'No documents from this category are on the pages loaded so far. Use Load more below to continue browsing.'
+                          : 'No files in this category yet. Choose Upload document to add a private shop file.'}
                       </div>
                     )}
                   </div>
+                  {storageNextCursor && (
+                    <div className="border-t border-gray-100 dark:border-gray-700 p-3 text-center">
+                      <button type="button" onClick={() => void handleLoadMoreStorageDocuments()} disabled={storageLoadingMore} className="rounded-lg border border-gray-300 dark:border-gray-600 px-4 py-2 text-xs font-bold hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50">
+                        {storageLoadingMore ? 'Loading…' : `Load more documents (${Object.values(storageFiles).reduce((count, files) => count + files.length, 0)} of ${storageTotal})`}
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 

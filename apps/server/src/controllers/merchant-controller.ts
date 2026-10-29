@@ -1003,6 +1003,31 @@ export class MerchantController {
     const shopId = this.getShopId(req);
     const categoryId = String(req.query.categoryId || '');
 
+    const limitValue = req.query.limit === undefined ? '50' : req.query.limit;
+    if (typeof limitValue !== 'string' || !/^\d{1,3}$/.test(limitValue)) {
+      return res.status(400).json({ error: 'limit must be an integer from 1 to 100.' });
+    }
+    const limit = Number(limitValue);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      return res.status(400).json({ error: 'limit must be an integer from 1 to 100.' });
+    }
+
+    let cursor: { createdAt: string; id: string } | undefined;
+    if (req.query.cursor !== undefined) {
+      if (typeof req.query.cursor !== 'string' || req.query.cursor.length > 512) {
+        return res.status(400).json({ error: 'cursor is invalid.' });
+      }
+      try {
+        const parsed = JSON.parse(Buffer.from(req.query.cursor, 'base64url').toString('utf8'));
+        if (!parsed || typeof parsed.createdAt !== 'string' || typeof parsed.id !== 'string' || !parsed.id || parsed.id.length > 128 || new Date(parsed.createdAt).toISOString() !== parsed.createdAt) {
+          throw new Error('invalid cursor shape');
+        }
+        cursor = { createdAt: parsed.createdAt, id: parsed.id };
+      } catch {
+        return res.status(400).json({ error: 'cursor is invalid.' });
+      }
+    }
+
     let sql = `SELECT sd.*, sc.name as category_name FROM storage_documents sd LEFT JOIN storage_categories sc ON sc.id = sd.category_id WHERE sd.shop_id = ?`;
     const params: any[] = [shopId];
 
@@ -1011,10 +1036,29 @@ export class MerchantController {
       params.push(categoryId);
     }
 
-    sql += ` ORDER BY sd.created_at DESC`;
+    let countSql = `SELECT COUNT(*) AS total FROM storage_documents sd WHERE sd.shop_id = ?`;
+    const countParams: any[] = [shopId];
+    if (categoryId) {
+      countSql += ` AND sd.category_id = ?`;
+      countParams.push(categoryId);
+    }
+    const total = Number(this.db.queryOne<any>(countSql, countParams)?.total || 0);
+    const uncategorizedCount = Number(this.db.queryOne<any>(
+      `SELECT COUNT(*) AS total FROM storage_documents WHERE shop_id = ? AND category_id IS NULL`, [shopId]
+    )?.total || 0);
+
+    if (cursor) {
+      sql += ` AND (sd.created_at < ? OR (sd.created_at = ? AND sd.id < ?))`;
+      params.push(cursor.createdAt, cursor.createdAt, cursor.id);
+    }
+
+    sql += ` ORDER BY sd.created_at DESC, sd.id DESC LIMIT ?`;
+    params.push(limit + 1);
 
     const rows = this.db.query<any>(sql, params);
-    res.json(rows.map((r) => ({
+    const hasMore = rows.length > limit;
+    const pageRows = hasMore ? rows.slice(0, limit) : rows;
+    const documents = pageRows.map((r) => ({
       id: r.id,
       name: r.file_name,
       fileName: r.file_name,
@@ -1025,7 +1069,12 @@ export class MerchantController {
       categoryName: r.category_name,
       downloadUrl: `/api/v1/merchant/storage/documents/${r.id}/download`,
       createdAt: r.created_at,
-    })));
+    }));
+    const last = pageRows[pageRows.length - 1];
+    const nextCursor = hasMore && last
+      ? Buffer.from(JSON.stringify({ createdAt: last.created_at, id: last.id })).toString('base64url')
+      : null;
+    res.json({ documents, total, uncategorizedCount, limit, nextCursor });
   };
 
   public uploadStorageDocument = async (req: Request, res: Response) => {

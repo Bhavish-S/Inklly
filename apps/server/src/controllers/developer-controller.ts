@@ -42,7 +42,7 @@ const MERCHANT_ROUTE_DOCUMENTATION: Array<{ path: string; method: string; summar
   { path: '/merchant/storage/categories', method: 'post', summary: 'Create a storage category', access: 'Requires storage:manage.' },
   { path: '/merchant/storage/categories/{id}', method: 'delete', summary: 'Delete a storage category', access: 'Requires storage:manage.' },
   { path: '/merchant/storage/documents', method: 'post', summary: 'Upload a private shop storage document', access: 'Requires storage:manage.' },
-  { path: '/merchant/storage/documents', method: 'get', summary: 'List stored documents', access: 'Requires storage:view.' },
+  { path: '/merchant/storage/documents', method: 'get', summary: 'List stored documents using bounded cursor pagination', access: 'Requires storage:view.' },
   { path: '/merchant/storage/documents/{id}/download', method: 'get', summary: 'Download a stored document', access: 'Requires storage:view and document ownership.' },
   { path: '/merchant/storage/documents/{id}', method: 'delete', summary: 'Delete a stored document', access: 'Requires storage:manage.' },
   { path: '/merchant/whatsapp/setup', method: 'get', summary: 'Get WhatsApp setup availability', access: 'Restricted to MERCHANT_OWNER or SHOP_MANAGER.' },
@@ -69,6 +69,18 @@ function buildMerchantOpenApiPaths(): Record<string, Record<string, unknown>> {
       schema: { type: 'string' },
     }));
     if (pathParameters.length) operation.parameters = pathParameters;
+    if (route.path === '/merchant/storage/documents' && route.method === 'get') {
+      operation.parameters = [
+        { name: 'categoryId', in: 'query', required: false, schema: { type: 'string' } },
+        { name: 'cursor', in: 'query', required: false, schema: { type: 'string', maxLength: 512 } },
+        { name: 'limit', in: 'query', required: false, schema: { type: 'integer', minimum: 1, maximum: 100, default: 50 } },
+      ];
+      operation.responses = {
+        default: { description: 'Response status and body are defined by the route handler.' },
+        200: { description: 'A tenant-scoped page of private documents with total count and nextCursor; storage keys are omitted.' },
+        400: { description: 'Invalid cursor or page size.' },
+      };
+    }
     if (route.path === '/merchant/discounts' && route.method === 'put') {
       operation.requestBody = {
         required: true,

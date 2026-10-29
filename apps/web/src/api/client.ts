@@ -406,14 +406,20 @@ export const api = {
     return body.category;
   },
 
-  async getStorageDocuments() {
-    const res = await fetch(`${API_BASE}/merchant/storage/documents`, { headers: getHeaders() });
+  async getStorageDocuments(options: { cursor?: string; limit?: number; categoryId?: string } = {}) {
+    const params = new URLSearchParams({ limit: String(options.limit ?? 50) });
+    if (options.cursor) params.set('cursor', options.cursor);
+    if (options.categoryId) params.set('categoryId', options.categoryId);
+    const res = await fetch(`${API_BASE}/merchant/storage/documents?${params.toString()}`, { headers: getHeaders() });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || 'Could not load stored documents');
-    return body as Array<{
-      id: string; name: string; fileName: string; mimeType: string; fileSizeBytes: number;
-      pageCount: number; categoryId: string | null; categoryName: string | null; downloadUrl: string; createdAt: string;
-    }>;
+    return body as {
+      documents: Array<{
+        id: string; name: string; fileName: string; mimeType: string; fileSizeBytes: number;
+        pageCount: number; categoryId: string | null; categoryName: string | null; downloadUrl: string; createdAt: string;
+      }>;
+      total: number; uncategorizedCount: number; limit: number; nextCursor: string | null;
+    };
   },
 
   async uploadStorageDocument(fileName: string, fileData: string, categoryId?: string) {

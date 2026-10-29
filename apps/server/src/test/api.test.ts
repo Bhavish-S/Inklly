@@ -811,10 +811,30 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(stored.fileName, 'year-end_.pdf', 'display name is sanitized and extension follows inspected content');
     assert.equal('storageKey' in stored, false, 'private storage keys are not exposed');
 
-    const documents = await fetch(`${baseUrl}/api/v1/merchant/storage/documents?categoryId=${encodeURIComponent(created.category.id)}`, { headers });
+    const uploadSecond = await fetch(`${baseUrl}/api/v1/merchant/storage/documents`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ fileName: 'second-report.pdf', fileData: pdf.toString('base64'), categoryId: created.category.id }),
+    });
+    assert.equal(uploadSecond.status, 201);
+    const storedSecond = (await uploadSecond.json() as any).document;
+
+    const documents = await fetch(`${baseUrl}/api/v1/merchant/storage/documents?categoryId=${encodeURIComponent(created.category.id)}&limit=1`, { headers });
     assert.equal(documents.status, 200);
-    const storedList = await documents.json() as any[];
-    assert.ok(storedList.some((doc) => doc.id === stored.id && doc.name === stored.fileName && doc.categoryName === created.category.name));
+    const firstPage = await documents.json() as any;
+    assert.equal(firstPage.total, 2);
+    assert.equal(firstPage.documents.length, 1, 'vault document page is bounded by requested limit');
+    assert.ok(firstPage.nextCursor);
+    assert.equal('storageKey' in firstPage.documents[0], false, 'private storage keys are never returned');
+    const secondPageResponse = await fetch(`${baseUrl}/api/v1/merchant/storage/documents?categoryId=${encodeURIComponent(created.category.id)}&limit=1&cursor=${encodeURIComponent(firstPage.nextCursor)}`, { headers });
+    assert.equal(secondPageResponse.status, 200);
+    const secondPage = await secondPageResponse.json() as any;
+    assert.equal(secondPage.documents.length, 1);
+    assert.equal(secondPage.nextCursor, null);
+    assert.notEqual(firstPage.documents[0].id, secondPage.documents[0].id, 'cursor pages do not repeat a document');
+    const invalidLimit = await fetch(`${baseUrl}/api/v1/merchant/storage/documents?limit=101`, { headers });
+    assert.equal(invalidLimit.status, 400);
+    const invalidCursor = await fetch(`${baseUrl}/api/v1/merchant/storage/documents?cursor=invalid`, { headers });
+    assert.equal(invalidCursor.status, 400);
 
     const download = await fetch(`${baseUrl}${stored.downloadUrl}`, { headers: { Authorization: `Bearer ${merchantToken}` } });
     assert.equal(download.status, 200);
@@ -826,6 +846,10 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       method: 'DELETE', headers,
     });
     assert.equal(removeDocument.status, 200);
+    const removeSecondDocument = await fetch(`${baseUrl}/api/v1/merchant/storage/documents/${encodeURIComponent(storedSecond.id)}`, {
+      method: 'DELETE', headers,
+    });
+    assert.equal(removeSecondDocument.status, 200);
 
     const remove = await fetch(`${baseUrl}/api/v1/merchant/storage/categories/${encodeURIComponent(created.category.id)}`, { method: 'DELETE', headers });
     assert.equal(remove.status, 200);
@@ -2232,6 +2256,8 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.ok(spec.paths['/merchant/settings']?.put.description.includes('settings:manage'));
     assert.ok(spec.paths['/merchant/discounts']?.put.requestBody.content['application/json'].schema.properties.copyRules);
     assert.equal(spec.paths['/merchant/discounts']?.put.requestBody.content['application/json'].schema.properties.bulk.properties.discountPercentage.type, 'integer');
+    assert.deepEqual(spec.paths['/merchant/storage/documents']?.get.parameters.map((parameter: any) => parameter.name), ['categoryId', 'cursor', 'limit']);
+    assert.equal(spec.paths['/merchant/storage/documents']?.get.parameters.find((parameter: any) => parameter.name === 'limit').schema.maximum, 100);
     assert.ok(!spec.paths['/subscriptions/usage']?.get.description.includes('active subscription'));
     assert.ok(spec.paths['/developer/webhooks/{id}/deliveries']?.get.description.includes('HMAC SHA-256'));
     assert.ok(spec.paths['/auth/me']?.put.description.includes('Email changes require a separate verification flow'));
