@@ -310,7 +310,7 @@ export class PaymentController {
         if (!order) return 'NOT_FOUND';
         const effectiveShopId = req.user?.shopId;
         if (
-          req.user?.role !== 'PLATFORM_OWNER' && req.user?.role !== 'PLATFORM_ADMIN' &&
+          req.user?.role !== 'PLATFORM_OWNER' &&
           (!effectiveShopId || order.shopId !== effectiveShopId)
         ) return 'FORBIDDEN';
         if (order.paymentMethod !== 'CASH_ON_COLLECTION') return 'WRONG_METHOD';
@@ -395,7 +395,7 @@ export class PaymentController {
 
     const effectiveShopId = req.user?.shopId;
     if (
-      req.user?.role !== 'PLATFORM_OWNER' && req.user?.role !== 'PLATFORM_ADMIN' &&
+      req.user?.role !== 'PLATFORM_OWNER' &&
       (!effectiveShopId || order.shopId !== effectiveShopId)
     ) {
       return res.status(403).json({ error: 'Order is not available to this shop.' });
@@ -471,7 +471,7 @@ export class PaymentController {
 
   public listRefunds = (req: Request, res: Response) => {
     const effectiveShopId = req.user?.shopId;
-    const isPlatform = req.user?.role === 'PLATFORM_OWNER' || req.user?.role === 'PLATFORM_ADMIN';
+    const isPlatform = req.user?.role === 'PLATFORM_OWNER';
 
     let sql = `SELECT r.*, o.order_number, o.customer_name, o.total_amount_paise as order_total
                FROM refunds r JOIN orders o ON o.id = r.order_id`;
@@ -518,7 +518,7 @@ export class PaymentController {
     }
 
     const effectiveShopId = req.user?.shopId;
-    const isPlatform = req.user?.role === 'PLATFORM_OWNER' || req.user?.role === 'PLATFORM_ADMIN';
+    const isPlatform = req.user?.role === 'PLATFORM_OWNER';
     if (!isPlatform && (!effectiveShopId || refund.shop_id !== effectiveShopId)) {
       return res.status(403).json({ error: 'Refund is not available to this shop.' });
     }

@@ -17,7 +17,7 @@ export function createPaymentRoutes(db: DatabaseService): Router {
   router.post(
     '/orders/:id/collect-cash',
     requireAuthentication,
-    requireRole('MERCHANT_OWNER', 'SHOP_MANAGER', 'SHOP_STAFF', 'PLATFORM_OWNER', 'PLATFORM_ADMIN'),
+    requireRole('MERCHANT_OWNER', 'SHOP_MANAGER', 'SHOP_STAFF', 'PLATFORM_OWNER'),
     requirePermission('finance:manage'),
     controller.collectCashAtCounter
   );
@@ -26,21 +26,21 @@ export function createPaymentRoutes(db: DatabaseService): Router {
   router.post(
     '/orders/:id/refunds',
     requireAuthentication,
-    requireRole('MERCHANT_OWNER', 'SHOP_MANAGER', 'PLATFORM_OWNER', 'PLATFORM_ADMIN'),
+    requireRole('MERCHANT_OWNER', 'SHOP_MANAGER', 'PLATFORM_OWNER'),
     requirePermission('finance:manage'),
     controller.createRefund
   );
   router.get(
     '/refunds',
     requireAuthentication,
-    requireRole('MERCHANT_OWNER', 'SHOP_MANAGER', 'PLATFORM_OWNER', 'PLATFORM_ADMIN'),
+    requireRole('MERCHANT_OWNER', 'SHOP_MANAGER', 'PLATFORM_OWNER'),
     requirePermission('finance:view'),
     controller.listRefunds
   );
   router.post(
     '/refunds/:id/process',
     requireAuthentication,
-    requireRole('MERCHANT_OWNER', 'PLATFORM_OWNER', 'PLATFORM_ADMIN'),
+    requireRole('MERCHANT_OWNER', 'PLATFORM_OWNER'),
     requirePermission('finance:manage'),
     controller.processRefund
   );

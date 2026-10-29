@@ -5,7 +5,7 @@
 ## Current local verification
 
 - `npm run build` — passed for database, shared, desktop agent, server, and web workspaces using Vite 6.4.5. The initial JavaScript bundle is 218.72 kB minified (61.48 kB gzip); PDF rendering is isolated in a 484.31 kB lazy-loaded chunk. Vite reports no oversized JavaScript chunk.
-- `npm test` — 257 passed, 0 failed: database 15, shared 15, agent 14, server 207, web 6. New coverage includes cash-collection rejection before print output is ready, concurrent idempotent collection without duplicate payment/ledger/webhook records, customer PDF transformation plus retry-safe private upload handling, merchant order/file privacy across tenants, saved merchant message templates, platform-admin merchant-route denial, account profile persistence, and secure password changes with session revocation.
+- `npm test` — 257 passed, 0 failed: database 15, shared 15, agent 14, server 207, web 6. Coverage includes cash-collection rejection before print output is ready, concurrent idempotent collection without duplicate payment/ledger/webhook records, customer PDF transformation plus retry-safe private upload handling, merchant order/file privacy across tenants, saved merchant message templates, platform-admin merchant-route and financial-operation denial, account profile persistence, and secure password changes with session revocation.
 - `npm audit --audit-level=high` — attempted twice; both requests to the npm advisory endpoint timed out, so no current audit result is available.
 - `npm run lint` — no root lint script is currently configured.
 

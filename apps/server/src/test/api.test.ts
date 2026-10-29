@@ -1531,8 +1531,9 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       assert.ok(ownerId && initialShop);
       const grantAt = new Date().toISOString();
       db.execute(
-        `INSERT INTO platform_admin_permissions (user_id, permission, granted_by_user_id, granted_at) VALUES (?, ?, ?, ?), (?, ?, ?, ?)`,
-        [userId, 'settings:view', ownerId, grantAt, userId, 'settings:manage', ownerId, grantAt]
+        `INSERT INTO platform_admin_permissions (user_id, permission, granted_by_user_id, granted_at) VALUES (?, ?, ?, ?), (?, ?, ?, ?), (?, ?, ?, ?), (?, ?, ?, ?)`,
+        [userId, 'settings:view', ownerId, grantAt, userId, 'settings:manage', ownerId, grantAt,
+          userId, 'finance:view', ownerId, grantAt, userId, 'finance:manage', ownerId, grantAt]
       );
       const merchantSettings = await fetch(`${baseUrl}/api/v1/merchant/settings?shopId=shop-campus-1`, { headers });
       assert.equal(merchantSettings.status, 403, 'platform admin grants do not authorize merchant route access');
@@ -1542,6 +1543,44 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       assert.equal(merchantSettingsUpdate.status, 403);
       assert.equal(db.queryOne<any>(`SELECT tagline FROM shops WHERE id = 'shop-campus-1'`).tagline, initialShop.tagline,
         'cross-tenant shop settings remain unchanged');
+
+      // Finance grants must not turn a platform admin into a cross-shop cashier
+      // or refund operator. The platform owner remains the support role.
+      const cashOrder = db.queryOne<any>(`SELECT status, payment_status FROM orders WHERE id = ?`, [cashOrderId]);
+      const verifiedPayment = db.queryOne<any>(`SELECT id FROM payments WHERE order_id = ? AND status = 'VERIFIED' LIMIT 1`, [cashOrderId]);
+      assert.ok(verifiedPayment, 'cash order has a verified payment for refund access checks');
+      const probeRefundId = `platform-admin-probe-${crypto.randomUUID()}`;
+      const beforeLedger = Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM ledger_entries WHERE order_id = ?`, [cashOrderId]).count);
+      db.execute(`UPDATE orders SET status = 'READY_FOR_COLLECTION', payment_status = 'VERIFIED' WHERE id = ?`, [cashOrderId]);
+      db.execute(
+        `INSERT INTO refunds (id, order_id, payment_id, amount_paise, currency, status, reason, requested_by, requested_at)
+         VALUES (?, ?, ?, 1, 'INR', 'REQUESTED', 'authorization regression probe', ?, ?)`,
+        [probeRefundId, cashOrderId, verifiedPayment.id, userId, grantAt]
+      );
+      try {
+        const collect = await fetch(`${baseUrl}/api/v1/payments/orders/${cashOrderId}/collect-cash`, { method: 'POST', headers, body: '{}' });
+        assert.equal(collect.status, 403, 'platform admin cannot collect another shop’s cash order');
+        const unchangedCashOrder = db.queryOne<any>(`SELECT status, payment_status FROM orders WHERE id = ?`, [cashOrderId]);
+        assert.equal(unchangedCashOrder.status, 'READY_FOR_COLLECTION');
+        assert.equal(unchangedCashOrder.payment_status, 'VERIFIED');
+        assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM ledger_entries WHERE order_id = ?`, [cashOrderId]).count), beforeLedger,
+          'denied cash collection creates no ledger entry');
+
+        const createRefund = await fetch(`${baseUrl}/api/v1/payments/orders/${cashOrderId}/refunds`, {
+          method: 'POST', headers, body: JSON.stringify({ amountPaise: 1, reason: 'admin probe' }),
+        });
+        assert.equal(createRefund.status, 403, 'platform admin cannot create another shop’s refund');
+        assert.equal((await fetch(`${baseUrl}/api/v1/payments/refunds`, { headers })).status, 403,
+          'platform admin cannot list tenant refunds');
+        const processRefund = await fetch(`${baseUrl}/api/v1/payments/refunds/${probeRefundId}/process`, {
+          method: 'POST', headers, body: JSON.stringify({ action: 'REJECT', reason: 'admin probe rejection' }),
+        });
+        assert.equal(processRefund.status, 403, 'platform admin cannot change another shop’s refund state');
+        assert.equal(db.queryOne<any>(`SELECT status FROM refunds WHERE id = ?`, [probeRefundId]).status, 'REQUESTED');
+      } finally {
+        db.execute(`DELETE FROM refunds WHERE id = ?`, [probeRefundId]);
+        db.execute(`UPDATE orders SET status = ?, payment_status = ? WHERE id = ?`, [cashOrder.status, cashOrder.payment_status, cashOrderId]);
+      }
 
       const initiallyDenied = await fetch(`${baseUrl}/api/v1/platform/overview`, { headers });
       assert.equal(initiallyDenied.status, 403, 'platform admin begins with no permission grants');
