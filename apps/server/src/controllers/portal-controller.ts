@@ -301,7 +301,15 @@ export class PortalController {
       updatedAt: now,
     };
 
-    const idempotentResult = this.orderRepo.createOrderIdempotently(order, idempotencyKey, requestHash);
+    let idempotentResult: ReturnType<OrderRepository['createOrderIdempotently']>;
+    try {
+      idempotentResult = this.orderRepo.createOrderIdempotently(order, idempotencyKey, requestHash);
+    } catch (error: any) {
+      if (error?.code === 'PRINT_FILE_UNAVAILABLE') {
+        return res.status(409).json({ error: 'A print file has expired or is being cleaned up. Upload the file again and submit the order.' });
+      }
+      throw error;
+    }
     if (idempotentResult.conflict) {
       return res.status(409).json({ error: 'This Idempotency-Key was already used for a different order. Start a new order to submit changed details.' });
     }

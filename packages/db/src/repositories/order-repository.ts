@@ -1,6 +1,7 @@
 import { DatabaseService } from '../database';
 import { AgentRepository } from './agent-repository';
 import { Order, OrderFile, OrderStatus, PaymentStatus, validateOrderTransition } from '@inklly/shared';
+import { lockAvailablePrintFiles } from '../print-file-lifecycle';
 
 export class OrderRepository {
   constructor(private db: DatabaseService) {}
@@ -126,6 +127,7 @@ export class OrderRepository {
   }
 
   private persistOrder(order: Order): void {
+      lockAvailablePrintFiles(this.db, order.files.map((file) => file.storageKey || ''));
       const tokenNumber = order.tokenNumber || `T-${Math.floor(1000 + Math.random() * 9000)}`;
       this.db.execute(
         `INSERT INTO orders (

@@ -1,29 +1,30 @@
-import React, { useState, useEffect } from 'react';
+import React, { lazy, Suspense, useState, useEffect } from 'react';
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
 import { FloatingWhatsApp } from './components/FloatingWhatsApp';
 
-// Core Pages
-import { HomePage } from './pages/HomePage';
-import { PrintAutomationPage } from './pages/PrintAutomationPage';
-import { WhatsAppPrintingPage } from './pages/WhatsAppPrintingPage';
-import { QrOrderingPage } from './pages/QrOrderingPage';
-import { HowItWorksPage } from './pages/HowItWorksPage';
-import { PricingPage } from './pages/PricingPage';
-import { ContactPage } from './pages/ContactPage';
-import { LoginPage } from './pages/LoginPage';
-import { RegisterPage } from './pages/RegisterPage';
-import { AcceptInvitationPage } from './pages/AcceptInvitationPage';
-import { LegalPage } from './pages/LegalPage';
-
-// Embedded Live Working Applications & Portals
-import { CustomerPortalOrderView } from './views/CustomerPortalOrderView';
-import { OrderTrackerView } from './views/OrderTrackerView';
-import { MerchantAppView } from './views/MerchantAppView';
-import { PlatformAdminView } from './views/PlatformAdminView';
-import { DeveloperPortalView } from './views/DeveloperPortalView';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { QrCodeIcon, PrinterIcon, Logo, ShieldIcon, CodeIcon } from './components/icons';
+
+// Keep each route's code out of the initial marketing bundle. The customer
+// portal includes PDF rendering, so loading it only on /p/:shopCode materially
+// reduces the first download for public-site visitors.
+const HomePage = lazy(() => import('./pages/HomePage').then((module) => ({ default: module.HomePage })));
+const PrintAutomationPage = lazy(() => import('./pages/PrintAutomationPage').then((module) => ({ default: module.PrintAutomationPage })));
+const WhatsAppPrintingPage = lazy(() => import('./pages/WhatsAppPrintingPage').then((module) => ({ default: module.WhatsAppPrintingPage })));
+const QrOrderingPage = lazy(() => import('./pages/QrOrderingPage').then((module) => ({ default: module.QrOrderingPage })));
+const HowItWorksPage = lazy(() => import('./pages/HowItWorksPage').then((module) => ({ default: module.HowItWorksPage })));
+const PricingPage = lazy(() => import('./pages/PricingPage').then((module) => ({ default: module.PricingPage })));
+const ContactPage = lazy(() => import('./pages/ContactPage').then((module) => ({ default: module.ContactPage })));
+const LoginPage = lazy(() => import('./pages/LoginPage').then((module) => ({ default: module.LoginPage })));
+const RegisterPage = lazy(() => import('./pages/RegisterPage').then((module) => ({ default: module.RegisterPage })));
+const AcceptInvitationPage = lazy(() => import('./pages/AcceptInvitationPage').then((module) => ({ default: module.AcceptInvitationPage })));
+const LegalPage = lazy(() => import('./pages/LegalPage').then((module) => ({ default: module.LegalPage })));
+const CustomerPortalOrderView = lazy(() => import('./views/CustomerPortalOrderView').then((module) => ({ default: module.CustomerPortalOrderView })));
+const OrderTrackerView = lazy(() => import('./views/OrderTrackerView').then((module) => ({ default: module.OrderTrackerView })));
+const MerchantAppView = lazy(() => import('./views/MerchantAppView').then((module) => ({ default: module.MerchantAppView })));
+const PlatformAdminView = lazy(() => import('./views/PlatformAdminView').then((module) => ({ default: module.PlatformAdminView })));
+const DeveloperPortalView = lazy(() => import('./views/DeveloperPortalView').then((module) => ({ default: module.DeveloperPortalView })));
 
 export const App: React.FC = () => {
   const [currentPath, setCurrentPath] = useState<string>(() => {
@@ -126,6 +127,7 @@ export const App: React.FC = () => {
 
       {/* Main Content Router */}
       <main style={{ flex: 1 }}>
+        <Suspense fallback={<div className="min-h-[50vh] flex items-center justify-center text-sm text-slate-500" role="status">Loading page…</div>}>
         {/* Route 1: Home */}
         {currentPath === '/' && <HomePage onNavigate={navigate} />}
 
@@ -367,6 +369,7 @@ export const App: React.FC = () => {
             </div>
           </div>
         )}
+        </Suspense>
       </main>
 
       {/* Global Footer & Floating WhatsApp (Only on public website) */}

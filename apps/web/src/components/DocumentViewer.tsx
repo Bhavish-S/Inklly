@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { PdfPageRenderer } from './PdfPageRenderer';
+import React, { lazy, Suspense, useState } from 'react';
 import { FileTextIcon, CropIcon, RotateCwIcon } from './icons';
+
+const PdfPageRenderer = lazy(() => import('./PdfPageRenderer').then((module) => ({ default: module.PdfPageRenderer })));
 
 interface DocumentViewerProps {
   fileName: string;
@@ -71,12 +72,14 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       <div className="flex-1 w-full flex items-center justify-center p-3 overflow-hidden relative">
         {isPdf ? (
           <div className="w-full h-full max-h-[300px] flex items-center justify-center">
-            <PdfPageRenderer
-              fileUrl={fileUrl}
-              currentPage={currentPage}
-              rotation={rotation}
-              onPageCountDetected={onPageCountDetected}
-            />
+            <Suspense fallback={<div className="py-8 text-xs text-slate-300" role="status">Loading PDF preview…</div>}>
+              <PdfPageRenderer
+                fileUrl={fileUrl}
+                currentPage={currentPage}
+                rotation={rotation}
+                onPageCountDetected={onPageCountDetected}
+              />
+            </Suspense>
           </div>
         ) : isImage ? (
           <div className="w-full h-full max-h-[300px] flex items-center justify-center p-2">

@@ -1070,7 +1070,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       });
       assert.equal(ledgerRes.status, 200);
       const ledger = (await ledgerRes.json()) as any;
-      const entry = ledger.find((l: any) => l.order_id === orderId);
+      const entry = ledger.entries.find((l: any) => l.order_id === orderId);
       assert.ok(entry, 'Ledger must contain transaction for the cash collected order');
       assert.equal(entry.amount_paise, 1200);
     });

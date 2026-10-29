@@ -20,6 +20,9 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
   const [overview, setOverview] = useState<any>(null);
   const [merchants, setMerchants] = useState<any[]>([]);
   const [ledgerEntries, setLedgerEntries] = useState<any[]>([]);
+  const [ledgerNextCursor, setLedgerNextCursor] = useState<string | null>(null);
+  const [ledgerLoadingMore, setLedgerLoadingMore] = useState(false);
+  const [ledgerExporting, setLedgerExporting] = useState(false);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [enquiries, setEnquiries] = useState<any[]>([]);
   const [selectedDomain, setSelectedDomain] = useState<string>('ALL');
@@ -140,7 +143,10 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
       ]);
       if (ovData) setOverview(ovData);
       if (merData) setMerchants(merData);
-      if (ledData) setLedgerEntries(ledData);
+      if (ledData) {
+        setLedgerEntries(Array.isArray(ledData.entries) ? ledData.entries : []);
+        setLedgerNextCursor(typeof ledData.nextCursor === 'string' ? ledData.nextCursor : null);
+      }
       if (audData) setAuditLogs(audData);
       if (enquiryData) setEnquiries(enquiryData);
       if (agentData) setAgentFleet(agentData);
@@ -275,27 +281,59 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
     showToast('📥 Exported Merchants Directory CSV.');
   };
 
-  const handleExportLedgerCsv = () => {
-    const headers = ['Ledger ID', 'Domain', 'Description', 'Provider', 'Amount (INR)', 'Created At'];
-    const rows = ledgerEntries.map((le) => [
-      le.id,
-      le.domain,
-      `"${le.description.replace(/"/g, '""')}"`,
-      le.provider,
-      (le.amount_paise / 100).toFixed(2),
-      le.created_at,
-    ]);
-    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `Inklly-Platform-Financial-Ledger-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    showToast('📥 Exported Platform Financial Ledger CSV.');
+  const loadMoreLedger = async () => {
+    if (!ledgerNextCursor || ledgerLoadingMore) return;
+    try {
+      setLedgerLoadingMore(true);
+      const page = await api.getPlatformLedger(selectedDomain === 'ALL' ? undefined : selectedDomain, ledgerNextCursor);
+      setLedgerEntries((current) => {
+        const seen = new Set(current.map((entry) => entry.id));
+        return [...current, ...(page.entries || []).filter((entry: any) => !seen.has(entry.id))];
+      });
+      setLedgerNextCursor(typeof page.nextCursor === 'string' ? page.nextCursor : null);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not load more ledger entries.');
+    } finally {
+      setLedgerLoadingMore(false);
+    }
+  };
+
+  const handleExportLedgerCsv = async () => {
+    if (ledgerExporting) return;
+    try {
+      setLedgerExporting(true);
+      const allEntries: any[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await api.getPlatformLedger(undefined, cursor);
+        allEntries.push(...(page.entries || []));
+        cursor = typeof page.nextCursor === 'string' ? page.nextCursor : undefined;
+      } while (cursor);
+      const csvCell = (value: unknown) => {
+        const text = String(value ?? '');
+        const safe = /^[=+@\-\t\r]/.test(text) ? `'${text}` : text;
+        return `"${safe.replace(/"/g, '""')}"`;
+      };
+      const headers = ['Ledger ID', 'Domain', 'Description', 'Provider', 'Amount (minor units)', 'Currency', 'Created At'];
+      const rows = allEntries.map((le) => [
+        le.id, le.domain, le.description, le.provider, le.amount_paise, le.currency, le.created_at,
+      ].map(csvCell));
+      const csvContent = [headers.map(csvCell).join(','), ...rows.map((r) => r.join(','))].join('\r\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Inklly-Platform-Financial-Ledger-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast(`Exported ${allEntries.length} ledger entries across all domains.`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not export the full ledger.');
+    } finally {
+      setLedgerExporting(false);
+    }
   };
 
   const handleExportAuditCsv = () => {
@@ -843,9 +881,10 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
               <button
                 type="button"
                 onClick={handleExportLedgerCsv}
+                disabled={ledgerExporting}
                 className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold cursor-pointer flex items-center gap-1.5"
               >
-                <span>📥 Export CSV</span>
+                <span>{ledgerExporting ? 'Preparing full export…' : '📥 Export CSV'}</span>
               </button>
             </div>
           </div>
@@ -916,6 +955,18 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
               </tbody>
             </table>
           </div>
+          {ledgerNextCursor && (
+            <div className="flex justify-center border-t border-slate-100 dark:border-slate-800 p-4">
+              <button
+                type="button"
+                onClick={loadMoreLedger}
+                disabled={ledgerLoadingMore}
+                className="rounded-lg border border-slate-200 dark:border-slate-700 px-4 py-2 text-xs font-bold text-slate-700 dark:text-slate-200 disabled:opacity-50"
+              >
+                {ledgerLoadingMore ? 'Loading…' : 'Load more ledger entries'}
+              </button>
+            </div>
+          )}
         </div>
       )}
 

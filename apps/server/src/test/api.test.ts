@@ -451,6 +451,33 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(missingKey.status, 400);
   });
 
+  it('returns a safe conflict when retention has claimed an uploaded file before order creation', async () => {
+    const uploadRes = await fetch(`${baseUrl}/api/v1/portal/upload`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopId: 'shop-campus-1', fileName: 'claimed.pdf', fileData: makeTestPdf(1).toString('base64') }),
+    });
+    assert.equal(uploadRes.status, 201);
+    const upload = await uploadRes.json() as any;
+    const now = new Date().toISOString();
+    db.execute(
+      `INSERT INTO print_file_lifecycle (storage_key, status, claim_token, purging_until, updated_at)
+       VALUES (?, 'PURGING', 'active-test-claim', ?, ?)`,
+      [upload.storageKey, new Date(Date.now() + 60_000).toISOString(), now]
+    );
+    const response = await fetch(`${baseUrl}/api/v1/portal/orders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'retention-api-claim-0001' },
+      body: JSON.stringify({
+        shopId: 'shop-campus-1', customerName: 'Retention Customer', paymentMethod: 'CASH_ON_COLLECTION',
+        files: [{ fileName: 'claimed.pdf', pageCount: upload.pageCount, storageKey: upload.storageKey,
+          options: { colorMode: 'bw', duplexMode: 'simplex', paperSize: 'A4', copies: 1 } }],
+      }),
+    });
+    assert.equal(response.status, 409);
+    assert.match((await response.json() as any).error, /Upload the file again/);
+    assert.equal(db.queryOne<any>(`SELECT id FROM orders WHERE customer_name = 'Retention Customer'`), null);
+  });
+
   it('Authenticates merchant owner and returns JWT session payload', async () => {
     const loginRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
       method: 'POST',
@@ -498,6 +525,52 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       body: JSON.stringify({ name: before.name, phone: before.phone, address: before.address, city: before.city, state: before.state, pinCode: before.pinCode, tagline: before.tagline || '' }),
     });
     assert.equal(restore.status, 200);
+  });
+
+  it('requires settings:manage for merchant settings updates, including manager-role accounts', async () => {
+    const userId = 'user-staff-1';
+    const shopId = 'shop-campus-1';
+    const sessionId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const token = createSessionToken({
+      sessionId,
+      userId,
+      email: 'operator@campusprint.in',
+      role: 'SHOP_STAFF',
+      organizationId: 'org-campus-network',
+      shopId,
+      permissions: ['settings:manage'],
+    });
+    db.execute(
+      `INSERT INTO user_sessions (id, user_id, token_hash, created_at, last_used_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      [sessionId, userId, hashSessionToken(token), now, now, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()]
+    );
+    const membership = db.queryOne<any>(`SELECT role, permissions FROM memberships WHERE user_id = ? AND shop_id = ?`, [userId, shopId]);
+    const originalShop = db.queryOne<any>(`SELECT tagline FROM shops WHERE id = ?`, [shopId]);
+    assert.ok(membership);
+    try {
+      db.execute(`UPDATE memberships SET role = 'SHOP_MANAGER', permissions = ? WHERE user_id = ? AND shop_id = ?`, [JSON.stringify([]), userId, shopId]);
+      const denied = await fetch(`${baseUrl}/api/v1/merchant/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ tagline: 'Should not be saved' }),
+      });
+      assert.equal(denied.status, 403);
+      assert.equal(db.queryOne<any>(`SELECT tagline FROM shops WHERE id = ?`, [shopId]).tagline, originalShop.tagline);
+
+      db.execute(`UPDATE memberships SET role = 'SHOP_STAFF', permissions = ? WHERE user_id = ? AND shop_id = ?`, [JSON.stringify(['settings:manage']), userId, shopId]);
+      const allowed = await fetch(`${baseUrl}/api/v1/merchant/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ tagline: 'Authorized settings update' }),
+      });
+      assert.equal(allowed.status, 200, await allowed.clone().text());
+      assert.equal((await allowed.json() as any).shop.tagline, 'Authorized settings update');
+    } finally {
+      db.execute(`UPDATE memberships SET role = ?, permissions = ? WHERE user_id = ? AND shop_id = ?`, [membership.role, membership.permissions, userId, shopId]);
+      db.execute(`UPDATE shops SET tagline = ? WHERE id = ?`, [originalShop.tagline, shopId]);
+      db.execute(`UPDATE user_sessions SET revoked_at = ? WHERE id = ?`, [new Date().toISOString(), sessionId]);
+    }
   });
 
   it('does not create a simulated WhatsApp pairing or save unencrypted Meta settings', async () => {
@@ -1150,6 +1223,70 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.ok(audit.some((entry) => entry.action === 'VIEW_PUBLIC_ENQUIRIES'));
   });
 
+  it('paginates every platform ledger row with a stable created_at and id cursor', async () => {
+    const domain = 'PAGINATION_TEST';
+    const createdAt = '2001-01-01T00:00:00.000Z';
+    const expectedIds = Array.from({ length: 205 }, (_, index) => `ledger-page-${String(index).padStart(3, '0')}`);
+    for (const id of expectedIds) {
+      db.execute(
+        `INSERT INTO ledger_entries (id, domain, amount_paise, currency, provider, description, created_at)
+         VALUES (?, ?, 1, 'INR', 'TEST', 'pagination regression', ?)`,
+        [id, domain, createdAt]
+      );
+    }
+
+    const userId = `ledger-auditor-${crypto.randomUUID()}`;
+    const sessionId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    db.execute(
+      `INSERT INTO users (id, email, password_hash, full_name, role, is_active, created_at, updated_at)
+       VALUES (?, ?, 'test-hash', 'Ledger Auditor', 'PLATFORM_OWNER', 1, ?, ?)`,
+      [userId, `${userId}@example.invalid`, now, now]
+    );
+    const token = createSessionToken({ sessionId, userId, email: `${userId}@example.invalid`, role: 'PLATFORM_OWNER', permissions: ['*'] });
+    db.execute(
+      `INSERT INTO user_sessions (id, user_id, token_hash, created_at, last_used_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      [sessionId, userId, hashSessionToken(token), now, now, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()]
+    );
+    const headers = { Authorization: `Bearer ${token}` };
+    const denied = await fetch(`${baseUrl}/api/v1/platform/ledger?domain=${domain}`);
+    assert.equal(denied.status, 401, 'platform ledger must remain protected');
+
+    const invalidLimit = await fetch(`${baseUrl}/api/v1/platform/ledger?limit=101`, { headers });
+    assert.equal(invalidLimit.status, 400);
+    const invalidCursor = await fetch(`${baseUrl}/api/v1/platform/ledger?cursor=not-a-cursor`, { headers });
+    assert.equal(invalidCursor.status, 400);
+
+    const received: any[] = [];
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+    do {
+      const url = new URL(`${baseUrl}/api/v1/platform/ledger`);
+      url.searchParams.set('domain', domain);
+      url.searchParams.set('limit', '37');
+      if (cursor) url.searchParams.set('cursor', cursor);
+      const response = await fetch(url, { headers });
+      assert.equal(response.status, 200);
+      const page = await response.json() as any;
+      assert.ok(Array.isArray(page.entries));
+      assert.ok(page.entries.length <= 37);
+      received.push(...page.entries);
+      cursor = page.nextCursor || undefined;
+      if (cursor) {
+        assert.equal(page.hasMore, true);
+        assert.equal(seenCursors.has(cursor), false, 'pagination cursor must advance');
+        seenCursors.add(cursor);
+      } else {
+        assert.equal(page.hasMore, false);
+      }
+    } while (cursor);
+
+    assert.equal(received.length, expectedIds.length, 'all rows must be returned exactly once');
+    assert.equal(new Set(received.map((entry) => entry.id)).size, expectedIds.length, 'pages must not duplicate rows');
+    assert.deepEqual(received.map((entry) => entry.id), [...expectedIds].sort().reverse(),
+      'same-timestamp rows must use descending id order across cursor boundaries');
+  });
+
   it('stores platform-admin permissions separately and applies revocation without re-login', async () => {
     const userId = `platform-admin-${crypto.randomUUID()}`;
     const email = `${userId}@inklly.test`;
@@ -1478,6 +1615,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.ok(spec.paths['/platform/billing/invoices']?.post.description.includes('Does not charge'));
     assert.ok(spec.paths['/platform/admins']?.get.description.includes('Platform-owner only'));
     assert.ok(spec.paths['/platform/admins/{id}/permissions']?.put.description.includes('take effect on the next request'));
+    assert.ok(spec.paths['/merchant/settings']?.put.description.includes('settings:manage'));
     assert.ok(!spec.paths['/subscriptions/usage']?.get.description.includes('active subscription'));
     assert.ok(spec.paths['/developer/webhooks/{id}/deliveries']?.get.description.includes('HMAC SHA-256'));
 

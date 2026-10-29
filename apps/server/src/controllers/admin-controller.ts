@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { DatabaseService, EnquiryRepository, LedgerRepository, UserRepository, hashPassword } from '@inklly/db';
-import { SubscriptionPlan, MoneyDomain } from '@inklly/shared';
+import { SubscriptionPlan } from '@inklly/shared';
 import * as crypto from 'node:crypto';
 import { PrivateFileStorage } from '../services/private-file-storage';
 import { purgeExpiredPrintFiles } from '../services/print-file-retention';
@@ -442,13 +442,50 @@ export class AdminController {
   };
 
   public getPlatformLedger = (req: Request, res: Response) => {
-    const domain = req.query.domain as MoneyDomain | undefined;
-    const rows = this.ledgerRepo.getEntriesByOrg('org-campus-network', domain);
-    const allRows = domain
-      ? this.db.query<any>(`SELECT * FROM ledger_entries WHERE domain = ? ORDER BY created_at DESC LIMIT 100`, [domain])
-      : this.db.query<any>(`SELECT * FROM ledger_entries ORDER BY created_at DESC LIMIT 100`);
+    const domain = typeof req.query.domain === 'string' ? req.query.domain : undefined;
+    const rawLimit = req.query.limit === undefined ? 100 : Number(req.query.limit);
+    if (!Number.isInteger(rawLimit) || rawLimit < 1 || rawLimit > 100) {
+      return res.status(400).json({ error: 'limit must be an integer between 1 and 100.' });
+    }
 
-    res.json(allRows);
+    const rawCursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+    let cursor: { createdAt: string; id: string } | undefined;
+    if (rawCursor) {
+      if (rawCursor.length > 512) return res.status(400).json({ error: 'cursor is invalid.' });
+      try {
+        const decoded = JSON.parse(Buffer.from(rawCursor, 'base64url').toString('utf8'));
+        if (!decoded || typeof decoded.createdAt !== 'string' || !decoded.createdAt ||
+            typeof decoded.id !== 'string' || !decoded.id || Object.keys(decoded).some((key) => !['createdAt', 'id'].includes(key))) {
+          return res.status(400).json({ error: 'cursor is invalid.' });
+        }
+        cursor = { createdAt: decoded.createdAt, id: decoded.id };
+      } catch {
+        return res.status(400).json({ error: 'cursor is invalid.' });
+      }
+    }
+
+    const params: Array<string | number> = [];
+    const filters: string[] = [];
+    if (domain) {
+      filters.push('domain = ?');
+      params.push(domain);
+    }
+    if (cursor) {
+      filters.push('(created_at < ? OR (created_at = ? AND id < ?))');
+      params.push(cursor.createdAt, cursor.createdAt, cursor.id);
+    }
+    const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+    const rows = this.db.query<any>(
+      `SELECT * FROM ledger_entries ${where} ORDER BY created_at DESC, id DESC LIMIT ?`,
+      [...params, rawLimit + 1]
+    );
+    const hasMore = rows.length > rawLimit;
+    const entries = hasMore ? rows.slice(0, rawLimit) : rows;
+    const last = entries[entries.length - 1];
+    const nextCursor = hasMore && last
+      ? Buffer.from(JSON.stringify({ createdAt: last.created_at, id: last.id })).toString('base64url')
+      : null;
+    return res.json({ entries, nextCursor, hasMore, limit: rawLimit });
   };
 
   public getAuditLogs = (req: Request, res: Response) => {

@@ -275,3 +275,23 @@ describe('Relational Database & Multi-Tenancy Tests', () => {
     }, /Illegal order transition/);
   });
 });
+
+describe('print-file lifecycle schema migration', () => {
+  it('adds lifecycle coordination when opening a database created before migration 17', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'inklly-print-file-migration-'));
+    const databasePath = path.join(directory, 'existing.sqlite');
+    try {
+      const initial = new DatabaseService(databasePath);
+      initial.execute(`DROP TABLE print_file_lifecycle`);
+      initial.execute(`DELETE FROM inklly_schema_migrations WHERE version = 17`);
+      initial.close();
+
+      const upgraded = new DatabaseService(databasePath);
+      assert.ok(upgraded.queryOne(`SELECT version FROM inklly_schema_migrations WHERE version = 17`));
+      assert.ok(upgraded.queryOne(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'print_file_lifecycle'`));
+      upgraded.close();
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});

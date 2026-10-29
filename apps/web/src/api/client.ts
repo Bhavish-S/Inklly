@@ -656,10 +656,16 @@ export const api = {
     return body;
   },
 
-  async getPlatformLedger(domain?: string) {
-    const url = domain ? `${API_BASE}/platform/ledger?domain=${domain}` : `${API_BASE}/platform/ledger`;
+  async getPlatformLedger(domain?: string, cursor?: string, limit = 100) {
+    const params = new URLSearchParams();
+    if (domain) params.set('domain', domain);
+    if (cursor) params.set('cursor', cursor);
+    params.set('limit', String(limit));
+    const url = `${API_BASE}/platform/ledger?${params.toString()}`;
     const res = await fetch(url, { headers: getHeaders() });
-    return res.json();
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to load platform ledger');
+    return body;
   },
 
   async getAuditLogs() {

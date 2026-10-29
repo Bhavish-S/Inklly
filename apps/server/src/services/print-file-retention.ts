@@ -1,4 +1,4 @@
-import { DatabaseService } from '@inklly/db';
+import { DatabaseService, claimPrintFileForPurge, finishPrintFilePurge } from '@inklly/db';
 import { PrivateFileStorage } from './private-file-storage';
 
 const RETENTION_MS = 24 * 60 * 60 * 1000;
@@ -52,7 +52,7 @@ async function performPurge(db: DatabaseService, storage: PrivateFileStorage): P
     // A customer upload key can be referenced by more than one order in legacy
     // data or by a vault document. Do not delete the underlying object while any
     // order still needs it or a retained vault record points to it.
-    const retainedReference = db.queryOne<any>(
+    const claimToken = claimPrintFileForPurge(db, row.storage_key, () => !!db.queryOne<any>(
       `SELECT of.id FROM order_files of
        JOIN orders o ON o.id = of.order_id
        WHERE of.storage_key = ?
@@ -62,16 +62,21 @@ async function performPurge(db: DatabaseService, storage: PrivateFileStorage): P
        SELECT id FROM storage_documents WHERE storage_key = ?
        LIMIT 1`,
       [row.storage_key, retentionDate, row.storage_key]
-    );
-    if (retainedReference) continue;
+    ));
+    if (!claimToken) continue;
     try {
       if (await storage.remove(row.storage_key)) {
-        db.execute(`UPDATE order_files SET storage_key = ? || id WHERE storage_key = ?`, ['expired:', row.storage_key]);
+        db.transaction(() => {
+          db.execute(`UPDATE order_files SET storage_key = ? || id WHERE storage_key = ?`, ['expired:', row.storage_key]);
+          finishPrintFilePurge(db, row.storage_key, claimToken, true);
+        });
         summary.expiredFilesDeleted++;
       } else {
+        finishPrintFilePurge(db, row.storage_key, claimToken, false);
         summary.expiredFilesFailed++;
       }
     } catch (error) {
+      finishPrintFilePurge(db, row.storage_key, claimToken, false);
       summary.expiredFilesFailed++;
       console.error('[File retention] Could not remove expired upload', error);
     }
@@ -92,21 +97,27 @@ async function performPurge(db: DatabaseService, storage: PrivateFileStorage): P
           continue;
         }
         const storageKey = `uploads/${objectPath}`;
-        const referenced = db.queryOne<any>(
-          `SELECT id FROM order_files WHERE storage_key = ?
-           UNION ALL
-           SELECT id FROM storage_documents WHERE storage_key = ?
-           LIMIT 1`,
-          [storageKey, storageKey]
-        );
-        if (!referenced && entry.created_at && Date.parse(entry.created_at) <= orphanDate) {
+        if (entry.created_at && Date.parse(entry.created_at) <= orphanDate) {
+          const claimToken = claimPrintFileForPurge(db, storageKey, () => !!db.queryOne<any>(
+            `SELECT id FROM order_files WHERE storage_key = ?
+             UNION ALL
+             SELECT id FROM storage_documents WHERE storage_key = ?
+             LIMIT 1`,
+            [storageKey, storageKey]
+          ));
+          if (!claimToken) continue;
           summary.orphanFilesScanned++;
           try {
             if (await storage.remove(storageKey)) {
+              finishPrintFilePurge(db, storageKey, claimToken, true);
               summary.orphanFilesDeleted++;
               deletedOnPage = true;
-            } else summary.orphanFilesFailed++;
+            } else {
+              finishPrintFilePurge(db, storageKey, claimToken, false);
+              summary.orphanFilesFailed++;
+            }
           } catch (error) {
+            finishPrintFilePurge(db, storageKey, claimToken, false);
             summary.orphanFilesFailed++;
             console.error('[File retention] Could not remove abandoned upload', error);
           }

@@ -43,6 +43,7 @@ export class DatabaseService {
       this.ensureSqliteWebhookOutboxMigration();
       this.ensureSqlitePilotBillingMigration();
       this.ensureSqlitePlatformAdminPermissionsMigration();
+      this.ensureSqlitePrintFileLifecycleMigration();
     }
   }
 
@@ -153,6 +154,45 @@ export class DatabaseService {
     this.ensurePostgresWebhookOutboxMigration();
     this.ensurePostgresPilotBillingMigration();
     this.ensurePostgresPlatformAdminPermissionsMigration();
+    this.ensurePostgresPrintFileLifecycleMigration();
+  }
+
+  private ensureSqlitePrintFileLifecycleMigration(): void {
+    if (this.db!.prepare(`SELECT version FROM inklly_schema_migrations WHERE version = 17`).get()) return;
+    this.db!.exec('BEGIN');
+    try {
+      this.db!.exec(`CREATE TABLE IF NOT EXISTS print_file_lifecycle (
+        storage_key TEXT PRIMARY KEY,
+        status TEXT NOT NULL DEFAULT 'AVAILABLE' CHECK (status IN ('AVAILABLE', 'PURGING', 'DELETED')),
+        claim_token TEXT,
+        purging_until TEXT,
+        updated_at TEXT NOT NULL
+      )`);
+      this.db!.prepare(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (17, ?)`).run(new Date().toISOString());
+      this.db!.exec('COMMIT');
+    } catch (error) {
+      try { this.db!.exec('ROLLBACK'); } catch { /* preserve original error */ }
+      throw error;
+    }
+  }
+
+  private ensurePostgresPrintFileLifecycleMigration(): void {
+    if (this.queryPostgres(`SELECT version FROM inklly_schema_migrations WHERE version = ?`, [17]).length) return;
+    this.queryPostgres('BEGIN');
+    try {
+      this.queryPostgres(`CREATE TABLE IF NOT EXISTS print_file_lifecycle (
+        storage_key TEXT PRIMARY KEY,
+        status TEXT NOT NULL DEFAULT 'AVAILABLE' CHECK (status IN ('AVAILABLE', 'PURGING', 'DELETED')),
+        claim_token TEXT,
+        purging_until TEXT,
+        updated_at TEXT NOT NULL
+      )`);
+      this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [17, new Date().toISOString()]);
+      this.queryPostgres('COMMIT');
+    } catch (error) {
+      try { this.queryPostgres('ROLLBACK'); } catch { /* preserve original error */ }
+      throw new Error(`[Inklly DB] Print file lifecycle migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
   }
 
   private ensureSqliteSubscriptionUsageMigration(): void {

@@ -23,7 +23,7 @@ const MERCHANT_ROUTE_DOCUMENTATION: Array<{ path: string; method: string; summar
   { path: '/merchant/printers', method: 'post', summary: 'Add a shop printer', access: 'Requires printers:manage.' },
   { path: '/merchant/printers/{id}/default', method: 'put', summary: 'Set the default shop printer', access: 'Requires printers:manage.' },
   { path: '/merchant/settings', method: 'get', summary: 'Get shop settings', access: 'Requires settings:view.' },
-  { path: '/merchant/settings', method: 'put', summary: 'Update shop settings', access: 'Restricted to MERCHANT_OWNER or SHOP_MANAGER.' },
+  { path: '/merchant/settings', method: 'put', summary: 'Update shop settings', access: 'Requires settings:manage; merchant owners receive this permission implicitly.' },
   { path: '/merchant/settings/razorpay', method: 'get', summary: 'Get Razorpay credential configuration status', access: 'Restricted to MERCHANT_OWNER.' },
   { path: '/merchant/settings/razorpay', method: 'put', summary: 'Save Razorpay credentials', access: 'Restricted to MERCHANT_OWNER.' },
   { path: '/merchant/settings/razorpay/test', method: 'post', summary: 'Test configured Razorpay credentials', access: 'Restricted to MERCHANT_OWNER.' },

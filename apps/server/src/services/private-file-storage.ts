@@ -147,6 +147,7 @@ export class PrivateFileStorage {
       method: 'DELETE',
       headers: this.headers({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ prefixes: [objectPath] }),
+      signal: AbortSignal.timeout(60_000),
     });
     await this.requireSuccess(response, 'deletion');
     return true;
