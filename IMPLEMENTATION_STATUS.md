@@ -26,7 +26,7 @@ Use `BUILD_AND_TEST_RESULTS.md` for the latest executed checks and `REMAINING_IS
 
 ## Incomplete or unverified
 
-- The latest pushed web build is `3393dc2`; current webhook delivery code is local and not deployed. Render still serves the older seven-path OpenAPI document, omits `revision`, and does not expose recent storage, print-reconciliation, or subscription usage routes.
+- Commit `e135daf` is pushed and its matching bundle is live on Vercel. Render still serves the older seven-path OpenAPI document, omits `revision`, and does not expose the new webhook delivery or recent storage, print-reconciliation, and subscription usage routes.
 - PostgreSQL migration/startup against the live production project and Supabase private bucket behavior remain unverified.
 - Razorpay sandbox checkout and webhook round trip, refunds/reconciliation against provider statements, subscription checkout, configurable hybrid tariff collection, and quota enforcement are not verified or fully implemented. Usage counting alone is not billing.
 - Database migrations now install append-only ledger triggers and a unique provider-transaction index; local SQLite tests cover immutability, compensating entries, and duplicate rejection. Live Supabase migration, pre-existing duplicate review, role/owner bypass protection, and complete reconciliation remain open.
