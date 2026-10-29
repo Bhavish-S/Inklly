@@ -337,16 +337,23 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
   };
 
   const handleExportAuditCsv = () => {
-    const headers = ['Event ID', 'Actor User ID', 'Action', 'Target Entity ID', 'IP Address', 'Timestamp'];
+    const csvCell = (value: unknown) => {
+      const safe = String(value ?? '').replace(/[\r\n]+/g, ' ');
+      return `"${safe.replace(/"/g, '""')}"`;
+    };
+    const headers = ['Event ID', 'Actor User ID', 'Actor Role', 'Action', 'Target Type', 'Target ID', 'Outcome', 'IP Address', 'Timestamp'];
     const rows = auditLogs.map((log) => [
       log.id,
-      log.actor_user_id,
-      `"${(log.action || '').replace(/"/g, '""')}"`,
-      log.entity_id || '',
-      log.ip_address || '',
-      log.created_at,
-    ]);
-    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+      log.actorUserId,
+      log.actorRole,
+      log.action,
+      log.targetType,
+      log.targetId,
+      log.outcome,
+      log.ipAddress,
+      log.createdAt,
+    ].map(csvCell));
+    const csvContent = [headers.map(csvCell).join(','), ...rows.map((r) => r.join(','))].join('\r\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1092,18 +1099,18 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
                 ) : (
                   auditLogs.map((log) => (
                     <tr key={log.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
-                      <td className="p-3.5 pl-5 text-slate-500">{log.id.slice(0, 12)}...</td>
+                      <td className="p-3.5 pl-5 text-slate-500">{String(log.id || '').slice(0, 12)}...</td>
                       <td className="p-3.5 font-sans">
-                        <span className="font-bold text-slate-800 dark:text-slate-200">{log.actor_user_id}</span>
-                        <div className="text-[10px] text-slate-400">PLATFORM_OWNER</div>
+                        <span className="font-bold text-slate-800 dark:text-slate-200">{log.actorUserId || 'System'}</span>
+                        <div className="text-[10px] text-slate-400">{log.actorRole || 'Unknown role'}</div>
                       </td>
                       <td className="p-3.5 font-sans font-bold text-slate-900 dark:text-white">
                         {log.action}
                       </td>
-                      <td className="p-3.5 text-slate-500 font-sans">{log.entity_id}</td>
-                      <td className="p-3.5 text-slate-500">{log.ip_address}</td>
+                      <td className="p-3.5 text-slate-500 font-sans">{[log.targetType, log.targetId].filter(Boolean).join(': ') || '—'}<div className="text-[10px] text-slate-400">{log.outcome || '—'}</div></td>
+                      <td className="p-3.5 text-slate-500">{log.ipAddress || '—'}</td>
                       <td className="p-3.5 pr-5 text-right text-slate-400 font-sans">
-                        {new Date(log.created_at).toLocaleString()}
+                        {log.createdAt ? new Date(log.createdAt).toLocaleString() : '—'}
                       </td>
                     </tr>
                   ))

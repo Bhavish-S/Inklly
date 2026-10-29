@@ -489,7 +489,10 @@ export class AdminController {
   };
 
   public getAuditLogs = (req: Request, res: Response) => {
-    const limit = Number(req.query.limit || 50);
+    const limit = req.query.limit === undefined ? 50 : Number(req.query.limit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      return res.status(400).json({ error: 'limit must be an integer between 1 and 100.' });
+    }
     const logs = this.userRepo.getAuditEvents(limit);
     res.json(logs);
   };

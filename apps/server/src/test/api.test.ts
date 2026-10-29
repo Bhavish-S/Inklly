@@ -222,6 +222,19 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(quote.lineItems[0].subtotalPaise, 2000);
   });
 
+  it('rejects pathological public quote sizes before expanding page selections', async () => {
+    const res = await fetch(`${baseUrl}/api/v1/portal/quote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopId: 'shop-campus-1',
+        files: [{ fileName: 'oversized.pdf', pageCount: Number.MAX_SAFE_INTEGER, options: { colorMode: 'bw', duplexMode: 'simplex', paperSize: 'A4', copies: 1 } }],
+      }),
+    });
+    assert.equal(res.status, 422);
+    assert.match((await res.json() as any).error, /page count must be between 1 and 50000/i);
+  });
+
   it('Submits order and queries order status via public portal', async () => {
     const uploadRes = await fetch(`${baseUrl}/api/v1/portal/upload`, {
       method: 'POST',
@@ -793,6 +806,42 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.ok(Array.isArray(orders));
   });
 
+  it('validates merchant printer capability profiles before persistence', async () => {
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` };
+    const countBefore = Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM printers WHERE shop_id = ?`, ['shop-campus-1']).count);
+    const invalidPayloads = [
+      { name: '  ', systemDriverName: 'Queue' },
+      { name: 'Office', systemDriverName: 'Queue', supportsColor: 'false' },
+      { name: 'Office', systemDriverName: 'Queue', trays: [{ name: 'Tray 1', supportedSizes: ['A4', 'UNKNOWN'] }] },
+      { name: 'Office', systemDriverName: 'Queue', trays: [{ isDefault: true }, { isDefault: true }] },
+      { name: 'Office', systemDriverName: 'Queue', trays: 'not-an-array' },
+    ];
+    for (const payload of invalidPayloads) {
+      const response = await fetch(`${baseUrl}/api/v1/merchant/printers`, { method: 'POST', headers, body: JSON.stringify(payload) });
+      assert.equal(response.status, 400, JSON.stringify(payload));
+    }
+    assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM printers WHERE shop_id = ?`, ['shop-campus-1']).count), countBefore,
+      'invalid profiles must not create partial printer records');
+
+    const createdResponse = await fetch(`${baseUrl}/api/v1/merchant/printers`, {
+      method: 'POST', headers,
+      body: JSON.stringify({
+        name: '  Front Counter  ', systemDriverName: '  Windows Queue  ', supportsColor: true, supportsDuplex: false,
+        isOnline: true, id: 'attacker-controlled',
+        trays: [{ id: 'attacker-tray', name: ' Main Tray ', supportedSizes: ['A4', 'A3'], isDefault: true }],
+      }),
+    });
+    assert.equal(createdResponse.status, 201);
+    const created = await createdResponse.json() as any;
+    assert.equal(created.name, 'Front Counter');
+    assert.equal(created.systemDriverName, 'Windows Queue');
+    assert.equal(created.isOnline, false, 'client input cannot claim live printer state');
+    assert.notEqual(created.id, 'attacker-controlled');
+    assert.equal(created.trays[0].id, `tray-${created.id}-1`);
+    assert.deepEqual(created.trays[0].supportedSizes, ['A4', 'A3']);
+    db.execute(`DELETE FROM printers WHERE id = ? AND shop_id = ?`, [created.id, 'shop-campus-1']);
+  });
+
   it('does not count an unpaid collected order as merchant revenue', async () => {
     const original = db.queryOne<any>(`SELECT status, payment_status FROM orders WHERE id = ?`, [cashOrderId]);
     assert.ok(original);
@@ -1244,6 +1293,21 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     });
     const audit = await auditRes.json() as any[];
     assert.ok(audit.some((entry) => entry.action === 'VIEW_PUBLIC_ENQUIRIES'));
+    const viewEvent = audit.find((entry) => entry.action === 'VIEW_PUBLIC_ENQUIRIES');
+    assert.equal(typeof viewEvent.actorUserId, 'string');
+    assert.equal(viewEvent.actorRole, 'PLATFORM_OWNER');
+    assert.equal(viewEvent.targetType, 'PUBLIC_ENQUIRY_COLLECTION');
+    assert.equal(viewEvent.targetId, 'latest');
+    assert.equal(viewEvent.outcome, 'SUCCESS');
+    assert.equal(typeof viewEvent.createdAt, 'string');
+    const unboundedAudit = await fetch(`${baseUrl}/api/v1/platform/audit-logs?limit=-1`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    assert.equal(unboundedAudit.status, 400);
+    const oversizedAudit = await fetch(`${baseUrl}/api/v1/platform/audit-logs?limit=1000000`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    assert.equal(oversizedAudit.status, 400);
   });
 
   it('paginates every platform ledger row with a stable created_at and id cursor', async () => {

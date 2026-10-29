@@ -11,7 +11,7 @@ import {
   LedgerRepository,
   AgentRepository,
 } from '@inklly/db';
-import { OrderStatus, PrintJobStatus, ROLE_PRESETS, STAFF_PERMISSIONS, StaffPermission, validatePrintJobTransition, parsePageRange } from '@inklly/shared';
+import { OrderStatus, PaperSize, PrintJobStatus, ROLE_PRESETS, STAFF_PERMISSIONS, StaffPermission, validatePrintJobTransition, parsePageRange } from '@inklly/shared';
 import { ShopPaymentCredentialsService } from '../services/shop-payment-credentials';
 import { PrivateFileStorage } from '../services/private-file-storage';
 import { getPrinterHealthStatus, hasFreshOnlinePrinterEvidence } from '../services/printer-health';
@@ -471,35 +471,59 @@ export class MerchantController {
   public addPrinter = (req: Request, res: Response) => {
     const shopId = this.getShopId(req);
     const { name, systemDriverName, supportsColor, supportsDuplex, trays } = req.body;
-
-    if (!name || !systemDriverName) {
-      return res.status(400).json({ error: 'Printer name and driver name are required' });
+    const normalizedName = typeof name === 'string' ? name.trim() : '';
+    const normalizedDriverName = typeof systemDriverName === 'string' ? systemDriverName.trim() : '';
+    if (!normalizedName || normalizedName.length > 256 || !normalizedDriverName || normalizedDriverName.length > 256) {
+      return res.status(400).json({ error: 'Printer name and driver name must be strings between 1 and 256 characters.' });
+    }
+    if ((supportsColor !== undefined && typeof supportsColor !== 'boolean') ||
+        (supportsDuplex !== undefined && typeof supportsDuplex !== 'boolean')) {
+      return res.status(400).json({ error: 'Printer color and duplex capabilities must be booleans.' });
+    }
+    const paperSizes = new Set(['A4', 'A3', 'PHOTO_4X6', 'PHOTO_5X7', 'GLOSSY', 'PLAIN']);
+    if (trays !== undefined && (!Array.isArray(trays) || trays.length > 32)) {
+      return res.status(400).json({ error: 'Provide no more than 32 printer trays.' });
+    }
+    const submittedTrays = trays === undefined ? undefined : trays;
+    const cleanTrays: Array<{ id: string; printerId: string; name: string; supportedSizes: PaperSize[]; isDefault: boolean }> = [];
+    if (submittedTrays) {
+      for (let index = 0; index < submittedTrays.length; index++) {
+        const tray = submittedTrays[index];
+        if (!tray || typeof tray !== 'object' || Array.isArray(tray)) {
+          return res.status(400).json({ error: `Tray ${index + 1} must be an object.` });
+        }
+        const trayName = tray.name === undefined ? `Tray ${index + 1}` : typeof tray.name === 'string' ? tray.name.trim() : '';
+        const sizes = tray.supportedSizes === undefined ? ['A4', 'PLAIN'] : tray.supportedSizes;
+        const isDefault = tray.isDefault === undefined ? index === 0 : tray.isDefault;
+        if (!trayName || trayName.length > 100 || !Array.isArray(sizes) || sizes.length < 1 || sizes.length > paperSizes.size ||
+            sizes.some((size: unknown) => typeof size !== 'string' || !paperSizes.has(size)) ||
+            new Set(sizes).size !== sizes.length || typeof isDefault !== 'boolean') {
+          return res.status(400).json({ error: `Tray ${index + 1} has an invalid name, supported size list, or default flag.` });
+        }
+        cleanTrays.push({ id: '', printerId: '', name: trayName, supportedSizes: [...sizes] as PaperSize[], isDefault });
+      }
+      if (cleanTrays.filter((tray) => tray.isDefault).length > 1) {
+        return res.status(400).json({ error: 'At most one paper tray can be the default.' });
+      }
     }
 
-    const printerId = `prn-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
+    const printerId = `prn-${crypto.randomUUID()}`;
+    const printerTrays = (cleanTrays.length ? cleanTrays : submittedTrays === undefined
+      ? [{ id: '', printerId: '', name: 'Tray 1 (A4 Plain)', supportedSizes: ['A4', 'PLAIN'] as PaperSize[], isDefault: true }]
+      : []).map((tray, index) => ({ ...tray, id: `tray-${printerId}-${index + 1}`, printerId }));
     const newPrinter = {
       id: printerId,
       shopId,
-      name,
-      systemDriverName,
+      name: normalizedName,
+      systemDriverName: normalizedDriverName,
       // Registration stores a capability profile; only an authenticated agent
       // heartbeat may later establish that this device is online.
       isOnline: false,
       isDefault: false,
-      supportsColor: Boolean(supportsColor),
-      supportsDuplex: Boolean(supportsDuplex),
+      supportsColor: supportsColor ?? false,
+      supportsDuplex: supportsDuplex ?? false,
       lastHeartbeat: '',
-      trays: Array.isArray(trays)
-        ? trays.map((t: any, i: number) => ({
-            id: t.id || `tray-${printerId}-${i + 1}`,
-            printerId,
-            name: t.name || `Tray ${i + 1}`,
-            supportedSizes: t.supportedSizes || ['A4', 'PLAIN'],
-            isDefault: t.isDefault ?? (i === 0),
-          }))
-        : [
-            { id: `tray-${printerId}-1`, printerId, name: 'Tray 1 (A4 Plain)', supportedSizes: ['A4', 'PLAIN'], isDefault: true },
-          ],
+      trays: printerTrays,
     };
 
     this.printerRepo.registerPrinter(newPrinter);

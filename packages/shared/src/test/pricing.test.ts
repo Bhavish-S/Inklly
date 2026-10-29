@@ -24,6 +24,29 @@ describe('Pricing Engine & Math Invariants', () => {
     assert.equal(parsePageRange(undefined, 5).length, 5);
   });
 
+  it('rejects unsafe page counts before expanding page selections', () => {
+    assert.throws(() => parsePageRange('all', Number.MAX_SAFE_INTEGER), /page count must be between/);
+    assert.throws(() => parsePageRange('1-50001', 50001), /page count must be between/);
+    assert.throws(() => parsePageRange('1junk', 10), /invalid page number/i);
+    assert.throws(() => parsePageRange('1-2-3', 10), /invalid page range/i);
+    assert.equal(parsePageRange(' ALL ', 3).length, 3);
+  });
+
+  it('bounds public quote inputs and prevents oversized order totals', () => {
+    const rates: RateRule[] = [{ id: 'r1', shopId: 'shop1', paperSize: 'A4', colorMode: 'bw', duplexMode: 'simplex', pricePerPrintedSidePaise: 200 }];
+    const file = {
+      fileName: 'document.pdf',
+      pageCount: 1,
+      options: { colorMode: 'bw' as const, duplexMode: 'simplex' as const, paperSize: 'A4' as const, orientation: 'portrait' as const, copies: 1, fitMode: 'fit' as const, pagesPerSheet: 1 as const, collation: true },
+    };
+    assert.throws(() => calculateQuote({ shopId: 'shop1', files: Array.from({ length: 21 }, () => file) }, rates), /between 1 and 20 files/);
+    assert.throws(() => calculateQuote({ shopId: 'shop1', files: [{ ...file, options: { ...file.options, copies: 501 } }] }, rates), /copies must be between 1 and 500/);
+    assert.throws(() => calculateQuote({ shopId: 'shop1', files: [{ ...file, pageCount: 50000, options: { ...file.options, copies: 500 } }] }, rates.map((rate) => ({ ...rate, pricePerPrintedSidePaise: 201 }))), /outside the supported range/);
+    assert.throws(() => calculateQuote({ shopId: 'shop1', files: [file] }, [{ ...rates[0], pricePerPrintedSidePaise: 1.5 }]), /integer paise/i);
+    assert.throws(() => calculateQuote({ shopId: 'shop1', files: [file] }, rates, [], { id: 'bad', shopId: 'shop1', minOrderValuePaise: 10_000, discountPercentage: 101, isEnabled: true }), /percentage from 0 to 100/i);
+    assert.throws(() => calculateQuote({ shopId: 'shop1', files: [file] }, rates, [], undefined, -1), /integer paise/i);
+  });
+
   it('calculates physical sheets for simplex and duplex correctly', () => {
     assert.equal(calculatePhysicalSheets(10, false), 10); // Simplex = 10 sheets
     assert.equal(calculatePhysicalSheets(10, true), 5); // Duplex = 5 sheets
