@@ -181,9 +181,11 @@ export class AdminController {
     const now = Date.now();
     res.json(rows.map((row) => {
       const heartbeatTime = row.last_heartbeat ? Date.parse(row.last_heartbeat) : NaN;
+      const heartbeatAgeMs = now - heartbeatTime;
       const status = !row.is_active ? 'REVOKED'
-        : Number.isFinite(heartbeatTime) ? now - heartbeatTime <= 45_000 ? 'ONLINE' : 'STALE'
+        : Number.isFinite(heartbeatTime) ? heartbeatAgeMs < 0 ? 'UNKNOWN' : heartbeatAgeMs <= 45_000 ? 'ONLINE' : 'STALE'
           : 'UNKNOWN';
+      const reportedOnlinePrinters = Number(row.online_printers || 0);
       return {
         agentId: row.id,
         shopId: row.shop_id,
@@ -195,7 +197,11 @@ export class AdminController {
         agentVersion: row.agent_version || null,
         status,
         lastHeartbeat: row.last_heartbeat || null,
-        onlinePrinters: Number(row.online_printers || 0),
+        // Stored queue state is only current while the owning agent has fresh
+        // heartbeat evidence. Keep the last reported count separately for
+        // diagnostics so stale data cannot be presented as live availability.
+        onlinePrinters: status === 'ONLINE' ? reportedOnlinePrinters : 0,
+        reportedOnlinePrinters,
         pendingCommands: Number(row.pending_commands || 0),
         createdAt: row.created_at,
       };

@@ -685,8 +685,10 @@ export const api = {
 
   async getPlatformAgents() {
     const res = await fetch(`${API_BASE}/platform/agents`, { headers: getHeaders() });
-    if (!res.ok) throw new Error('Failed to load registered agent fleet');
-    return res.json();
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to load registered agent fleet');
+    if (!Array.isArray(body)) throw new Error('The registered agent fleet response is invalid.');
+    return body;
   },
 
   async getPlatformRetentionStats() {

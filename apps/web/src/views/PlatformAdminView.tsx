@@ -60,6 +60,9 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
   const [provisionedInvitationLink, setProvisionedInvitationLink] = useState('');
 
   const [agentFleet, setAgentFleet] = useState<any[]>([]);
+  const [agentFleetRefreshing, setAgentFleetRefreshing] = useState(false);
+  const [agentFleetError, setAgentFleetError] = useState('');
+  const [agentFleetUpdatedAt, setAgentFleetUpdatedAt] = useState<string | null>(null);
   const [platformPlans, setPlatformPlans] = useState<any[]>([]);
   const [subscriptions, setSubscriptions] = useState<any[]>([]);
   const [billingOrganizationId, setBillingOrganizationId] = useState('');
@@ -81,6 +84,23 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  const refreshAgentFleet = async () => {
+    if (agentFleetRefreshing) return;
+    setAgentFleetRefreshing(true);
+    setAgentFleetError('');
+    try {
+      const refreshed = await api.getPlatformAgents();
+      setAgentFleet(refreshed);
+      setAgentFleetUpdatedAt(new Date().toISOString());
+      showToast(`Refreshed ${refreshed.length} registered agents from server records.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not refresh registered agent data.';
+      setAgentFleetError(message);
+    } finally {
+      setAgentFleetRefreshing(false);
+    }
   };
 
   const hasPlatformPermission = (permission: string) => isPlatformOwner || currentPermissions.includes('*') || currentPermissions.includes(permission);
@@ -265,7 +285,11 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
         setAuditNextCursor(typeof audData.nextCursor === 'string' ? audData.nextCursor : null);
       }
       if (enquiryData) setEnquiries(enquiryData);
-      if (agentData) setAgentFleet(agentData);
+      if (agentData) {
+        setAgentFleet(agentData);
+        setAgentFleetUpdatedAt(new Date().toISOString());
+        setAgentFleetError('');
+      }
       if (retentionData) setStorageStats(retentionData);
       if (plansData) setPlatformPlans(plansData);
       if (subscriptionData) setSubscriptions(subscriptionData);
@@ -1131,17 +1155,24 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
                 Edge Print Agent Fleet Telemetry
               </h2>
               <p className="text-xs text-slate-400">
-                Connected Windows Spooler nodes running loopback daemons on localhost:8765
+                Registered agent inventory from the server. Printer availability is based on fresh heartbeat evidence.
               </p>
             </div>
             <button
               type="button"
-              onClick={() => showToast('Polled all 2 fleet nodes. Latency nominal.')}
-              className="px-3.5 py-1.5 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold hover:bg-slate-50 cursor-pointer"
+              onClick={() => void refreshAgentFleet()}
+              disabled={agentFleetRefreshing}
+              className="px-3.5 py-1.5 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold hover:bg-slate-50 cursor-pointer disabled:opacity-50"
             >
-              ↻ Poll Heartbeats
+              {agentFleetRefreshing ? 'Refreshing…' : '↻ Refresh fleet data'}
             </button>
           </div>
+
+          <div className="px-5 py-2.5 border-b border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
+            <span>Reloads server-recorded heartbeats; it does not actively contact desktop agents.</span>
+            <span>{agentFleetUpdatedAt ? `Last refreshed ${new Date(agentFleetUpdatedAt).toLocaleTimeString()}` : 'Fleet data has not been refreshed yet'}</span>
+          </div>
+          {agentFleetError && <div role="alert" className="px-5 py-3 text-xs text-rose-700 bg-rose-50 dark:bg-rose-950/30 dark:text-rose-300">{agentFleetError} The previous fleet data is still shown.</div>}
 
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
@@ -1174,7 +1205,8 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
                       <div className="text-[10px] text-slate-400">{ag.lastHeartbeat ? new Date(ag.lastHeartbeat).toLocaleString() : 'No heartbeat recorded'}</div>
                     </td>
                     <td className="p-3.5 text-slate-600 dark:text-slate-300">
-                      <span className="font-bold text-slate-900 dark:text-white">{ag.onlinePrinters}</span> online
+                      <span className="font-bold text-slate-900 dark:text-white">{ag.onlinePrinters}</span> currently online
+                      {ag.status !== 'ONLINE' && Number(ag.reportedOnlinePrinters) > 0 && <div className="text-[10px] text-amber-600">{ag.reportedOnlinePrinters} last reported; agent is {ag.status.toLowerCase()}</div>}
                     </td>
                     <td className="p-3.5 pr-5 font-bold text-slate-700 dark:text-slate-300">{ag.pendingCommands}</td>
                   </tr>

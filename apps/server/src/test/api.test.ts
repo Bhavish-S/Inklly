@@ -1504,6 +1504,8 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
 
     const freshId = `agt-admin-fresh-${crypto.randomUUID()}`;
     const staleId = `agt-admin-stale-${crypto.randomUUID()}`;
+    const futureId = `agt-admin-future-${crypto.randomUUID()}`;
+    const stalePrinterId = `prn-admin-stale-${crypto.randomUUID()}`;
     const now = new Date().toISOString();
     db.execute(
       `INSERT INTO agent_registrations (id, shop_id, secret_key_hash, hostname, os_platform, os_version, agent_version, is_active, last_heartbeat, created_at, updated_at)
@@ -1511,15 +1513,29 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
               (?, 'shop-campus-1', ?, 'STALE-AGENT', 'win32', 'Windows 10', 'test', 1, ?, ?, ?)`,
       [freshId, 'hash-fresh', now, now, now, staleId, 'hash-stale', new Date(Date.now() - 60_000).toISOString(), now, now]
     );
+    db.execute(
+      `INSERT INTO printers (id, shop_id, name, system_driver_name, is_online, is_default, last_heartbeat, created_at, updated_at, agent_id)
+       VALUES (?, 'shop-campus-1', 'Stale reported printer', 'Test driver', 1, 0, ?, ?, ?, ?)`,
+      [stalePrinterId, new Date(Date.now() - 60_000).toISOString(), now, now, staleId]
+    );
+    db.execute(
+      `INSERT INTO agent_registrations (id, shop_id, secret_key_hash, hostname, os_platform, os_version, agent_version, is_active, last_heartbeat, created_at, updated_at)
+       VALUES (?, 'shop-campus-1', ?, 'FUTURE-AGENT', 'win32', 'Windows 11', 'test', 1, ?, ?, ?)`,
+      [futureId, 'hash-future', new Date(Date.now() + 60_000).toISOString(), now, now]
+    );
     try {
       const agentsRes = await fetch(`${baseUrl}/api/v1/platform/agents`, { headers: { Authorization: `Bearer ${adminToken}` } });
       assert.equal(agentsRes.status, 200);
       const agents = await agentsRes.json() as any[];
       assert.equal(agents.find((agent) => agent.agentId === freshId)?.status, 'ONLINE');
       assert.equal(agents.find((agent) => agent.agentId === staleId)?.status, 'STALE');
+      assert.equal(agents.find((agent) => agent.agentId === staleId)?.onlinePrinters, 0, 'stale agent printers are not represented as currently online');
+      assert.equal(agents.find((agent) => agent.agentId === staleId)?.reportedOnlinePrinters, 1, 'the stored report remains available as diagnostic context');
+      assert.equal(agents.find((agent) => agent.agentId === futureId)?.status, 'UNKNOWN', 'future-dated heartbeats are not treated as fresh');
       assert.equal('secretKey' in agents.find((agent) => agent.agentId === freshId), false);
     } finally {
-      db.execute(`DELETE FROM agent_registrations WHERE id IN (?, ?)`, [freshId, staleId]);
+      db.execute(`DELETE FROM printers WHERE id = ?`, [stalePrinterId]);
+      db.execute(`DELETE FROM agent_registrations WHERE id IN (?, ?, ?)`, [freshId, staleId, futureId]);
     }
 
     const enquiriesRes = await fetch(`${baseUrl}/api/v1/platform/enquiries`, {
