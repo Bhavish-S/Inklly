@@ -40,7 +40,7 @@ Use `BUILD_AND_TEST_RESULTS.md` for the latest executed checks and `REMAINING_IS
 - Shop-bound API keys authenticate merchant business routes only when `ENABLE_EXTERNAL_API_ACCESS=true`, with environment, expiry, revocation, active membership, and least-privilege scope checks. Webhook delivery has local code and test coverage as described above; external API access is disabled by default, and hosted dispatch, replay controls, more event types, and full operational monitoring remain unverified or incomplete.
 - Platform incident handling and mutable runtime configuration require durable, audited backend services. Subscription plan changes and quota enforcement are incomplete.
 - A signed, verified desktop installer is unavailable. The agent refuses physical printing by default; no supported printer has been verified end to end.
-- Browser-level visual testing, production load testing, shared rate limits, backup/restore drills, monitoring, legal/privacy review, and account recovery remain release work.
+- Customer uploads now use database-backed shared per-IP minute/day rate limits; shared limits for other public endpoints, browser-level visual testing, production load testing, backup/restore drills, monitoring, legal/privacy review, and account recovery remain release work.
 
 ## Product decisions already set
 
@@ -51,4 +51,4 @@ Use `BUILD_AND_TEST_RESULTS.md` for the latest executed checks and `REMAINING_IS
 
 ## Verification record
 
-For the current local snapshot, `npm run build` and `npm test` completed successfully (237 tests: database 14, shared 15, agent 14, server 194). `npm audit --audit-level=high` timed out twice at the npm registry. Render still serves a stale API. See `BUILD_AND_TEST_RESULTS.md` for the deployment checks.
+For the current local snapshot, `npm run build` and `npm test` completed successfully (240 tests: database 15, shared 15, agent 14, server 196). `npm audit --audit-level=high` timed out twice at the npm registry. Render still serves a stale API. See `BUILD_AND_TEST_RESULTS.md` for the deployment checks.

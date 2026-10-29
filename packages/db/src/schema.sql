@@ -45,6 +45,16 @@ CREATE TABLE IF NOT EXISTS shops (
 CREATE INDEX IF NOT EXISTS idx_shops_shop_code ON shops(shop_code);
 CREATE INDEX IF NOT EXISTS idx_shops_org ON shops(organization_id);
 
+-- Shared atomic rate-limit buckets for public upload endpoints across API processes.
+CREATE TABLE IF NOT EXISTS public_upload_rate_limits (
+    bucket_key TEXT NOT NULL,
+    window_start_ms BIGINT NOT NULL,
+    request_count INTEGER NOT NULL,
+    expires_at_ms BIGINT NOT NULL,
+    PRIMARY KEY (bucket_key, window_start_ms)
+);
+CREATE INDEX IF NOT EXISTS idx_public_upload_rate_limits_expiry ON public_upload_rate_limits(expires_at_ms);
+
 CREATE TABLE IF NOT EXISTS shop_portal_settings (
     shop_id TEXT PRIMARY KEY,
     settings_json TEXT NOT NULL,

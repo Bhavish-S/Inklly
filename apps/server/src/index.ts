@@ -16,6 +16,7 @@ import { assertSessionSecretConfigured } from './middleware/session-token';
 import { purgeExpiredPrintFiles } from './services/print-file-retention';
 import { PrivateFileStorage } from './services/private-file-storage';
 import { createUploadConcurrencyGuard } from './middleware/public-upload-guard';
+import { createPublicUploadRateLimit } from './middleware/public-upload-rate-limit';
 import { authenticate, enforceTenantIsolation, requireActiveSubscription, requirePermission } from './middleware/auth';
 import { EnquiryRepository } from '@inklly/db';
 import { EnquiryController } from './controllers/enquiry-controller';
@@ -38,13 +39,14 @@ export function createApp(db?: DatabaseService): express.Express {
   const database = db || DatabaseService.getInstance(process.env.DATABASE_URL || process.env.DB_PATH || path.join(process.cwd(), 'data', 'inklly.db'));
   const maxConcurrentUploads = Number(process.env.MAX_CONCURRENT_PUBLIC_UPLOADS) || 2;
   const uploadCapacityGuard = createUploadConcurrencyGuard(maxConcurrentUploads);
+  const publicUploadRateLimit = createPublicUploadRateLimit(database);
   const maxFileSizeMb = Math.max(1, Math.min(35, Number(process.env.MAX_FILE_SIZE_MB) || 25));
   const fileUploadJsonParser = express.json({ limit: `${maxFileSizeMb * 2}mb` });
 
   // Large base64 bodies are accepted only on the two file-upload routes. The
   // merchant vault checks the persisted session, tenant, subscription, and
   // permission before parsing; both routes share one in-flight capacity cap.
-  app.post('/api/v1/portal/upload', uploadCapacityGuard, fileUploadJsonParser);
+  app.post('/api/v1/portal/upload', uploadCapacityGuard, publicUploadRateLimit, fileUploadJsonParser);
   app.post(
     '/api/v1/merchant/storage/documents',
     uploadCapacityGuard,

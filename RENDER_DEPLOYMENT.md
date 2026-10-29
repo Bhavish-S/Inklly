@@ -22,6 +22,8 @@ Set these values in Render's Environment settings. Never commit their values to 
 | `SUPABASE_SERVICE_ROLE_KEY` | Server-only Supabase service role key. Never expose it to the browser or commit it. |
 | `SUPABASE_STORAGE_BUCKET` | Existing bucket name, default `customer-print-files`. The bucket must be private; startup checks that `public` is false. |
 | `MAX_CONCURRENT_PUBLIC_UPLOADS` | Optional per-process upload concurrency limit; defaults to `2` and is clamped to `1`–`8`. Requests over capacity receive HTTP 429 before JSON body parsing. This limit is per Render instance. |
+| `PUBLIC_UPLOADS_PER_MINUTE` | Optional shared per-client upload limit per fixed minute; defaults to `30` and is clamped to `1`–`120`. Counters use atomic database upserts and HMAC-hashed client IP keys, so limits are shared across Render instances. |
+| `PUBLIC_UPLOADS_PER_DAY` | Optional shared per-client upload limit per UTC day; defaults to `1000` and is clamped to `1`–`10000`. |
 | `PUBLIC_ENQUIRY_LIMIT_PER_WINDOW` | Public enquiry submissions allowed per client IP in each window; defaults to `5`. This is per process, so use an edge/WAF limit as well when scaling to multiple instances. |
 | `PUBLIC_ENQUIRY_WINDOW_MS` | Public enquiry rate-limit window in milliseconds; defaults to `600000` (10 minutes). |
 

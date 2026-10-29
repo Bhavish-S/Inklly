@@ -17,9 +17,13 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
   let adminToken: string;
   let cashOrderId: string;
   const originalExternalApiSetting = process.env.ENABLE_EXTERNAL_API_ACCESS;
+  const originalPublicUploadMinuteLimit = process.env.PUBLIC_UPLOADS_PER_MINUTE;
+  const originalPublicUploadDayLimit = process.env.PUBLIC_UPLOADS_PER_DAY;
 
   before(async () => {
     process.env.ENABLE_EXTERNAL_API_ACCESS = 'true';
+    process.env.PUBLIC_UPLOADS_PER_MINUTE = '120';
+    process.env.PUBLIC_UPLOADS_PER_DAY = '10000';
     db = new DatabaseService(':memory:');
     const app = createApp(db);
     // Keep these legacy API-contract fixtures representative of a shop that
@@ -47,6 +51,10 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     db.close();
     if (originalExternalApiSetting === undefined) delete process.env.ENABLE_EXTERNAL_API_ACCESS;
     else process.env.ENABLE_EXTERNAL_API_ACCESS = originalExternalApiSetting;
+    if (originalPublicUploadMinuteLimit === undefined) delete process.env.PUBLIC_UPLOADS_PER_MINUTE;
+    else process.env.PUBLIC_UPLOADS_PER_MINUTE = originalPublicUploadMinuteLimit;
+    if (originalPublicUploadDayLimit === undefined) delete process.env.PUBLIC_UPLOADS_PER_DAY;
+    else process.env.PUBLIC_UPLOADS_PER_DAY = originalPublicUploadDayLimit;
   });
 
   it('Health Check responds with HEALTHY status', async () => {

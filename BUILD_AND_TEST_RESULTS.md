@@ -5,7 +5,7 @@
 ## Current local verification
 
 - `npm run build` — passed for database, shared, desktop agent, server, and web workspaces using Vite 6.4.5. After route-level code splitting, the initial JavaScript bundle is 215.71 kB minified (61.06 kB gzip); PDF rendering is isolated in a 483.94 kB chunk. Vite reports no oversized JavaScript chunk.
-- `npm test` — 237 passed, 0 failed: database 14, shared 15, agent 14, server 194. New coverage includes membership revocation migration and immediate permission invalidation, persisted shop staff edits/revocation, dispatch-ack gating and lost-response recovery, customer-field enforcement without a client marker, optional +91 phone normalization, truthful failure when password-reset email delivery is unconfigured, malformed printer-profile rejection, hostile page-range and quote-size bounds, platform audit-log response fields/limit validation, and malformed customer request handling.
+- `npm test` — 240 passed, 0 failed: database 15, shared 15, agent 14, server 196. New coverage includes membership revocation migration and immediate permission invalidation, persisted shop staff edits/revocation, dispatch-ack gating and lost-response recovery, customer-field enforcement without a client marker, optional +91 phone normalization, truthful failure when password-reset email delivery is unconfigured, malformed printer-profile rejection, hostile page-range and quote-size bounds, platform audit-log response fields/limit validation, malformed customer request handling, and shared upload-rate migration/enforcement.
 - `npm audit --audit-level=high` — attempted twice; both requests to the npm advisory endpoint timed out, so no current audit result is available.
 - `npm run lint` — no root lint script is currently configured.
 
@@ -18,6 +18,8 @@ Migration v19 adds revocable shop memberships. Owners can change a staff member'
 Merchant printer registration now validates capability profiles and does not trust client claims about IDs or live status. The shared quote engine bounds page expansion, files, copies, and total Paise; rejects malformed page ranges and invalid monetary rules. Platform audit-log display/export matches the API response fields and applies a bounded limit; historical cursor pagination is still not implemented.
 
 Public quote, upload, and order endpoints now return HTTP 400 for null or structurally invalid bodies, and malformed JSON no longer becomes a generic server error. Staff revocation audit coverage now selects the intended event deterministically when multiple events share the same timestamp.
+
+Migration v20 adds persistent upload-rate buckets. Customer document uploads now enforce shared atomic per-IP minute and UTC-day quotas before parsing large bodies; HMAC-derived keys avoid storing client IP addresses, and the limiter fails closed if its database counter cannot be updated. Concurrent simulated middleware instances share counters in regression tests. Merchant vault uploads remain authenticated and use the per-process concurrency guard.
 
 Marketing pages and authenticated portals load on demand; PDF preview code loads only when a customer previews a PDF. The initial JavaScript payload dropped from 1,201.35 kB to 215.46 kB minified. The web build passes, but visual browser testing remains unavailable in this environment.
 

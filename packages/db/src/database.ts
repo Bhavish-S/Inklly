@@ -46,6 +46,7 @@ export class DatabaseService {
       this.ensureSqlitePrintFileLifecycleMigration();
       this.ensureSqliteShopPortalSettingsMigration();
       this.ensureSqliteMembershipLifecycleMigration();
+      this.ensureSqlitePublicUploadRateLimitMigration();
     }
   }
 
@@ -159,6 +160,7 @@ export class DatabaseService {
     this.ensurePostgresPrintFileLifecycleMigration();
     this.ensurePostgresShopPortalSettingsMigration();
     this.ensurePostgresMembershipLifecycleMigration();
+    this.ensurePostgresPublicUploadRateLimitMigration();
   }
 
   private ensureSqliteMembershipLifecycleMigration(): void {
@@ -187,6 +189,46 @@ export class DatabaseService {
     } catch (error) {
       try { this.queryPostgres('ROLLBACK'); } catch { /* preserve original error */ }
       throw new Error(`[Inklly DB] Staff membership lifecycle migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+
+  private ensureSqlitePublicUploadRateLimitMigration(): void {
+    if (this.db!.prepare(`SELECT version FROM inklly_schema_migrations WHERE version = 20`).get()) return;
+    this.db!.exec('BEGIN');
+    try {
+      this.db!.exec(`CREATE TABLE IF NOT EXISTS public_upload_rate_limits (
+        bucket_key TEXT NOT NULL,
+        window_start_ms INTEGER NOT NULL,
+        request_count INTEGER NOT NULL,
+        expires_at_ms INTEGER NOT NULL,
+        PRIMARY KEY (bucket_key, window_start_ms)
+      )`);
+      this.db!.exec(`CREATE INDEX IF NOT EXISTS idx_public_upload_rate_limits_expiry ON public_upload_rate_limits(expires_at_ms)`);
+      this.db!.prepare(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (20, ?)`).run(new Date().toISOString());
+      this.db!.exec('COMMIT');
+    } catch (error) {
+      try { this.db!.exec('ROLLBACK'); } catch { /* preserve the original error */ }
+      throw error;
+    }
+  }
+
+  private ensurePostgresPublicUploadRateLimitMigration(): void {
+    if (this.queryPostgres(`SELECT version FROM inklly_schema_migrations WHERE version = ?`, [20]).length) return;
+    this.queryPostgres('BEGIN');
+    try {
+      this.queryPostgres(`CREATE TABLE IF NOT EXISTS public_upload_rate_limits (
+        bucket_key TEXT NOT NULL,
+        window_start_ms BIGINT NOT NULL,
+        request_count INTEGER NOT NULL,
+        expires_at_ms BIGINT NOT NULL,
+        PRIMARY KEY (bucket_key, window_start_ms)
+      )`);
+      this.queryPostgres(`CREATE INDEX IF NOT EXISTS idx_public_upload_rate_limits_expiry ON public_upload_rate_limits(expires_at_ms)`);
+      this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [20, new Date().toISOString()]);
+      this.queryPostgres('COMMIT');
+    } catch (error) {
+      try { this.queryPostgres('ROLLBACK'); } catch { /* preserve the original error */ }
+      throw new Error(`[Inklly DB] Public upload rate-limit migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
     }
   }
 

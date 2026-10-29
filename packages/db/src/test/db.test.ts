@@ -335,3 +335,23 @@ describe('staff membership lifecycle schema migration', () => {
     }
   });
 });
+
+describe('shared public upload rate-limit migration', () => {
+  it('creates the persistent bucket table on an existing database', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'inklly-upload-rate-migration-'));
+    const databasePath = path.join(directory, 'existing.sqlite');
+    try {
+      const initial = new DatabaseService(databasePath);
+      initial.execute(`DROP TABLE public_upload_rate_limits`);
+      initial.execute(`DELETE FROM inklly_schema_migrations WHERE version = 20`);
+      initial.close();
+
+      const upgraded = new DatabaseService(databasePath);
+      assert.ok(upgraded.queryOne(`SELECT version FROM inklly_schema_migrations WHERE version = 20`));
+      assert.ok(upgraded.queryOne(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'public_upload_rate_limits'`));
+      upgraded.close();
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});
