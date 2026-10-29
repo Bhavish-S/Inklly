@@ -13,6 +13,7 @@ export interface QueuedCommand {
   options: any;
   expiresAt: string;
   status: 'PENDING' | 'DISPATCHED_TO_SPOOLER' | 'REPORT_PENDING' | 'COMPLETED' | 'OUTPUT_UNCERTAIN' | 'FAILED';
+  serverAcknowledged: boolean;
   result?: SpoolerResult;
   errorMessage?: string;
   createdAt: string;
@@ -45,6 +46,7 @@ export class LocalOfflineQueue {
         options TEXT NOT NULL,
         expires_at TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'PENDING',
+        server_acknowledged INTEGER NOT NULL DEFAULT 0,
         result_json TEXT,
         error_message TEXT,
         created_at TEXT NOT NULL,
@@ -58,6 +60,11 @@ export class LocalOfflineQueue {
     }
     if (!columns.some((column) => column.name === 'expires_at')) {
       this.db.exec(`ALTER TABLE local_commands ADD COLUMN expires_at TEXT NOT NULL DEFAULT ''`);
+    }
+    if (!columns.some((column) => column.name === 'server_acknowledged')) {
+      // Existing pending commands are re-acknowledged with the server before
+      // execution. The endpoint is idempotent, which also recovers a lost 2xx.
+      this.db.exec(`ALTER TABLE local_commands ADD COLUMN server_acknowledged INTEGER NOT NULL DEFAULT 0`);
     }
     // A process restart can happen after OS submission but before result persistence.
     // Preserve that ambiguity and report it; never put the command back in PENDING.
@@ -96,9 +103,25 @@ export class LocalOfflineQueue {
   }
 
   public getNextPending(): QueuedCommand | null {
-    const row = this.db.prepare(`SELECT * FROM local_commands WHERE status = 'PENDING' ORDER BY created_at ASC LIMIT 1`).get() as any;
+    const row = this.db.prepare(`SELECT * FROM local_commands WHERE status = 'PENDING' AND server_acknowledged = 1 ORDER BY created_at ASC LIMIT 1`).get() as any;
     if (!row) return null;
     return this.mapRow(row);
+  }
+
+  public getPendingAcknowledgements(limit: number = 50): Array<{ commandId: string; attemptId: string }> {
+    return this.db.prepare(
+      `SELECT command_id, attempt_id FROM local_commands
+       WHERE status = 'PENDING' AND server_acknowledged = 0
+       ORDER BY created_at ASC LIMIT ?`
+    ).all(limit).map((row: any) => ({ commandId: row.command_id, attemptId: row.attempt_id }));
+  }
+
+  public markServerAcknowledged(commandId: string, attemptId: string): boolean {
+    const result = this.db.prepare(
+      `UPDATE local_commands SET server_acknowledged = 1, updated_at = ?
+       WHERE command_id = ? AND attempt_id = ? AND status = 'PENDING' AND server_acknowledged = 0`
+    ).run(new Date().toISOString(), commandId, attemptId);
+    return Number(result.changes) > 0;
   }
 
   public updateStatus(commandId: string, status: QueuedCommand['status'], error?: string): void {
@@ -157,6 +180,7 @@ export class LocalOfflineQueue {
       options: JSON.parse(r.options),
       expiresAt: r.expires_at || '',
       status: r.status,
+      serverAcknowledged: Boolean(r.server_acknowledged),
       errorMessage: r.error_message || undefined,
       result: r.result_json ? JSON.parse(r.result_json) as SpoolerResult : undefined,
       createdAt: r.created_at,

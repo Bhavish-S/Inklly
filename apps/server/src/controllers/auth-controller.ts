@@ -433,9 +433,12 @@ export class AuthController {
   };
 
   public requestPasswordReset = (_req: Request, res: Response) => {
-    res.status(202).json({
-      success: true,
-      message: 'If an account exists for this email, a password reset link has been sent.',
+    // No email delivery provider is configured yet. Fail closed instead of
+    // telling users a recovery link was sent when no message can be delivered.
+    res.status(503).json({
+      success: false,
+      code: 'PASSWORD_RESET_UNAVAILABLE',
+      error: 'Account recovery email is not configured. Contact your administrator for help.',
     });
   };
 

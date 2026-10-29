@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
 import * as http from 'node:http';
+import { DatabaseSync } from 'node:sqlite';
 import { LocalOfflineQueue } from '../local-queue';
 import { PrinterDiscoveryService } from '../printer-discovery';
 import { SpoolerExecutor, downloadTicketDocument } from '../spooler-executor';
@@ -52,12 +53,136 @@ describe('Inklly Desktop Edge Print Agent Test Suite', () => {
     assert.equal(duplicateAdd, false, 'Duplicate enqueue should be rejected');
 
     assert.equal(queue.getQueueDepth(), 1);
+    assert.equal(queue.getNextPending(), null, 'A command cannot run before server acknowledgement.');
+    assert.deepEqual(queue.getPendingAcknowledgements(), [{ commandId: ticket.commandId, attemptId: ticket.attemptId }]);
+    assert.equal(queue.markServerAcknowledged(ticket.commandId, ticket.attemptId), true);
 
     const pending = queue.getNextPending();
     assert.ok(pending);
     assert.equal(pending.commandId, 'cmd-test-1');
     assert.equal(pending.fileName, 'sample.pdf');
     assert.equal(pending.status, 'PENDING');
+    assert.equal(pending.serverAcknowledged, true);
+  });
+
+  it('migrates an existing SQLite queue and leaves old pending work gated until it is re-acknowledged', () => {
+    const queuePath = path.join(os.tmpdir(), `inklly-ack-migration-${Date.now()}-${Math.random()}.db`);
+    const legacyDb = new DatabaseSync(queuePath);
+    legacyDb.exec(`
+      CREATE TABLE local_commands (
+        command_id TEXT PRIMARY KEY, job_id TEXT NOT NULL, attempt_id TEXT NOT NULL,
+        printer_id TEXT NOT NULL, document_url TEXT NOT NULL, file_name TEXT NOT NULL,
+        options TEXT NOT NULL, expires_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'PENDING',
+        result_json TEXT, error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      INSERT INTO local_commands (command_id, job_id, attempt_id, printer_id, document_url, file_name, options, expires_at, status, created_at, updated_at)
+      VALUES ('cmd-legacy', 'job-legacy', 'att-legacy', 'printer-legacy', 'https://api.inklly.example/api/v1/agent/files/file-legacy', 'legacy.pdf', '{}', '2099-01-01T00:00:00.000Z', 'PENDING', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+    `);
+    legacyDb.close();
+
+    const migratedQueue = new LocalOfflineQueue(queuePath);
+    try {
+      assert.deepEqual(migratedQueue.getPendingAcknowledgements(), [{ commandId: 'cmd-legacy', attemptId: 'att-legacy' }]);
+      assert.equal(migratedQueue.getNextPending(), null);
+      assert.equal(migratedQueue.markServerAcknowledged('cmd-legacy', 'att-legacy'), true);
+      assert.equal(migratedQueue.getNextPending()?.commandId, 'cmd-legacy');
+    } finally {
+      migratedQueue.close();
+      fs.rmSync(queuePath, { force: true });
+    }
+  });
+
+  it('never invokes the spooler after a rejected, failed, or lost dispatch acknowledgement; retries a lost 2xx idempotently', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalExecute = SpoolerExecutor.executeTicket;
+    let spoolCalls = 0;
+    SpoolerExecutor.executeTicket = async (ticket) => {
+      spoolCalls++;
+      return { attemptId: ticket.attemptId, jobId: ticket.jobId, status: 'SUBMITTED_TO_SPOOLER', timestamp: new Date().toISOString() };
+    };
+
+    const ticket: PrintCommandTicket = {
+      commandId: 'cmd-ack-gate', jobId: 'job-ack-gate', attemptId: 'att-ack-gate', shopId: 'shop-campus-1',
+      printerId: 'printer-test', documentUrl: 'https://api.inklly.example/api/v1/agent/files/file-ack-gate', fileName: 'ack.pdf',
+      options: { colorMode: 'bw', duplexMode: 'simplex', paperSize: 'A4', orientation: 'portrait', copies: 1, fitMode: 'fit', pagesPerSheet: 1, collation: true },
+      expiresAt: new Date(Date.now() + 60_000).toISOString(), correlationId: 'corr-ack-gate',
+    };
+
+    try {
+      for (const failureMode of ['conflict', 'network'] as const) {
+        spoolCalls = 0;
+        const queueUnderTest = new LocalOfflineQueue(':memory:');
+        const configPath = path.join(os.tmpdir(), `inklly-ack-${failureMode}-${Date.now()}.json`);
+        const configManager = new ConfigManager(configPath);
+        configManager.update({ shopId: 'shop-campus-1', agentId: 'agent-ack-test', secretKey: 'agent-ack-test-secret', serverUrl: 'http://127.0.0.1:1/api/v1' });
+        const daemon = new AgentDaemon(configManager, queueUnderTest);
+        (daemon as any).isRunning = true;
+        globalThis.fetch = (async (input: string | URL | Request) => {
+          const url = String(input);
+          if (url.endsWith('/agent/poll-commands')) return new Response(JSON.stringify([ticket]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+          if (url.endsWith('/agent/acknowledge-command')) {
+            if (failureMode === 'conflict') return new Response('{}', { status: 409 });
+            throw new Error('ack network unavailable');
+          }
+          throw new Error(`Unexpected request ${url}`);
+        }) as typeof fetch;
+        try {
+          await daemon.pollServerCommands();
+          await daemon.processPendingAcknowledgements();
+          assert.equal(await daemon.processNextQueueItem(), null, `${failureMode} acknowledgement must keep the ticket gated`);
+          assert.equal(spoolCalls, 0, `${failureMode} acknowledgement must not invoke the spooler`);
+        } finally {
+          queueUnderTest.close();
+          fs.rmSync(configPath, { force: true });
+        }
+      }
+
+      spoolCalls = 0;
+      const retryQueue = new LocalOfflineQueue(':memory:');
+      const retryConfigPath = path.join(os.tmpdir(), `inklly-ack-lost-${Date.now()}.json`);
+      const retryConfig = new ConfigManager(retryConfigPath);
+      retryConfig.update({ shopId: 'shop-campus-1', agentId: 'agent-ack-retry', secretKey: 'agent-ack-retry-secret', serverUrl: 'http://127.0.0.1:1/api/v1' });
+      const retryDaemon = new AgentDaemon(retryConfig, retryQueue);
+      (retryDaemon as any).isRunning = true;
+      let serverAccepted = false;
+      let lostAckResponse = false;
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith('/agent/poll-commands')) {
+          return new Response(JSON.stringify(serverAccepted ? [] : [ticket]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        if (url.endsWith('/agent/acknowledge-command')) {
+          if (init?.method !== 'POST') throw new Error('Expected POST acknowledgement');
+          serverAccepted = true;
+          if (!lostAckResponse) {
+            lostAckResponse = true;
+            throw new Error('server committed ack but client lost response');
+          }
+          return new Response('{"acknowledged":true}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        if (url.endsWith('/agent/command-result')) return new Response('{"success":true}', { status: 200 });
+        throw new Error(`Unexpected request ${url}`);
+      }) as typeof fetch;
+      try {
+        await retryDaemon.pollServerCommands();
+        assert.equal(await retryDaemon.processNextQueueItem(), null, 'lost acknowledgement response must leave persisted ticket gated');
+        assert.equal(spoolCalls, 0);
+
+        await retryDaemon.pollServerCommands();
+        assert.equal(retryQueue.getQueueDepth(), 1, 'server need not replay after it committed the lost acknowledgement');
+        await retryDaemon.processPendingAcknowledgements();
+        assert.equal(retryQueue.getPendingAcknowledgements().length, 0);
+        const result = await retryDaemon.processNextQueueItem();
+        assert.equal(result?.status, 'SUBMITTED_TO_SPOOLER');
+        assert.equal(spoolCalls, 1, 'a confirmed idempotent ack retry allows exactly one spooler invocation');
+      } finally {
+        retryQueue.close();
+        fs.rmSync(retryConfigPath, { force: true });
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+      SpoolerExecutor.executeTicket = originalExecute;
+    }
   });
 
   it('Transitions local offline queue item statuses properly', () => {
@@ -144,6 +269,7 @@ describe('Inklly Desktop Edge Print Agent Test Suite', () => {
       expiresAt: new Date(Date.now() + 60000).toISOString(), correlationId: 'corr-worker-exception',
     };
     workerQueue.enqueue(ticket);
+    workerQueue.markServerAcknowledged(ticket.commandId, ticket.attemptId);
     const originalExecute = SpoolerExecutor.executeTicket;
     SpoolerExecutor.executeTicket = async () => { throw new Error('unexpected worker failure'); };
     try {

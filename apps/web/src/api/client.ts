@@ -520,6 +520,17 @@ export const api = {
     return body;
   },
 
+  async updateStaffAccess(userId: string, access: { rolePreset: string; permissions?: string[]; isActive: boolean }) {
+    const res = await fetch(`${API_BASE}/merchant/staff/${encodeURIComponent(userId)}`, {
+      method: 'PUT',
+      headers: getHeaders(),
+      body: JSON.stringify(access),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to update staff access');
+    return body;
+  },
+
   async getBotTemplates() {
     const res = await fetch(`${API_BASE}/merchant/bot-templates`, { headers: getHeaders() });
     return res.json();

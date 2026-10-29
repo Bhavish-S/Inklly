@@ -70,6 +70,7 @@ export function createMerchantRoutes(db: DatabaseService, fileStorage: PrivateFi
 
   router.get('/staff', requireRole('MERCHANT_OWNER', 'SHOP_MANAGER'), controller.getStaff);
   router.post('/staff', requireRole('MERCHANT_OWNER'), controller.addStaff);
+  router.put('/staff/:userId', requireRole('MERCHANT_OWNER'), controller.updateStaffAccess);
 
   router.get('/bot-templates', requirePermission('bot:train'), controller.getBotTemplates);
   router.put('/bot-templates', requirePermission('bot:train'), controller.updateBotTemplate);

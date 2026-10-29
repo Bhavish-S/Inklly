@@ -9,6 +9,7 @@ export interface MembershipRecord {
   shopId?: string;
   role: UserRole;
   permissions: StaffPermission[];
+  isActive?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -141,7 +142,7 @@ export class UserRepository {
   }
 
   public getMembershipsByUser(userId: string): MembershipRecord[] {
-    const rows = this.db.query<any>(`SELECT * FROM memberships WHERE user_id = ?`, [userId]);
+    const rows = this.db.query<any>(`SELECT * FROM memberships WHERE user_id = ? AND is_active = 1`, [userId]);
     return rows.map((r) => ({
       id: r.id,
       userId: r.user_id,
@@ -149,6 +150,7 @@ export class UserRepository {
       shopId: r.shop_id || undefined,
       role: r.role as UserRole,
       permissions: JSON.parse(r.permissions),
+      isActive: Boolean(r.is_active),
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     }));
@@ -156,7 +158,7 @@ export class UserRepository {
 
   public getStaffByShop(shopId: string): Array<{ user: User; membership: MembershipRecord }> {
     const rows = this.db.query<any>(
-      `SELECT u.*, m.id as membership_id, m.role as member_role, m.permissions, m.created_at as member_created_at, m.updated_at as member_updated_at
+      `SELECT u.*, m.id as membership_id, m.organization_id as member_organization_id, m.role as member_role, m.permissions, m.is_active as member_active, m.created_at as member_created_at, m.updated_at as member_updated_at
        FROM memberships m
        JOIN users u ON m.user_id = u.id
        WHERE m.shop_id = ?`,
@@ -177,14 +179,32 @@ export class UserRepository {
       membership: {
         id: r.membership_id,
         userId: r.id,
-        organizationId: r.organization_id,
+        organizationId: r.member_organization_id,
         shopId: r.shop_id,
         role: r.member_role as UserRole,
         permissions: JSON.parse(r.permissions),
+        isActive: Boolean(r.member_active),
         createdAt: r.member_created_at,
         updatedAt: r.member_updated_at,
       },
     }));
+  }
+
+  public updateStaffMembership(input: {
+    userId: string;
+    organizationId: string;
+    shopId: string;
+    permissions: StaffPermission[];
+    isActive: boolean;
+    updatedAt: string;
+  }): boolean {
+    const updated = this.db.queryOne<{ id: string }>(
+      `UPDATE memberships SET permissions = ?, is_active = ?, updated_at = ?
+       WHERE user_id = ? AND organization_id = ? AND shop_id = ? AND role = 'SHOP_STAFF'
+       RETURNING id`,
+      [JSON.stringify(input.permissions), input.isActive ? 1 : 0, input.updatedAt, input.userId, input.organizationId, input.shopId]
+    );
+    return Boolean(updated);
   }
 
   public upsertBotTemplate(shopId: string, templateKey: string, templateText: string, isEnabled: boolean): void {

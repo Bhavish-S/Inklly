@@ -33,6 +33,23 @@ import {
   IndianRupeeIcon,
 } from '../components/icons';
 
+const STAFF_ACCESS_OPTIONS = [
+  { value: 'orders:view', label: 'View orders' },
+  { value: 'orders:process', label: 'Process orders' },
+  { value: 'orders:reject', label: 'Reject orders' },
+  { value: 'live_print:manage', label: 'Dispatch print jobs' },
+  { value: 'storage:view', label: 'View vault documents' },
+  { value: 'storage:manage', label: 'Manage vault documents' },
+  { value: 'shop_qr:view', label: 'View shop QR' },
+  { value: 'printers:view', label: 'View printers' },
+  { value: 'printers:manage', label: 'Manage printers' },
+  { value: 'bot:train', label: 'Manage bot templates' },
+  { value: 'settings:view', label: 'View business settings' },
+  { value: 'settings:manage', label: 'Manage business settings' },
+  { value: 'finance:view', label: 'View finance' },
+  { value: 'finance:manage', label: 'Manage finance' },
+];
+
 
 export interface DemoMerchant {
   id: string;
@@ -777,11 +794,15 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [newEmpEmail, setNewEmpEmail] = useState<string>('');
   const [newEmpPhone, setNewEmpPhone] = useState<string>('');
   const [newEmpRole, setNewEmpRole] = useState<'Order Handler' | 'Print Operator' | 'Manager'>('Print Operator');
-  const [employeeList, setEmployeeList] = useState<Array<{ id: string; name: string; email: string; phone: string; role: string; status: string }>>([]);
+  const [employeeList, setEmployeeList] = useState<Array<{ id: string; name: string; email: string; phone: string; role: string; status: string; permissions: string[]; isActive: boolean; isStaff: boolean }>>([]);
   const [employeeInviteUrl, setEmployeeInviteUrl] = useState('');
   const [employeeError, setEmployeeError] = useState('');
   const [employeeLoading, setEmployeeLoading] = useState(false);
   const [employeeSaving, setEmployeeSaving] = useState(false);
+  const [employeeUpdating, setEmployeeUpdating] = useState(false);
+  const [editingEmployeeId, setEditingEmployeeId] = useState<string | null>(null);
+  const [draftEmployeeRole, setDraftEmployeeRole] = useState<'Order Handler' | 'Print Operator' | 'Manager' | 'Custom'>('Print Operator');
+  const [draftEmployeePermissions, setDraftEmployeePermissions] = useState<string[]>([]);
 
   // Live Orders Data (Populated in real-time from server API and customer intake)
   const [ordersList, setOrdersList] = useState<any[]>([]);
@@ -1081,8 +1102,11 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
         name: entry.user.fullName,
         email: entry.user.email,
         phone: entry.user.phone || '',
-        role: entry.rolePreset || (entry.membership.role === 'SHOP_STAFF' ? 'Staff member' : entry.membership.role),
-        status: entry.user.isActive ? 'Active' : 'Invitation pending',
+        role: entry.rolePreset || (entry.membership.role === 'SHOP_STAFF' ? 'Custom' : entry.membership.role),
+        status: entry.membership.isActive === false ? 'Access revoked' : entry.user.isActive ? 'Active' : 'Invitation pending',
+        permissions: Array.isArray(entry.membership.permissions) ? entry.membership.permissions : [],
+        isActive: entry.membership.isActive !== false,
+        isStaff: entry.membership.role === 'SHOP_STAFF',
       })));
     }).catch((err: any) => {
       if (!cancelled) setEmployeeError(err.message || 'Could not load employee accounts.');
@@ -1453,6 +1477,60 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     setTimeout(() => setOrderActionToast(null), 4000);
   };
 
+  const refreshEmployeeList = async () => {
+    const staff = await api.getStaff();
+    setEmployeeList(staff.map((entry: any) => ({
+      id: entry.user.id,
+      name: entry.user.fullName,
+      email: entry.user.email,
+      phone: entry.user.phone || '',
+      role: entry.rolePreset || (entry.membership.role === 'SHOP_STAFF' ? 'Custom' : entry.membership.role),
+      status: entry.membership.isActive === false ? 'Access revoked' : entry.user.isActive ? 'Active' : 'Invitation pending',
+      permissions: Array.isArray(entry.membership.permissions) ? entry.membership.permissions : [],
+      isActive: entry.membership.isActive !== false,
+      isStaff: entry.membership.role === 'SHOP_STAFF',
+    })));
+  };
+
+  const handleSaveEmployeeAccess = async (employee: (typeof employeeList)[number], isActive = employee.isActive) => {
+    setEmployeeError('');
+    setEmployeeUpdating(true);
+    try {
+      await api.updateStaffAccess(employee.id, {
+        rolePreset: draftEmployeeRole,
+        ...(draftEmployeeRole === 'Custom' ? { permissions: draftEmployeePermissions } : {}),
+        isActive,
+      });
+      await refreshEmployeeList();
+      setEditingEmployeeId(null);
+      setOrderActionToast(isActive ? 'Staff access updated.' : 'Staff access revoked for this shop.');
+      setTimeout(() => setOrderActionToast(null), 4000);
+    } catch (err: any) {
+      setEmployeeError(err.message || 'Could not update staff access.');
+    } finally {
+      setEmployeeUpdating(false);
+    }
+  };
+
+  const handleToggleEmployeeAccess = async (employee: (typeof employeeList)[number]) => {
+    setEmployeeError('');
+    setEmployeeUpdating(true);
+    try {
+      await api.updateStaffAccess(employee.id, {
+        rolePreset: employee.role,
+        ...(employee.role === 'Custom' ? { permissions: employee.permissions } : {}),
+        isActive: !employee.isActive,
+      });
+      await refreshEmployeeList();
+      setOrderActionToast(employee.isActive ? 'Staff access revoked for this shop.' : 'Staff access restored.');
+      setTimeout(() => setOrderActionToast(null), 4000);
+    } catch (err: any) {
+      setEmployeeError(err.message || 'Could not change staff access.');
+    } finally {
+      setEmployeeUpdating(false);
+    }
+  };
+
   const handleAddEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
     setEmployeeError('');
@@ -1475,8 +1553,11 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
         name: entry.user.fullName,
         email: entry.user.email,
         phone: entry.user.phone || '',
-        role: entry.rolePreset || (entry.membership.role === 'SHOP_STAFF' ? 'Staff member' : entry.membership.role),
-        status: entry.user.isActive ? 'Active' : 'Invitation pending',
+        role: entry.rolePreset || (entry.membership.role === 'SHOP_STAFF' ? 'Custom' : entry.membership.role),
+        status: entry.membership.isActive === false ? 'Access revoked' : entry.user.isActive ? 'Active' : 'Invitation pending',
+        permissions: Array.isArray(entry.membership.permissions) ? entry.membership.permissions : [],
+        isActive: entry.membership.isActive !== false,
+        isStaff: entry.membership.role === 'SHOP_STAFF',
       })));
       setNewEmpName('');
       setNewEmpEmail('');
@@ -3758,7 +3839,22 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
 
       <div className="space-y-3">
         <h4 className="font-extrabold text-sm text-[#172031] dark:text-white">Staff accounts <span className="font-normal text-gray-400">({employeeList.length})</span></h4>
-        {employeeLoading ? <p className="py-8 text-center text-sm text-gray-500">Loading staff…</p> : employeeList.length === 0 ? <div className="border border-dashed border-gray-200 dark:border-gray-700 rounded-2xl py-10 text-center space-y-2"><span className="text-3xl block">👥</span><div className="font-bold text-sm text-[#172031] dark:text-white">No staff accounts yet</div><p className="text-xs text-gray-500">Create an invite to give a team member access to this shop.</p></div> : <div className="divide-y divide-gray-100 dark:divide-gray-700 border border-gray-100 dark:border-gray-700 rounded-2xl">{employeeList.map((employee) => <div key={employee.id} className="p-4 flex flex-wrap items-center justify-between gap-3"><div><div className="font-bold text-sm text-slate-900 dark:text-white">{employee.name}</div><div className="text-xs text-gray-500">{employee.email}{employee.phone ? ` · ${employee.phone}` : ''}</div></div><div className="flex items-center gap-2"><span className="px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-xs">{employee.role}</span><span className={`px-2.5 py-1 rounded-full text-xs ${employee.status === 'Active' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>{employee.status}</span></div></div>)}</div>}
+        {employeeError && <p role="alert" className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-xl p-3">{employeeError}</p>}
+        {employeeLoading ? <p className="py-8 text-center text-sm text-gray-500">Loading staff…</p> : employeeList.length === 0 ? <div className="border border-dashed border-gray-200 dark:border-gray-700 rounded-2xl py-10 text-center space-y-2"><span className="text-3xl block">👥</span><div className="font-bold text-sm text-[#172031] dark:text-white">No staff accounts yet</div><p className="text-xs text-gray-500">Create an invite to give a team member access to this shop.</p></div> : <div className="divide-y divide-gray-100 dark:divide-gray-700 border border-gray-100 dark:border-gray-700 rounded-2xl">
+          {employeeList.map((employee) => <div key={employee.id} className="p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div><div className="font-bold text-sm text-slate-900 dark:text-white">{employee.name}</div><div className="text-xs text-gray-500">{employee.email}{employee.phone ? ` · ${employee.phone}` : ''}</div></div>
+              <div className="flex flex-wrap items-center gap-2"><span className="px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-xs">{employee.role}</span><span className={`px-2.5 py-1 rounded-full text-xs ${employee.isActive ? (employee.status === 'Active' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800') : 'bg-rose-100 text-rose-800'}`}>{employee.status}</span>
+                {liveUser?.role === 'MERCHANT_OWNER' && employee.isStaff && <><button type="button" disabled={employeeUpdating} onClick={() => { setEmployeeError(''); setEditingEmployeeId(editingEmployeeId === employee.id ? null : employee.id); setDraftEmployeeRole(employee.role === 'Custom' ? 'Custom' : employee.role as typeof draftEmployeeRole); setDraftEmployeePermissions(employee.permissions); }} className="px-2.5 py-1 rounded-lg border text-xs font-semibold disabled:opacity-50">{editingEmployeeId === employee.id ? 'Close editor' : 'Edit access'}</button><button type="button" disabled={employeeUpdating} onClick={() => { void handleToggleEmployeeAccess(employee); }} className="px-2.5 py-1 rounded-lg border border-rose-200 text-rose-700 text-xs font-semibold disabled:opacity-50">{employee.isActive ? 'Revoke access' : 'Restore access'}</button></>}
+              </div>
+            </div>
+            {editingEmployeeId === employee.id && liveUser?.role === 'MERCHANT_OWNER' && employee.isStaff && <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 dark:bg-indigo-950/20 dark:border-indigo-900 p-4 space-y-3">
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-200">Access role<select value={draftEmployeeRole} onChange={(event) => setDraftEmployeeRole(event.target.value as typeof draftEmployeeRole)} className="mt-1 w-full sm:max-w-xs px-3 py-2 rounded-lg border bg-white dark:bg-gray-800"><option>Order Handler</option><option>Print Operator</option><option>Manager</option><option>Custom</option></select></label>
+              {draftEmployeeRole === 'Custom' && <fieldset className="grid grid-cols-1 sm:grid-cols-2 gap-2"><legend className="text-xs font-bold mb-2">Custom permissions</legend>{STAFF_ACCESS_OPTIONS.map((option) => <label key={option.value} className="flex items-center gap-2 text-xs"><input type="checkbox" checked={draftEmployeePermissions.includes(option.value)} onChange={(event) => setDraftEmployeePermissions((current) => event.target.checked ? [...new Set([...current, option.value])] : current.filter((value) => value !== option.value))} />{option.label}</label>)}</fieldset>}
+              <div className="flex gap-2"><button type="button" disabled={employeeUpdating} onClick={() => { void handleSaveEmployeeAccess(employee); }} className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs font-bold disabled:opacity-50">{employeeUpdating ? 'Saving…' : 'Save access'}</button><button type="button" disabled={employeeUpdating} onClick={() => setEditingEmployeeId(null)} className="px-3 py-2 rounded-lg border text-xs">Cancel</button></div>
+            </div>}
+          </div>)}
+        </div>}
       </div>
     </div>
   </div>

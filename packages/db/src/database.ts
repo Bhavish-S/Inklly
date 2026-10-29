@@ -45,6 +45,7 @@ export class DatabaseService {
       this.ensureSqlitePlatformAdminPermissionsMigration();
       this.ensureSqlitePrintFileLifecycleMigration();
       this.ensureSqliteShopPortalSettingsMigration();
+      this.ensureSqliteMembershipLifecycleMigration();
     }
   }
 
@@ -157,6 +158,36 @@ export class DatabaseService {
     this.ensurePostgresPlatformAdminPermissionsMigration();
     this.ensurePostgresPrintFileLifecycleMigration();
     this.ensurePostgresShopPortalSettingsMigration();
+    this.ensurePostgresMembershipLifecycleMigration();
+  }
+
+  private ensureSqliteMembershipLifecycleMigration(): void {
+    if (this.db!.prepare(`SELECT version FROM inklly_schema_migrations WHERE version = 19`).get()) return;
+    this.db!.exec('BEGIN');
+    try {
+      const columns = this.db!.prepare(`PRAGMA table_info(memberships)`).all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === 'is_active')) {
+        this.db!.exec(`ALTER TABLE memberships ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1`);
+      }
+      this.db!.prepare(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (19, ?)`).run(new Date().toISOString());
+      this.db!.exec('COMMIT');
+    } catch (error) {
+      try { this.db!.exec('ROLLBACK'); } catch { /* preserve original error */ }
+      throw error;
+    }
+  }
+
+  private ensurePostgresMembershipLifecycleMigration(): void {
+    if (this.queryPostgres(`SELECT version FROM inklly_schema_migrations WHERE version = ?`, [19]).length) return;
+    this.queryPostgres('BEGIN');
+    try {
+      this.queryPostgres(`ALTER TABLE memberships ADD COLUMN IF NOT EXISTS is_active INTEGER NOT NULL DEFAULT 1`);
+      this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [19, new Date().toISOString()]);
+      this.queryPostgres('COMMIT');
+    } catch (error) {
+      try { this.queryPostgres('ROLLBACK'); } catch { /* preserve original error */ }
+      throw new Error(`[Inklly DB] Staff membership lifecycle migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
   }
 
   private ensureSqliteShopPortalSettingsMigration(): void {

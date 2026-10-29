@@ -30,6 +30,7 @@ const MERCHANT_ROUTE_DOCUMENTATION: Array<{ path: string; method: string; summar
   { path: '/merchant/settings/razorpay', method: 'delete', summary: 'Remove Razorpay credentials', access: 'Restricted to MERCHANT_OWNER.' },
   { path: '/merchant/staff', method: 'get', summary: 'List shop staff', access: 'Restricted to MERCHANT_OWNER or SHOP_MANAGER.' },
   { path: '/merchant/staff', method: 'post', summary: 'Invite shop staff', access: 'Restricted to MERCHANT_OWNER.' },
+  { path: '/merchant/staff/{userId}', method: 'put', summary: 'Update or revoke shop staff access', access: 'Owner-only; tenant-scoped, allowlisted permissions, and audited. Changes apply on the next request.' },
   { path: '/merchant/bot-templates', method: 'get', summary: 'List shop message templates', access: 'Requires bot:train.' },
   { path: '/merchant/bot-templates', method: 'put', summary: 'Update a shop message template', access: 'Requires bot:train.' },
   { path: '/merchant/credits/balance', method: 'get', summary: 'Get shop conversion-credit balance', access: 'Requires credits:view.' },

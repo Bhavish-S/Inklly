@@ -111,6 +111,7 @@ CREATE TABLE IF NOT EXISTS memberships (
     shop_id TEXT,
     role TEXT NOT NULL DEFAULT 'SHOP_STAFF',
     permissions TEXT NOT NULL, -- JSON array of granted permission strings
+    is_active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,

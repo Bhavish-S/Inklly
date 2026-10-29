@@ -252,6 +252,28 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       assert.equal(restore.status, 200);
     });
 
+    it('enforces persisted customer fields for public orders without a client version marker', async () => {
+      const missingName = await fetch(`${baseUrl}/api/v1/portal/orders`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shopCode: 'campus1',
+          files: [{ fileName: 'required-fields.pdf', storageKey: 'uploads/required-fields.pdf', options: { colorMode: 'bw', duplexMode: 'simplex', paperSize: 'A4', copies: 1 } }],
+        }),
+      });
+      assert.equal(missingName.status, 422);
+      assert.equal((await missingName.json() as any).error, 'Enter your name to place this order.');
+
+      const missingPhone = await fetch(`${baseUrl}/api/v1/portal/orders`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shopCode: 'campus1', customerName: 'Customer Without Phone',
+          files: [{ fileName: 'required-fields.pdf', storageKey: 'uploads/required-fields.pdf', options: { colorMode: 'bw', duplexMode: 'simplex', paperSize: 'A4', copies: 1 } }],
+        }),
+      });
+      assert.equal(missingPhone.status, 422);
+      assert.equal((await missingPhone.json() as any).error, 'Enter a valid Indian mobile number, with or without the +91 country code.');
+    });
+
     it('T1.7: Blocks public setup scripts when a signed installer is unavailable', async () => {
       const res = await fetch(`${baseUrl}/api/v1/agent/download?platform=win-x64&shopCode=campus1&format=script`);
       assert.equal(res.status, 410);
@@ -284,6 +306,21 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
   });
 
   describe('Tier 1: Feature Coverage (R3 - Real Document Upload, Binary Page Count & Quoting)', { concurrency: false }, () => {
+    before(async () => {
+      // Later lifecycle fixtures exercise compatibility with a shop that has
+      // opted out of collecting customer contact details. R2 separately proves
+      // that configured requirements are enforced for unversioned requests.
+      const response = await fetch(`${baseUrl}/api/v1/merchant/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+        body: JSON.stringify({ portalSettings: {
+          requiredFields: { name: false, phone: false },
+          allowedOptions: { colorModes: ['bw', 'color', 'mixed'], duplexModes: ['simplex', 'duplex_auto'], paperSizes: ['A4', 'A3', 'PHOTO_4X6', 'PHOTO_5X7'], pageSelection: true },
+        } }),
+      });
+      assert.equal(response.status, 200, await response.clone().text());
+    });
+
     let uploadedKey: string;
 
     it('T1.11: Uploads document in Base64 format and returns storageKey and file size', async () => {

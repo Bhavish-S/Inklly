@@ -11,7 +11,7 @@ import {
   LedgerRepository,
   AgentRepository,
 } from '@inklly/db';
-import { OrderStatus, PrintJobStatus, ROLE_PRESETS, validatePrintJobTransition, parsePageRange } from '@inklly/shared';
+import { OrderStatus, PrintJobStatus, ROLE_PRESETS, STAFF_PERMISSIONS, StaffPermission, validatePrintJobTransition, parsePageRange } from '@inklly/shared';
 import { ShopPaymentCredentialsService } from '../services/shop-payment-credentials';
 import { PrivateFileStorage } from '../services/private-file-storage';
 import { getPrinterHealthStatus, hasFreshOnlinePrinterEvidence } from '../services/printer-health';
@@ -690,6 +690,102 @@ export class MerchantController {
       staff: { userId, email: normalizedEmail, fullName: normalizedName, rolePreset: preset, permissions },
       invitationToken,
       invitationExpiresAt: expiresAt,
+    });
+  };
+
+  public updateStaffAccess = (req: Request, res: Response) => {
+    const actor = req.user;
+    const shopId = actor?.shopId;
+    const organizationId = actor?.organizationId;
+    const targetUserId = typeof req.params.userId === 'string' ? req.params.userId.trim() : '';
+    if (!actor || actor.role !== 'MERCHANT_OWNER' || !shopId || !organizationId) {
+      return res.status(403).json({ error: 'Only the merchant owner can manage staff access.' });
+    }
+    if (!targetUserId || targetUserId.length > 128) return res.status(400).json({ error: 'A valid staff user ID is required.' });
+    if (targetUserId === actor.userId) return res.status(409).json({ error: 'The owner cannot change or revoke their own access here.' });
+
+    const scope = this.db.queryOne<any>(
+      `SELECT o.owner_user_id FROM shops s JOIN organizations o ON o.id = s.organization_id
+       WHERE s.id = ? AND s.organization_id = ?`,
+      [shopId, organizationId]
+    );
+    if (!scope || scope.owner_user_id !== actor.userId) {
+      return res.status(403).json({ error: 'The authenticated account does not own this shop and organization.' });
+    }
+    if (scope.owner_user_id === targetUserId) return res.status(409).json({ error: 'The organization owner cannot be demoted or deactivated.' });
+
+    const target = this.userRepo.getStaffByShop(shopId).find((entry) =>
+      entry.user.id === targetUserId && entry.membership.organizationId === organizationId
+    );
+    if (!target || target.membership.role !== 'SHOP_STAFF') return res.status(404).json({ error: 'Staff member not found for this shop.' });
+
+    const body = req.body || {};
+    const rolePreset = typeof body.rolePreset === 'string' ? body.rolePreset.trim() : '';
+    let permissions: StaffPermission[];
+    if (rolePreset === 'Custom') {
+      const allowed = new Set<string>(Object.values(STAFF_PERMISSIONS));
+      if (!Array.isArray(body.permissions) || body.permissions.length > allowed.size ||
+          body.permissions.some((permission: unknown) => typeof permission !== 'string' || !allowed.has(permission)) ||
+          new Set(body.permissions).size !== body.permissions.length) {
+        return res.status(400).json({ error: 'Custom access requires a unique list of supported staff permissions.' });
+      }
+      permissions = body.permissions as StaffPermission[];
+    } else if (Object.prototype.hasOwnProperty.call(ROLE_PRESETS, rolePreset) && rolePreset !== 'Custom') {
+      if (body.permissions !== undefined) return res.status(400).json({ error: 'Choose either a role preset or a custom permission list.' });
+      permissions = [...ROLE_PRESETS[rolePreset]];
+    } else {
+      return res.status(400).json({ error: 'Choose Order Handler, Print Operator, Manager, or Custom access.' });
+    }
+    const isActive = body.isActive === undefined ? target.membership.isActive !== false : body.isActive;
+    if (typeof isActive !== 'boolean') return res.status(400).json({ error: 'isActive must be a boolean.' });
+    if (isActive && permissions.length === 0) return res.status(400).json({ error: 'Active staff need at least one permission; deactivate the account to revoke access.' });
+
+    const previousPermissions = [...target.membership.permissions].sort();
+    const nextPermissions = [...permissions].sort();
+    const now = new Date().toISOString();
+    let didUpdate = false;
+    try {
+      this.db.transaction(() => {
+        const updated = this.userRepo.updateStaffMembership({
+          userId: targetUserId, organizationId, shopId, permissions: nextPermissions,
+          isActive, updatedAt: now,
+        });
+        if (!updated) return;
+        didUpdate = true;
+        this.userRepo.logAuditEvent({
+          id: crypto.randomUUID(), actorUserId: actor.userId, actorRole: actor.role,
+          organizationId, shopId,
+          action: isActive ? 'MERCHANT_STAFF_ACCESS_UPDATED' : 'MERCHANT_STAFF_ACCESS_REVOKED',
+          targetType: 'MEMBERSHIP', targetId: target.membership.id,
+          outcome: 'SUCCESS', ipAddress: req.ip,
+          details: {
+            targetUserId, rolePreset: rolePreset || 'Custom', previousIsActive: target.membership.isActive !== false,
+            isActive, previousPermissions, permissions: nextPermissions,
+          },
+          createdAt: now,
+        });
+        return;
+      });
+    } catch {
+      return res.status(503).json({ error: 'Staff access could not be updated. No changes were saved.' });
+    }
+
+    // Re-check the row inside the transaction to avoid reporting success or
+    // writing an audit event if the membership changed after it was loaded.
+    if (!didUpdate) {
+      return res.status(409).json({ error: 'Staff access changed before this update could be applied. Refresh and try again.' });
+    }
+
+    return res.json({
+      success: true,
+      staff: {
+        userId: targetUserId,
+        permissions: nextPermissions,
+        rolePreset: Object.entries(ROLE_PRESETS).find(([, presetPermissions]) =>
+          presetPermissions.length === nextPermissions.length && presetPermissions.every((permission) => nextPermissions.includes(permission))
+        )?.[0] || 'Custom',
+        isActive,
+      },
     });
   };
 

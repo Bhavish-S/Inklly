@@ -139,14 +139,14 @@ export class PortalController {
       return res.status(400).json({ error: 'Incomplete order submission payload' });
     }
     const portalSettings = this.shopRepo.getPortalSettings(shop.id);
-    // Versioned first-party portal clients submit this marker so the persisted
-    // form rules can be enforced without breaking older external API clients.
-    const usesPortalSettings = req.body?.portalSettingsVersion === 1;
-    if (usesPortalSettings && portalSettings.requiredFields.name && (typeof customerName !== 'string' || !customerName.trim())) {
+    // Shop policy is enforced by the server for every caller. A client-provided
+    // version marker cannot be used to bypass required customer details.
+    if (portalSettings.requiredFields.name && (typeof customerName !== 'string' || !customerName.trim())) {
       return res.status(422).json({ error: 'Enter your name to place this order.' });
     }
-    if (usesPortalSettings && portalSettings.requiredFields.phone && (typeof customerPhone !== 'string' || !/^[6-9]\d{9}$/.test(customerPhone.replace(/\D/g, '')))) {
-      return res.status(422).json({ error: 'Enter a valid 10-digit Indian mobile number to place this order.' });
+    const normalizedPhone = typeof customerPhone === 'string' ? customerPhone.trim().replace(/[\s()-]/g, '') : '';
+    if (portalSettings.requiredFields.phone && !/^(?:\+?91)?[6-9]\d{9}$/.test(normalizedPhone)) {
+      return res.status(422).json({ error: 'Enter a valid Indian mobile number, with or without the +91 country code.' });
     }
     const suppliedIdempotencyKey = req.get('Idempotency-Key');
     if (suppliedIdempotencyKey !== undefined && !/^[A-Za-z0-9_-]{16,128}$/.test(suppliedIdempotencyKey)) {

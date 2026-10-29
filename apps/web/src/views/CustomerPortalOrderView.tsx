@@ -805,7 +805,6 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
       let totalAmountPaise = pendingOnlineOrder?.totalAmountPaise ?? serverQuote.totalPaise;
       if (!order) {
         const orderPayload = {
-          portalSettingsVersion: 1,
           shopId: shop.id,
           customerName: customerName.trim(),
           customerPhone: normalizedPhone || undefined,

@@ -22,6 +22,17 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     process.env.ENABLE_EXTERNAL_API_ACCESS = 'true';
     db = new DatabaseService(':memory:');
     const app = createApp(db);
+    // Keep these legacy API-contract fixtures representative of a shop that
+    // has opted to make contact details optional. Required-field enforcement
+    // is covered explicitly in the customer-portal E2E suite.
+    db.execute(
+      `INSERT INTO shop_portal_settings (shop_id, settings_json, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(shop_id) DO UPDATE SET settings_json = excluded.settings_json, updated_at = excluded.updated_at`,
+      ['shop-campus-1', JSON.stringify({
+        requiredFields: { name: false, phone: false },
+        allowedOptions: { colorModes: ['bw', 'color', 'mixed'], duplexModes: ['simplex', 'duplex_auto'], paperSizes: ['A4', 'A3', 'PHOTO_4X6', 'PHOTO_5X7'], pageSelection: true },
+      }), new Date().toISOString()]
+    );
     await new Promise<void>((resolve) => {
       server = app.listen(0, () => {
         const address = server.address() as any;
@@ -44,6 +55,18 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     const body = await res.json();
     assert.equal(body.status, 'HEALTHY');
     assert.ok(Object.hasOwn(body, 'revision'));
+  });
+
+  it('does not claim password recovery email was sent while delivery is unconfigured', async () => {
+    const responses = await Promise.all(['owner@campusprint.in', 'unknown@example.invalid'].map((email) =>
+      fetch(`${baseUrl}/api/v1/auth/password-reset/request`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }),
+      })
+    ));
+    assert.deepEqual(responses.map((response) => response.status), [503, 503]);
+    const bodies = await Promise.all(responses.map((response) => response.json() as Promise<any>));
+    assert.deepEqual(bodies.map((body) => body.code), ['PASSWORD_RESET_UNAVAILABLE', 'PASSWORD_RESET_UNAVAILABLE']);
+    assert.deepEqual(bodies.map((body) => body.error), [bodies[0].error, bodies[0].error]);
   });
 
   it('stores valid website enquiries once and rejects malformed submissions', async () => {
@@ -1604,6 +1627,100 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(db.queryOne<any>(`SELECT is_active FROM users WHERE id = ?`, [expiredBody.staff.userId]).is_active, 0);
   });
 
+  it('allows owners to edit or revoke shop staff access with immediate tenant-scoped effect', async () => {
+    const shop = db.queryOne<any>(`SELECT s.id AS shop_id, s.organization_id, o.owner_user_id FROM shops s JOIN organizations o ON o.id = s.organization_id WHERE s.id = 'shop-campus-1'`);
+    const ownerId = shop.owner_user_id as string;
+    const staffId = `staff-lifecycle-${crypto.randomUUID()}`;
+    const now = new Date().toISOString();
+    db.execute(
+      `INSERT INTO users (id, email, phone, password_hash, full_name, role, is_active, created_at, updated_at)
+       VALUES (?, ?, NULL, 'test-hash', 'Lifecycle Staff', 'SHOP_STAFF', 1, ?, ?)`,
+      [staffId, `${staffId}@example.test`, now, now]
+    );
+    db.execute(
+      `INSERT INTO memberships (id, user_id, organization_id, shop_id, role, permissions, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'SHOP_STAFF', ?, ?, ?)`,
+      [`membership-${staffId}`, staffId, shop.organization_id, shop.shop_id, JSON.stringify(['orders:view']), now, now]
+    );
+    const sessionId = crypto.randomUUID();
+    const staffToken = createSessionToken({
+      sessionId, userId: staffId, email: `${staffId}@example.test`, role: 'SHOP_STAFF',
+      organizationId: shop.organization_id, shopId: shop.shop_id, permissions: ['orders:view'],
+    });
+    db.execute(
+      `INSERT INTO user_sessions (id, user_id, token_hash, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`,
+      [sessionId, staffId, hashSessionToken(staffToken), now, new Date(Date.now() + 60_000).toISOString()]
+    );
+    const ownerHeaders = { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` };
+    const staffHeaders = { Authorization: `Bearer ${staffToken}` };
+    const staffPath = `${baseUrl}/api/v1/merchant/staff/${encodeURIComponent(staffId)}`;
+
+    try {
+      const wrongTenant = await fetch(staffPath, {
+        method: 'PUT', headers: { ...ownerHeaders, 'x-shop-id': 'shop-starter-99' },
+        body: JSON.stringify({ rolePreset: 'Print Operator', isActive: true }),
+      });
+      assert.equal(wrongTenant.status, 403);
+
+      const nonOwner = await fetch(staffPath, {
+        method: 'PUT', headers: { ...staffHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rolePreset: 'Print Operator', isActive: true }),
+      });
+      assert.equal(nonOwner.status, 403);
+
+      const ownerIdFromToken = verifySessionToken(merchantToken);
+      assert.ok(ownerIdFromToken && ownerIdFromToken !== 'expired');
+      const ownerLockout = await fetch(`${baseUrl}/api/v1/merchant/staff/${encodeURIComponent(ownerId)}`, {
+        method: 'PUT', headers: ownerHeaders,
+        body: JSON.stringify({ rolePreset: 'Order Handler', isActive: false }),
+      });
+      assert.equal(ownerLockout.status, 409);
+
+      const unknownPermission = await fetch(staffPath, {
+        method: 'PUT', headers: ownerHeaders,
+        body: JSON.stringify({ rolePreset: 'Custom', permissions: ['platform:manage'], isActive: true }),
+      });
+      assert.equal(unknownPermission.status, 400);
+
+      const presetUpdate = await fetch(staffPath, {
+        method: 'PUT', headers: ownerHeaders,
+        body: JSON.stringify({ rolePreset: 'Print Operator', isActive: true }),
+      });
+      assert.equal(presetUpdate.status, 200);
+      const printersGranted = await fetch(`${baseUrl}/api/v1/merchant/printers`, { headers: staffHeaders });
+      assert.equal(printersGranted.status, 200, 'a persisted grant is effective on the next request despite stale token claims');
+
+      const customUpdate = await fetch(staffPath, {
+        method: 'PUT', headers: ownerHeaders,
+        body: JSON.stringify({ rolePreset: 'Custom', permissions: ['storage:view'], isActive: true }),
+      });
+      assert.equal(customUpdate.status, 200);
+      const removedPrinterAccess = await fetch(`${baseUrl}/api/v1/merchant/printers`, { headers: staffHeaders });
+      assert.equal(removedPrinterAccess.status, 403);
+      const storageAccess = await fetch(`${baseUrl}/api/v1/merchant/storage/documents`, { headers: staffHeaders });
+      assert.equal(storageAccess.status, 200, 'custom permission changes are also effective on the next request');
+
+      const revoke = await fetch(staffPath, {
+        method: 'PUT', headers: ownerHeaders,
+        body: JSON.stringify({ rolePreset: 'Custom', permissions: ['storage:view'], isActive: false }),
+      });
+      assert.equal(revoke.status, 200);
+      const revokedSession = await fetch(`${baseUrl}/api/v1/merchant/storage/documents`, { headers: staffHeaders });
+      assert.equal(revokedSession.status, 401, 'revoked membership invalidates an existing staff session immediately');
+      const audit = db.queryOne<any>(
+        `SELECT action, actor_user_id, details FROM audit_events WHERE target_id = ? ORDER BY created_at DESC LIMIT 1`,
+        [`membership-${staffId}`]
+      );
+      assert.equal(audit.action, 'MERCHANT_STAFF_ACCESS_REVOKED');
+      assert.equal(audit.actor_user_id, ownerId);
+      assert.equal(JSON.parse(audit.details).isActive, false);
+    } finally {
+      db.execute(`DELETE FROM user_sessions WHERE user_id = ?`, [staffId]);
+      db.execute(`DELETE FROM memberships WHERE user_id = ?`, [staffId]);
+      db.execute(`DELETE FROM users WHERE id = ?`, [staffId]);
+    }
+  });
+
   it('Developer Portal generates OpenAPI spec and creates scoped API keys', async () => {
     const specRes = await fetch(`${baseUrl}/api/v1/developer/openapi.json`);
     assert.equal(specRes.status, 200);
@@ -1637,6 +1754,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       '/merchant/settings/razorpay': ['get', 'put', 'delete'],
       '/merchant/settings/razorpay/test': ['post'],
       '/merchant/staff': ['get', 'post'],
+      '/merchant/staff/{userId}': ['put'],
       '/merchant/bot-templates': ['get', 'put'],
       '/merchant/credits/balance': ['get'],
       '/merchant/credits/purchase': ['post'],

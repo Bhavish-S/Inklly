@@ -173,4 +173,4 @@ Delivery history is available at `GET /api/v1/developer/webhooks/{id}/deliveries
 
 ## Current verification
 
-See [`BUILD_AND_TEST_RESULTS.md`](./BUILD_AND_TEST_RESULTS.md) for exact local build/test output and [`REMAINING_ISSUES.md`](./REMAINING_ISSUES.md) for deployment blockers. Latest local build and 211 tests pass. Commit `e135daf` is pushed, and `inklly.vercel.app` serves the web bundle generated from that commit. Render still serves an older API. These checks do not establish live webhook destination, payment provider, PostgreSQL, object-storage, browser, or printer behavior.
+See [`BUILD_AND_TEST_RESULTS.md`](./BUILD_AND_TEST_RESULTS.md) for exact local build/test output and [`REMAINING_ISSUES.md`](./REMAINING_ISSUES.md) for deployment blockers. The current local source builds successfully and passes 232 tests. GitHub `main` is at `5190a17`; Vercel serves that revision's frontend, while the local membership, order-policy, and agent acknowledgment fixes are still unpushed. Render responds without a revision and serves an older seven-path API. These checks do not establish live webhook, payment, PostgreSQL, object-storage, or hardware behavior.

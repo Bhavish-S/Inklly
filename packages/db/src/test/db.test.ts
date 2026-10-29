@@ -312,3 +312,26 @@ describe('print-file lifecycle schema migration', () => {
     }
   });
 });
+
+describe('staff membership lifecycle schema migration', () => {
+  it('adds active state to pre-v19 memberships and preserves them as active', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'inklly-membership-migration-'));
+    const databasePath = path.join(directory, 'existing.sqlite');
+    try {
+      const initial = new DatabaseService(databasePath);
+      seedDatabase(initial);
+      initial.execute(`ALTER TABLE memberships DROP COLUMN is_active`);
+      initial.execute(`DELETE FROM inklly_schema_migrations WHERE version = 19`);
+      initial.close();
+
+      const upgraded = new DatabaseService(databasePath);
+      const column = (upgraded.getRawDb().prepare(`PRAGMA table_info(memberships)`).all() as Array<{ name: string }>).find((item) => item.name === 'is_active');
+      assert.ok(column);
+      assert.equal(upgraded.queryOne<any>(`SELECT is_active FROM memberships WHERE shop_id = 'shop-campus-1' LIMIT 1`)?.is_active, 1);
+      assert.ok(upgraded.queryOne(`SELECT version FROM inklly_schema_migrations WHERE version = 19`));
+      upgraded.close();
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});

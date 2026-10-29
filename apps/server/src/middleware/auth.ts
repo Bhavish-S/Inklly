@@ -56,12 +56,12 @@ export function authenticate(db: DatabaseService) {
       return;
     }
     const membership = db.queryOne<any>(
-      `SELECT m.role, m.permissions, s.organization_id, s.is_active AS shop_active, u.email, u.is_active AS user_active
+      `SELECT m.role, m.permissions, m.is_active AS membership_active, s.organization_id, s.is_active AS shop_active, u.email, u.is_active AS user_active
        FROM memberships m JOIN shops s ON s.id = m.shop_id JOIN users u ON u.id = m.user_id
        WHERE m.user_id = ? AND m.organization_id = ? AND m.shop_id = ?`,
       [key.createdByUserId, key.organizationId, key.shopId]
     );
-    if (!membership || !membership.user_active || !membership.shop_active || membership.organization_id !== key.organizationId) {
+    if (!membership || !membership.membership_active || !membership.user_active || !membership.shop_active || membership.organization_id !== key.organizationId) {
       res.status(401).json({ error: 'API key owner or shop membership is no longer active.' });
       return;
     }
@@ -132,13 +132,13 @@ export function authenticate(db: DatabaseService) {
     // Tenant scope, role, and permissions are refreshed from the current membership
     // on every request. A signed but stale JWT is not a durable authorization grant.
     const membership = db.queryOne<any>(
-      `SELECT m.role, m.permissions, s.is_active AS shop_active
+      `SELECT m.role, m.permissions, m.is_active AS membership_active, s.is_active AS shop_active
        FROM memberships m
        LEFT JOIN shops s ON s.id = m.shop_id AND s.organization_id = m.organization_id
        WHERE m.user_id = ? AND m.organization_id = ? AND m.shop_id = ?`,
       [session.userId, session.organizationId || '', session.shopId || '']
     );
-    if (!membership) {
+    if (!membership || !membership.membership_active) {
       res.status(401).json({ error: 'Shop membership is no longer active. Please sign in again.' });
       return;
     }

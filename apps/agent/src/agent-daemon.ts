@@ -80,6 +80,7 @@ export class AgentDaemon {
     if (!this.isRunning || this.workerPromise) return;
     this.workerPromise = (async () => {
       await this.processPendingReports();
+      await this.processPendingAcknowledgements();
       if (this.isRunning) await this.processNextQueueItem();
     })().catch((err: unknown) => {
       console.error('[Inklly Agent] Queue worker cycle failed; the command will not be blindly retried:', err);
@@ -173,12 +174,7 @@ export class AgentDaemon {
         // Persist into local SQLite before acknowledging. If the response or
         // acknowledgement is lost, the next poll replays the same stable ID.
         if (this.queue.enqueue(ticket)) enqueued++;
-        await fetch(`${config.serverUrl}/agent/acknowledge-command`, {
-          method: 'POST',
-          headers: this.agentHeaders(config),
-          signal: AbortSignal.timeout(10_000),
-          body: JSON.stringify({ commandId: ticket.commandId, attemptId: ticket.attemptId }),
-        });
+        await this.acknowledgeTicket(ticket.commandId, ticket.attemptId, config);
       }
       return enqueued;
     } catch {
@@ -188,6 +184,31 @@ export class AgentDaemon {
 
   private agentHeaders(config: AgentConfig): Record<string, string> {
     return { 'Content-Type': 'application/json', 'X-Agent-Id': config.agentId || '', Authorization: `Bearer ${config.secretKey || ''}` };
+  }
+
+  private async acknowledgeTicket(commandId: string, attemptId: string, config: AgentConfig): Promise<boolean> {
+    try {
+      const response = await fetch(`${config.serverUrl}/agent/acknowledge-command`, {
+        method: 'POST',
+        headers: this.agentHeaders(config),
+        signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({ commandId, attemptId }),
+      });
+      if (!response.ok) return false;
+      return this.queue.markServerAcknowledged(commandId, attemptId);
+    } catch {
+      // The server may have committed an acknowledgement before the response
+      // was lost. Keep the row ineligible for printing and retry idempotently.
+      return false;
+    }
+  }
+
+  public async processPendingAcknowledgements(): Promise<void> {
+    const config = this.configManager.get();
+    if (!config.agentId || !config.secretKey) return;
+    for (const pending of this.queue.getPendingAcknowledgements()) {
+      await this.acknowledgeTicket(pending.commandId, pending.attemptId, config);
+    }
   }
 
   public async processNextQueueItem(): Promise<SpoolerResult | null> {

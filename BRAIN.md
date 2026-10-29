@@ -26,6 +26,10 @@ The active application is this nested `Source Code` npm-workspaces monorepo:
 - `packages/shared`: domain types, deterministic pricing, and state machines.
 - `packages/db`: SQLite/PostgreSQL adapter, schema, migrations, and repositories.
 
+## User-supplied product reference
+
+The product blueprint/reference package lives beside the app at `/Users/bhavishs/Documents/Education/Projects Source_Code/Inkly/printproject1/PrintCatalyst_Master_Codex_Package/`. Its canonical Inklly requirements are under `docs/`, especially `product/PARITY_AND_GAP_MATRIX.md`, `testing/EXHAUSTIVE_ACCEPTANCE_MATRIX.md`, `design/UI_UX_SPEC.md`, `admin/PLATFORM_OWNER_CONSOLE.md`, `saas/FINANCIAL_OPERATIONS_AND_LEDGER.md`, and `developer/DEVELOPER_PORTAL_SPEC.md`. `reference/source-snapshots/` contains preserved historical evidence, not runnable product source or current implementation truth. Use the reference to guide workflows and coverage while keeping Inklly's own scope, brand, copy, data, and code authoritative; kiosk/franchise/space-partner paths are explicitly out of scope.
+
 Start at `README.md` for commands and workflow diagrams, `IMPLEMENTATION_STATUS.md` for source-backed status, `BUILD_AND_TEST_RESULTS.md` for executed verification, and `REMAINING_ISSUES.md` for release blockers. `WINDOWS_DRIVERS_AND_INSTALLER_AUDIT.md` records the evidence boundary for the desktop printer workflow.
 
 ## Merchant API request path

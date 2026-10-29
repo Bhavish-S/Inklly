@@ -245,7 +245,7 @@ export const App: React.FC = () => {
                       {currentPath === '/developer' ? 'Developer Hub' : 'Platform Owner Console'}
                     </span>
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                      MFA Privileged Session
+                      Authenticated Console
                     </span>
                   </div>
                 </div>
