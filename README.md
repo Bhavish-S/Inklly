@@ -173,4 +173,4 @@ Delivery history is available at `GET /api/v1/developer/webhooks/{id}/deliveries
 
 ## Current verification
 
-See [`BUILD_AND_TEST_RESULTS.md`](./BUILD_AND_TEST_RESULTS.md) for exact local build/test output and [`REMAINING_ISSUES.md`](./REMAINING_ISSUES.md) for deployment blockers. The current local source builds successfully and passes 242 tests. GitHub `main` includes code through `dc219dc`; the latest customer-flow changes are verified locally and pending push. The Vercel site responds HTTP 200. Render responds without a revision and serves an older seven-path API. These checks do not establish live webhook, payment, PostgreSQL, object-storage, or hardware behavior.
+See [`BUILD_AND_TEST_RESULTS.md`](./BUILD_AND_TEST_RESULTS.md) for exact local build/test output and [`REMAINING_ISSUES.md`](./REMAINING_ISSUES.md) for deployment blockers. The current local source builds successfully and passes 242 tests. GitHub `main` includes code through `7b98bf2`. The Vercel site responds HTTP 200. Render responds without a revision and serves an older seven-path API. These checks do not establish live webhook, payment, PostgreSQL, object-storage, or hardware behavior.

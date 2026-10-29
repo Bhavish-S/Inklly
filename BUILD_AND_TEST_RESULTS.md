@@ -41,7 +41,7 @@ WhatsApp Cloud API onboarding and message delivery are unavailable. The merchant
 
 ## Deployment and integration limits
 
-- GitHub `main` contains code through `dc219dc`; the current tested changes are pending push. `https://inklly.vercel.app/` responds HTTP 200. Render health responds HTTP 200 but omits `revision`, and its live OpenAPI document still contains only seven paths while current source documents more. No Render CLI, API credential, MCP deployment tool, or browser dashboard session is available here, so the backend deployment cannot be triggered or verified from this environment. The last supplied startup log lacked required private-storage configuration.
+- GitHub `main` contains code through `7b98bf2`. `https://inklly.vercel.app/` responds HTTP 200. Render health responds HTTP 200 but omits `revision`, and its live OpenAPI document still contains only seven paths while current source documents more. No Render CLI, API credential, MCP deployment tool, or browser dashboard session is available here, so the backend deployment cannot be triggered or verified from this environment. The last supplied startup log lacked required private-storage configuration.
 - The latest Render log connected to Supabase PostgreSQL and then exited because Supabase Storage settings are missing or invalid. The current source reports the specific invalid settings; the supplied deployed log has an older generic error, so its revision is unverified.
 - Supabase Storage tests mock the HTTP API. Live bucket permissions and file retention have not been verified against the production project.
 - Razorpay tests use test doubles; a live sandbox checkout/webhook round trip has not been verified here.
