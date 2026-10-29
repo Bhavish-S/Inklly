@@ -415,8 +415,8 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       if (liveShop.name) setReceiptBusinessName(liveShop.name);
     }
   }, [liveShop, liveUser]);
-  const [advancedServicesEnabled, setAdvancedServicesEnabled] = useState<boolean>(true);
-  const [physicalServicesEnabled, setPhysicalServicesEnabled] = useState<boolean>(true);
+  const advancedServicesEnabled = false;
+  const physicalServicesEnabled = false;
   const [portalServices, setPortalServices] = useState<Record<string, boolean>>({
     'Black & White': true,
     'Color': true,
@@ -431,6 +431,12 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     'PDF Page Selection': true,
     'Stapling Requests': false,
   });
+  const [customerNameRequired, setCustomerNameRequired] = useState(true);
+  const [customerPhoneRequired, setCustomerPhoneRequired] = useState(true);
+  const [portalSettingsLoaded, setPortalSettingsLoaded] = useState(false);
+  const [portalSettingsCanSave, setPortalSettingsCanSave] = useState(false);
+  const [portalSettingsSaving, setPortalSettingsSaving] = useState(false);
+  const [portalSettingsError, setPortalSettingsError] = useState('');
   const [previewColorMode, setPreviewColorMode] = useState<'bw' | 'color'>('bw');
   const [previewPrintStyle, setPreviewPrintStyle] = useState<'single' | 'duplex_auto' | 'duplex_manual'>('single');
   const [previewPaperSize, setPreviewPaperSize] = useState<string>('A4');
@@ -447,9 +453,62 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const togglePortalService = (serviceKey: string, enable: boolean) => {
     setPortalServices((prev) => {
       const updated = { ...prev, [serviceKey]: enable };
-      setGlobalToast(`"${serviceKey}" is now ${enable ? 'Enabled' : 'Disabled'} on customer portal`);
       return updated;
     });
+  };
+
+  useEffect(() => {
+    let active = true;
+    setPortalSettingsLoaded(false);
+    setPortalSettingsCanSave(false);
+    setPortalSettingsError('');
+    if (!liveShop?.id || !localStorage.getItem('inklly_token')) {
+      setPortalSettingsLoaded(true);
+      return () => { active = false; };
+    }
+    api.getShopSettings().then((data) => {
+      if (!active) return;
+      const settings = data.portalSettings;
+      if (!settings) throw new Error('Portal settings were not returned by the server. Refresh and try again.');
+      setPortalSettingsCanSave(true);
+      const modes = settings.allowedOptions.colorModes || [];
+      const sides = settings.allowedOptions.duplexModes || [];
+      const papers = settings.allowedOptions.paperSizes || [];
+      setCustomerNameRequired(settings.requiredFields.name !== false);
+      setCustomerPhoneRequired(settings.requiredFields.phone !== false);
+      setPortalServices((current) => ({
+        ...current,
+        'Black & White': modes.includes('bw'), Color: modes.includes('color'),
+        'Single-Sided': sides.includes('simplex'), 'Back-to-Back (Auto)': sides.includes('duplex_auto'),
+        'Back-to-Back (Manual)': false,
+        'A4 Plain Paper': papers.includes('A4'), 'A3 Poster Sheet': papers.includes('A3'),
+        'Photo Glossy (4x6)': papers.includes('PHOTO_4X6'), 'Photo 5x7': papers.includes('PHOTO_5X7'),
+        'PDF Page Selection': settings.allowedOptions.pageSelection,
+        Scaling: false, 'Photo Collage': false, 'ID Card': false, 'Passport Photo': false, 'Stapling Requests': false,
+      }));
+    }).catch((error: any) => {
+      if (active) { setPortalSettingsCanSave(false); setPortalSettingsError(error?.message || 'Could not load portal settings.'); }
+    }).finally(() => { if (active) setPortalSettingsLoaded(true); });
+    return () => { active = false; };
+  }, [liveShop?.id]);
+
+  const savePortalSettings = async () => {
+    setPortalSettingsSaving(true);
+    setPortalSettingsError('');
+    try {
+      await api.updateShopSettings({ portalSettings: {
+        requiredFields: { name: customerNameRequired, phone: customerPhoneRequired },
+        allowedOptions: {
+          colorModes: [ ...(portalServices['Black & White'] ? ['bw'] : []), ...(portalServices.Color ? ['color'] : []), ...(portalServices['Black & White'] && portalServices.Color ? ['mixed'] : []) ],
+          duplexModes: [ ...(portalServices['Single-Sided'] ? ['simplex'] : []), ...(portalServices['Back-to-Back (Auto)'] ? ['duplex_auto'] : []) ],
+          paperSizes: [ ...(portalServices['A4 Plain Paper'] ? ['A4'] : []), ...(portalServices['A3 Poster Sheet'] ? ['A3'] : []), ...(portalServices['Photo Glossy (4x6)'] ? ['PHOTO_4X6'] : []), ...(portalServices['Photo 5x7'] ? ['PHOTO_5X7'] : []) ],
+          pageSelection: Boolean(portalServices['PDF Page Selection']),
+        },
+      } });
+      setGlobalToast('Customer portal settings saved. New orders will use these options.');
+    } catch (error: any) {
+      setPortalSettingsError(error?.message || 'Could not save portal settings. Your edits are still here.');
+    } finally { setPortalSettingsSaving(false); }
   };
 
   const [servicesOffered, setServicesOffered] = useState<string[]>([
@@ -4382,13 +4441,10 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                           </div>
                           <button
                             type="button"
-                            onClick={() => {
-                              setAdvancedServicesEnabled((v) => !v);
-                              setGlobalToast(`Advanced services ${!advancedServicesEnabled ? 'enabled' : 'disabled'}`);
-                            }}
-                            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden ${
-                              advancedServicesEnabled ? 'bg-[#4F46E5]' : 'bg-gray-300 dark:bg-gray-700'
-                            }`}
+                            disabled
+                            aria-label="Advanced services are unavailable"
+                            title="These options are not supported by the current customer order workflow."
+                            className="relative inline-flex h-5 w-9 shrink-0 cursor-not-allowed rounded-full border-2 border-transparent bg-gray-300 opacity-60 dark:bg-gray-700"
                           >
                             <span
                               className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
@@ -4443,13 +4499,10 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                           </div>
                           <button
                             type="button"
-                            onClick={() => {
-                              setPhysicalServicesEnabled((v) => !v);
-                              setGlobalToast(`Physical services ${!physicalServicesEnabled ? 'enabled' : 'disabled'}`);
-                            }}
-                            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden ${
-                              physicalServicesEnabled ? 'bg-[#4F46E5]' : 'bg-gray-300 dark:bg-gray-700'
-                            }`}
+                            disabled
+                            aria-label="Physical services are unavailable"
+                            title="These options are not supported by the current customer order workflow."
+                            className="relative inline-flex h-5 w-9 shrink-0 cursor-not-allowed rounded-full border-2 border-transparent bg-gray-300 opacity-60 dark:bg-gray-700"
                           >
                             <span
                               className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
@@ -5252,7 +5305,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                     <button
                       type="button"
                       onClick={() => {
-                        window.open('/portal/campus1', '_blank');
+                        window.open(`/portal/${encodeURIComponent(currentMerchant.shopCode)}`, '_blank');
                         setGlobalToast('Opening live Customer QR Portal in new tab');
                       }}
                       className="px-3.5 py-2 bg-indigo-50 dark:bg-indigo-950/40 text-[#4F46E5] dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 rounded-xl text-xs font-bold hover:bg-indigo-100 flex items-center gap-1.5 transition-colors"
@@ -5261,13 +5314,15 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                     </button>
                     <button
                       type="button"
-                      onClick={() => setGlobalToast('Portal configuration saved and published')}
+                      onClick={savePortalSettings}
+                      disabled={!portalSettingsLoaded || !portalSettingsCanSave || portalSettingsSaving}
                       className="px-4 py-2 bg-[#4F46E5] hover:bg-[#4338CA] text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
                     >
-                      Save Portal Settings
+                      {portalSettingsSaving ? 'Saving…' : portalSettingsLoaded ? 'Save Portal Settings' : 'Loading settings…'}
                     </button>
                   </div>
                 </div>
+                {portalSettingsError && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800">{portalSettingsError}. Changes have not been saved.</div>}
 
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
                   {/* Left Controls */}
@@ -5288,14 +5343,14 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                         <div className="flex justify-between items-center">
                           <div>
                             <div className="font-bold text-gray-900 dark:text-white">Full Name</div>
-                            <div className="text-[10px] text-gray-400">Printed on the pickup slip and order invoice</div>
+                            <div className="text-[10px] text-gray-400">Used to identify the customer on the order</div>
                           </div>
                           <div className="flex items-center gap-2">
                             <span className="text-[10px] text-gray-400">Required field</span>
                             <input
                               type="checkbox"
-                              checked={true}
-                              onChange={() => setGlobalToast('Customer name is required for order indexing')}
+                              checked={customerNameRequired}
+                              onChange={(event) => setCustomerNameRequired(event.target.checked)}
                               className="rounded text-[#4D64E6] cursor-pointer"
                             />
                           </div>
@@ -5304,14 +5359,14 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                         <div className="flex justify-between items-center border-t border-gray-100 dark:border-gray-700 pt-2.5">
                           <div>
                             <div className="font-bold text-gray-900 dark:text-white">Mobile Number</div>
-                            <div className="text-[10px] text-gray-400">Receives WhatsApp notification when print is ready</div>
+                            <div className="text-[10px] text-gray-400">Required to place an order and contact you about collection</div>
                           </div>
                           <div className="flex items-center gap-2">
                             <span className="text-[10px] text-gray-400">Required field</span>
                             <input
                               type="checkbox"
-                              checked={true}
-                              onChange={() => setGlobalToast('Mobile number is required for SMS/WhatsApp pickup PIN')}
+                              checked={customerPhoneRequired}
+                              onChange={(event) => setCustomerPhoneRequired(event.target.checked)}
                               className="rounded text-[#4D64E6] cursor-pointer"
                             />
                           </div>
@@ -5361,12 +5416,13 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                         },
                         {
                           key: 'Back-to-Back (Manual)',
-                          badge: 'Software Guided Two-Pass',
-                          badgeColor: 'green',
-                          desc: 'Shop agent prints odd sheets then prompts staff to re-insert tray',
+                          badge: 'Unavailable',
+                          badgeColor: 'amber',
+                          desc: 'Manual duplex is not supported by the current customer order workflow.',
                         },
                       ].map((item) => {
                         const isEnabled = portalServices[item.key] ?? true;
+                        const supported = item.key !== 'Back-to-Back (Manual)';
                         return (
                           <div
                             key={item.key}
@@ -5392,6 +5448,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                             <div className="flex border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden text-[11px] font-bold shadow-2xs">
                               <button
                                 type="button"
+                                disabled={!supported}
                                 onClick={() => togglePortalService(item.key, false)}
                                 className={`px-3 py-1.5 transition-colors ${
                                   !isEnabled
@@ -5403,6 +5460,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                               </button>
                               <button
                                 type="button"
+                                disabled={!supported}
                                 onClick={() => togglePortalService(item.key, true)}
                                 className={`px-3 py-1.5 transition-colors ${
                                   isEnabled
@@ -5428,6 +5486,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                         { key: 'A4 Plain Paper', desc: 'Standard 210 x 297 mm document sheets' },
                         { key: 'A3 Poster Sheet', desc: 'Large 297 x 420 mm engineering drawings' },
                         { key: 'Photo Glossy (4x6)', desc: 'Glossy postcard photo media' },
+                        { key: 'Photo 5x7', desc: '5 × 7 inch photo paper' },
                       ].map((fmt) => {
                         const isEnabled = portalServices[fmt.key] ?? true;
                         return (
@@ -5471,8 +5530,9 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                         <input
                           type="checkbox"
                           checked={portalServices['Scaling'] ?? true}
-                          onChange={(e) => togglePortalService('Scaling', e.target.checked)}
-                          className="rounded text-[#4D64E6] cursor-pointer"
+                          disabled
+                          onChange={() => {}}
+                          className="rounded text-[#4D64E6] cursor-not-allowed"
                         />
                       </div>
                       <div className="flex justify-between items-center border-t border-gray-100 dark:border-gray-700 pt-2">
@@ -5483,8 +5543,9 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                         <input
                           type="checkbox"
                           checked={portalServices['Photo Collage'] ?? true}
-                          onChange={(e) => togglePortalService('Photo Collage', e.target.checked)}
-                          className="rounded text-[#4D64E6] cursor-pointer"
+                          disabled
+                          onChange={() => {}}
+                          className="rounded text-[#4D64E6] cursor-not-allowed"
                         />
                       </div>
                       <div className="flex justify-between items-center border-t border-gray-100 dark:border-gray-700 pt-2">

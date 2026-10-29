@@ -215,6 +215,41 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       assert.equal(shop.name, 'Campus Print Express');
       assert.ok(shop.rates);
       assert.ok(shop.enabledPaperFormats.includes('A4'));
+      assert.deepEqual(shop.portalSettings.requiredFields, { name: true, phone: true });
+      assert.deepEqual(shop.portalSettings.allowedOptions.colorModes, ['bw', 'color', 'mixed']);
+    });
+
+    it('persists portal settings and rejects customer quotes that use disabled options', async () => {
+      const portalSettings = {
+        requiredFields: { name: false, phone: true },
+        allowedOptions: { colorModes: ['bw'], duplexModes: ['simplex'], paperSizes: ['A4'], pageSelection: false },
+      };
+      const save = await fetch(`${baseUrl}/api/v1/merchant/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+        body: JSON.stringify({ portalSettings }),
+      });
+      assert.equal(save.status, 200);
+      const publicShopRes = await fetch(`${baseUrl}/api/v1/portal/shop/campus1`);
+      const publicShop = await publicShopRes.json() as any;
+      assert.deepEqual(publicShop.portalSettings, portalSettings);
+
+      const disabledMode = await fetch(`${baseUrl}/api/v1/portal/quote`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shopId: 'shop-campus-1', files: [{ fileName: 'doc.pdf', pageCount: 1, options: { colorMode: 'color', duplexMode: 'simplex', paperSize: 'A4', copies: 1 } }] }),
+      });
+      assert.equal(disabledMode.status, 422);
+      const disabledRange = await fetch(`${baseUrl}/api/v1/portal/quote`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shopId: 'shop-campus-1', files: [{ fileName: 'doc.pdf', pageCount: 2, options: { colorMode: 'bw', duplexMode: 'simplex', paperSize: 'A4', copies: 1, pageRange: '1' } }] }),
+      });
+      assert.equal(disabledRange.status, 422);
+
+      const restore = await fetch(`${baseUrl}/api/v1/merchant/settings`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+        body: JSON.stringify({ portalSettings: { requiredFields: { name: true, phone: true }, allowedOptions: { colorModes: ['bw', 'color', 'mixed'], duplexModes: ['simplex', 'duplex_auto'], paperSizes: ['A4', 'A3', 'PHOTO_4X6', 'PHOTO_5X7'], pageSelection: true } } }),
+      });
+      assert.equal(restore.status, 200);
     });
 
     it('T1.7: Blocks public setup scripts when a signed installer is unavailable', async () => {

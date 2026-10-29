@@ -164,6 +164,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
           counter: data.address || '',
           rates: data.rates,
           onlinePaymentAvailable: Boolean(data.onlinePaymentAvailable),
+          portalSettings: data.portalSettings,
           rateRules: data.rates.ratesList,
         });
       })
@@ -384,21 +385,41 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
 
   const totalPagesCount = documents.reduce((acc, d) => acc + parsePageRangeCount(d.options.pageRange || 'All', d.pageCount) * (d.options.copies || 1), 0) * globalCopies;
   const grandTotalPaise = Number.isSafeInteger(serverQuote?.totalPaise) ? serverQuote.totalPaise : null;
+  const portalRequiredFields = shop?.portalSettings?.requiredFields || { name: true, phone: true };
   const onlinePaymentBelowMinimum = grandTotalPaise !== null && grandTotalPaise < 100;
   const formatPaise = (paise: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(paise / 100);
   const availablePaperSizes = (['A4', 'A3', 'PHOTO_4X6', 'PHOTO_5X7'] as const).filter((paperSize) => {
+    const allowedPaperSizes = shop?.portalSettings?.allowedOptions?.paperSizes;
+    if (Array.isArray(allowedPaperSizes) && !allowedPaperSizes.includes(paperSize)) return false;
     const requiredModes = activeDoc?.options.colorMode === 'mixed'
       ? ['bw', 'color']
       : [activeDoc?.options.colorMode || 'bw'];
+    const allowedColors = shop?.portalSettings?.allowedOptions?.colorModes;
+    if (Array.isArray(allowedColors) && !requiredModes.every((mode) => allowedColors.includes(mode))) return false;
+    const allowedDuplex = shop?.portalSettings?.allowedOptions?.duplexModes;
+    if (Array.isArray(allowedDuplex) && !allowedDuplex.includes(activeDoc?.options.duplexMode || 'simplex')) return false;
     return requiredModes.every((colorMode) => (shop?.rateRules || []).some((rule: any) =>
       rule.paperSize === paperSize && rule.colorMode === colorMode &&
       (activeDoc?.options.duplexMode === 'simplex' ? rule.duplexMode === 'simplex' : rule.duplexMode !== 'simplex')
     ));
   });
+  const portalAllowedOptions = shop?.portalSettings?.allowedOptions;
   useEffect(() => {
+    if (!activeDoc) return;
+    const allowedColors = portalAllowedOptions?.colorModes;
+    if (Array.isArray(allowedColors) && !allowedColors.includes(activeDoc.options.colorMode)) {
+      const replacement = (['bw', 'color', 'mixed'] as const).find((mode) => allowedColors.includes(mode));
+      if (replacement) updateActiveOptions({ colorMode: replacement });
+    }
+    const allowedSides = portalAllowedOptions?.duplexModes;
+    if (Array.isArray(allowedSides) && !allowedSides.includes(activeDoc.options.duplexMode)) {
+      const replacement = (['simplex', 'duplex_auto'] as const).find((mode) => allowedSides.includes(mode));
+      if (replacement) updateActiveOptions({ duplexMode: replacement });
+    }
+    if (portalAllowedOptions?.pageSelection === false && activeDoc.options.pageRange.toLowerCase() !== 'all') updateActiveOptions({ pageRange: 'All' });
     if (!activeDoc || !availablePaperSizes.length || availablePaperSizes.includes(activeDoc.options.paperSize as any)) return;
     updateActiveOptions({ paperSize: availablePaperSizes[0] });
-  }, [activeDoc?.id, activeDoc?.options.colorMode, activeDoc?.options.duplexMode, availablePaperSizes.join(',')]);
+  }, [activeDoc?.id, activeDoc?.options.colorMode, activeDoc?.options.duplexMode, activeDoc?.options.pageRange, availablePaperSizes.join(','), portalAllowedOptions]);
 
   useEffect(() => {
     const requestId = ++quoteRequestSequence.current;
@@ -759,8 +780,9 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
   // Submit only with a fresh server quote; the server rechecks the amount against its current rates.
   const handlePlaceOrder = async () => {
     const normalizedPhone = customerPhone.replace(/\D/g, '').replace(/^91(?=\d{10}$)/, '');
-    if (!customerName.trim() || !/^[6-9]\d{9}$/.test(normalizedPhone)) {
-      setSubmitError('Enter your name and a valid 10-digit Indian mobile number.');
+    const requiredFields = shop?.portalSettings?.requiredFields || { name: true, phone: true };
+    if ((requiredFields.name && !customerName.trim()) || (requiredFields.phone && !/^[6-9]\d{9}$/.test(normalizedPhone))) {
+      setSubmitError(requiredFields.name && requiredFields.phone ? 'Enter your name and a valid 10-digit Indian mobile number.' : requiredFields.name ? 'Enter your name.' : 'Enter a valid 10-digit Indian mobile number.');
       return;
     }
     if (!pendingOnlineOrder && (!serverQuote || quoteLoading || quoteError || !Number.isSafeInteger(serverQuote.totalPaise))) {
@@ -783,9 +805,10 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
       let totalAmountPaise = pendingOnlineOrder?.totalAmountPaise ?? serverQuote.totalPaise;
       if (!order) {
         const orderPayload = {
+          portalSettingsVersion: 1,
           shopId: shop.id,
           customerName: customerName.trim(),
-          customerPhone: normalizedPhone,
+          customerPhone: normalizedPhone || undefined,
           paymentMethod,
           quote: serverQuote,
           files: documents.map((document) => ({
@@ -1650,6 +1673,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                       </button>
                       <button
                         type="button"
+                        disabled={portalAllowedOptions?.pageSelection === false}
                         onClick={() => {
                           if ((activeDoc.options.pageRange || 'All').toLowerCase() === 'all') {
                             updateActiveOptions({ pageRange: `1-${Math.min(activeDoc.pageCount, 1)}` });
@@ -1784,6 +1808,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                     <div className="grid grid-cols-3 gap-2">
                       <button
                         type="button"
+                        disabled={portalAllowedOptions?.colorModes && !portalAllowedOptions.colorModes.includes('bw')}
                         onClick={() => updateActiveOptions({ colorMode: 'bw' })}
                         className={`p-2.5 rounded-2xl border text-left transition-all relative overflow-hidden ${
                           activeDoc.options.colorMode === 'bw'
@@ -1800,6 +1825,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
 
                       <button
                         type="button"
+                        disabled={portalAllowedOptions?.colorModes && !portalAllowedOptions.colorModes.includes('color')}
                         onClick={() => updateActiveOptions({ colorMode: 'color' })}
                         className={`p-2.5 rounded-2xl border text-left transition-all relative overflow-hidden ${
                           activeDoc.options.colorMode === 'color'
@@ -1816,6 +1842,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
 
                       <button
                         type="button"
+                        disabled={portalAllowedOptions?.colorModes && !portalAllowedOptions.colorModes.includes('mixed')}
                         onClick={() => {
                           const defaultColorPages = activeDoc.options.colorPages || '1';
                           updateActiveOptions({ colorMode: 'mixed', colorPages: defaultColorPages });
@@ -1907,6 +1934,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                     <div className="grid grid-cols-2 gap-2.5">
                       <button
                         type="button"
+                        disabled={portalAllowedOptions?.duplexModes && !portalAllowedOptions.duplexModes.includes('simplex')}
                         onClick={() => updateActiveOptions({ duplexMode: 'simplex' })}
                         className={`min-h-[52px] p-3 rounded-2xl border text-left transition-all ${
                           activeDoc.options.duplexMode === 'simplex'
@@ -1919,6 +1947,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                       </button>
                       <button
                         type="button"
+                        disabled={portalAllowedOptions?.duplexModes && !portalAllowedOptions.duplexModes.includes('duplex_auto')}
                         onClick={() => updateActiveOptions({ duplexMode: 'duplex_auto' })}
                         className={`min-h-[52px] p-3 rounded-2xl border text-left transition-all relative overflow-hidden ${
                           activeDoc.options.duplexMode === 'duplex_auto'
@@ -2088,9 +2117,10 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
 
             <div className="space-y-3">
               <div>
-                <label htmlFor="customer-name" className="block text-xs font-semibold text-slate-700 mb-1">Your name</label>
+                <label htmlFor="customer-name" className="block text-xs font-semibold text-slate-700 mb-1">Your name{portalRequiredFields.name ? ' (required)' : ' (optional)'}</label>
                 <input
                   id="customer-name"
+                  required={portalRequiredFields.name}
                   autoComplete="name"
                   value={customerName}
                   onChange={(event) => setCustomerName(event.target.value)}
@@ -2099,9 +2129,10 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                 />
               </div>
               <div>
-                <label htmlFor="customer-phone" className="block text-xs font-semibold text-slate-700 mb-1">Mobile number</label>
+                <label htmlFor="customer-phone" className="block text-xs font-semibold text-slate-700 mb-1">Mobile number{portalRequiredFields.phone ? ' (required)' : ' (optional)'}</label>
                 <input
                   id="customer-phone"
+                  required={portalRequiredFields.phone}
                   type="tel"
                   inputMode="tel"
                   autoComplete="tel-national"

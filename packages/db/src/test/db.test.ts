@@ -36,6 +36,23 @@ describe('Relational Database & Multi-Tenancy Tests', () => {
     assert.equal(shop.acceptCashOnCollection, true);
   });
 
+  it('persists validated customer portal requirements and option allowlists per shop', () => {
+    const defaultSettings = shopRepo.getPortalSettings('shop-campus-1');
+    assert.equal(defaultSettings.requiredFields.name, true);
+    assert.deepEqual(defaultSettings.allowedOptions.colorModes, ['bw', 'color', 'mixed']);
+    const saved = shopRepo.updatePortalSettings('shop-campus-1', {
+      requiredFields: { name: false, phone: true },
+      allowedOptions: { colorModes: ['bw'], duplexModes: ['simplex'], paperSizes: ['A4'], pageSelection: false },
+    });
+    assert.equal(saved.requiredFields.name, false);
+    assert.deepEqual(shopRepo.getPortalSettings('shop-campus-1'), saved);
+    assert.throws(() => shopRepo.updatePortalSettings('shop-campus-1', {
+      requiredFields: { name: true, phone: true },
+      allowedOptions: { colorModes: [], duplexModes: ['simplex'], paperSizes: ['A4'], pageSelection: true },
+    }), /at least one color modes/i);
+    assert.equal(shopRepo.getPortalSettings('shop-campus-1').requiredFields.name, false, 'invalid updates do not overwrite persisted settings');
+  });
+
   it('applies the merchant vault schema migration', () => {
     const migration = db.queryOne<{ version: number }>(`SELECT version FROM inklly_schema_migrations WHERE version = 3`);
     assert.equal(migration?.version, 3);

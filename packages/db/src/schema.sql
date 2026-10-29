@@ -45,6 +45,13 @@ CREATE TABLE IF NOT EXISTS shops (
 CREATE INDEX IF NOT EXISTS idx_shops_shop_code ON shops(shop_code);
 CREATE INDEX IF NOT EXISTS idx_shops_org ON shops(organization_id);
 
+CREATE TABLE IF NOT EXISTS shop_portal_settings (
+    shop_id TEXT PRIMARY KEY,
+    settings_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS shop_payment_credentials (
     shop_id TEXT PRIMARY KEY,
     provider TEXT NOT NULL,

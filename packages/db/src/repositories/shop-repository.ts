@@ -1,6 +1,16 @@
 import { DatabaseService } from '../database';
 import { Organization, Shop } from '@inklly/shared';
 
+export interface ShopPortalSettings {
+  requiredFields: { name: boolean; phone: boolean };
+  allowedOptions: { colorModes: Array<'bw' | 'color' | 'mixed'>; duplexModes: Array<'simplex' | 'duplex_auto'>; paperSizes: Array<'A4' | 'A3' | 'PHOTO_4X6' | 'PHOTO_5X7'>; pageSelection: boolean };
+}
+
+export const DEFAULT_SHOP_PORTAL_SETTINGS: ShopPortalSettings = {
+  requiredFields: { name: true, phone: true },
+  allowedOptions: { colorModes: ['bw', 'color', 'mixed'], duplexModes: ['simplex', 'duplex_auto'], paperSizes: ['A4', 'A3', 'PHOTO_4X6', 'PHOTO_5X7'], pageSelection: true },
+};
+
 export class ShopRepository {
   constructor(private db: DatabaseService) {}
 
@@ -84,6 +94,55 @@ export class ShopRepository {
   public getShopsByOrg(orgId: string): Shop[] {
     const rows = this.db.query<any>(`SELECT * FROM shops WHERE organization_id = ?`, [orgId]);
     return rows.map(this.mapShopRow);
+  }
+
+  public getPortalSettings(shopId: string): ShopPortalSettings {
+    const row = this.db.queryOne<any>(`SELECT settings_json FROM shop_portal_settings WHERE shop_id = ?`, [shopId]);
+    if (!row) return structuredClone(DEFAULT_SHOP_PORTAL_SETTINGS);
+    try {
+      const value = JSON.parse(row.settings_json);
+      return {
+        requiredFields: { name: value.requiredFields?.name !== false, phone: value.requiredFields?.phone !== false },
+        allowedOptions: {
+          colorModes: (['bw', 'color', 'mixed'] as const).filter((key) => value.allowedOptions?.colorModes?.includes(key)),
+          duplexModes: (['simplex', 'duplex_auto'] as const).filter((key) => value.allowedOptions?.duplexModes?.includes(key)),
+          paperSizes: (['A4', 'A3', 'PHOTO_4X6', 'PHOTO_5X7'] as const).filter((key) => value.allowedOptions?.paperSizes?.includes(key)),
+          pageSelection: value.allowedOptions?.pageSelection !== false,
+        },
+      };
+    } catch { return structuredClone(DEFAULT_SHOP_PORTAL_SETTINGS); }
+  }
+
+  public updatePortalSettings(shopId: string, input: unknown): ShopPortalSettings {
+    if (!this.getShopById(shopId)) throw new Error('Shop not found');
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Portal settings must be an object.');
+    const value = input as any;
+    const fields = value.requiredFields;
+    const options = value.allowedOptions;
+    if (!fields || typeof fields.name !== 'boolean' || typeof fields.phone !== 'boolean' || !options || typeof options.pageSelection !== 'boolean') {
+      throw new Error('Portal settings are incomplete.');
+    }
+    const enumList = <T extends string>(candidate: unknown, allowed: readonly T[], label: string): T[] => {
+      if (!Array.isArray(candidate) || candidate.some((item) => !allowed.includes(item))) throw new Error(`${label} contains an unsupported option.`);
+      const result = [...new Set(candidate as T[])];
+      if (!result.length) throw new Error(`At least one ${label.toLowerCase()} must remain available.`);
+      return result;
+    };
+    const settings: ShopPortalSettings = {
+      requiredFields: { name: fields.name, phone: fields.phone },
+      allowedOptions: {
+        colorModes: enumList(options.colorModes, ['bw', 'color', 'mixed'] as const, 'Color modes'),
+        duplexModes: enumList(options.duplexModes, ['simplex', 'duplex_auto'] as const, 'Duplex modes'),
+        paperSizes: enumList(options.paperSizes, ['A4', 'A3', 'PHOTO_4X6', 'PHOTO_5X7'] as const, 'Paper sizes'),
+        pageSelection: options.pageSelection,
+      },
+    };
+    if (settings.allowedOptions.colorModes.includes('mixed') &&
+        (!settings.allowedOptions.colorModes.includes('bw') || !settings.allowedOptions.colorModes.includes('color'))) {
+      throw new Error('Mixed color mode requires both Black & White and Color to be enabled.');
+    }
+    this.db.execute(`INSERT INTO shop_portal_settings (shop_id, settings_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(shop_id) DO UPDATE SET settings_json = excluded.settings_json, updated_at = excluded.updated_at`, [shopId, JSON.stringify(settings), new Date().toISOString()]);
+    return settings;
   }
 
   public updateShopSettings(

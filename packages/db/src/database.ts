@@ -44,6 +44,7 @@ export class DatabaseService {
       this.ensureSqlitePilotBillingMigration();
       this.ensureSqlitePlatformAdminPermissionsMigration();
       this.ensureSqlitePrintFileLifecycleMigration();
+      this.ensureSqliteShopPortalSettingsMigration();
     }
   }
 
@@ -155,6 +156,33 @@ export class DatabaseService {
     this.ensurePostgresPilotBillingMigration();
     this.ensurePostgresPlatformAdminPermissionsMigration();
     this.ensurePostgresPrintFileLifecycleMigration();
+    this.ensurePostgresShopPortalSettingsMigration();
+  }
+
+  private ensureSqliteShopPortalSettingsMigration(): void {
+    if (this.db!.prepare(`SELECT version FROM inklly_schema_migrations WHERE version = 18`).get()) return;
+    this.db!.exec('BEGIN');
+    try {
+      this.db!.exec(`CREATE TABLE IF NOT EXISTS shop_portal_settings (shop_id TEXT PRIMARY KEY REFERENCES shops(id) ON DELETE CASCADE, settings_json TEXT NOT NULL, updated_at TEXT NOT NULL)`);
+      this.db!.prepare(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (18, ?)`).run(new Date().toISOString());
+      this.db!.exec('COMMIT');
+    } catch (error) {
+      try { this.db!.exec('ROLLBACK'); } catch { /* preserve original error */ }
+      throw error;
+    }
+  }
+
+  private ensurePostgresShopPortalSettingsMigration(): void {
+    if (this.queryPostgres(`SELECT version FROM inklly_schema_migrations WHERE version = ?`, [18]).length) return;
+    this.queryPostgres('BEGIN');
+    try {
+      this.queryPostgres(`CREATE TABLE IF NOT EXISTS shop_portal_settings (shop_id TEXT PRIMARY KEY REFERENCES shops(id) ON DELETE CASCADE, settings_json TEXT NOT NULL, updated_at TEXT NOT NULL)`);
+      this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [18, new Date().toISOString()]);
+      this.queryPostgres('COMMIT');
+    } catch (error) {
+      try { this.queryPostgres('ROLLBACK'); } catch { /* preserve original error */ }
+      throw new Error(`[Inklly DB] Shop portal settings migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
   }
 
   private ensureSqlitePrintFileLifecycleMigration(): void {

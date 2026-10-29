@@ -512,16 +512,19 @@ export class MerchantController {
     if (!shop) {
       return res.status(404).json({ error: 'Shop not found' });
     }
-    res.json(shop);
+    res.json({ ...shop, portalSettings: this.shopRepo.getPortalSettings(shopId) });
   };
 
   public updateSettings = (req: Request, res: Response) => {
     const shopId = this.getShopId(req);
-    const updates = req.body;
+    const updates = { ...(req.body || {}) };
+    const portalSettings = updates.portalSettings;
+    delete updates.portalSettings;
 
     try {
-      this.shopRepo.updateShopSettings(shopId, updates);
-      res.json({ success: true, shop: this.shopRepo.getShopById(shopId) });
+      if (Object.keys(updates).length) this.shopRepo.updateShopSettings(shopId, updates);
+      const savedPortalSettings = portalSettings === undefined ? this.shopRepo.getPortalSettings(shopId) : this.shopRepo.updatePortalSettings(shopId, portalSettings);
+      res.json({ success: true, shop: { ...this.shopRepo.getShopById(shopId), portalSettings: savedPortalSettings } });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }

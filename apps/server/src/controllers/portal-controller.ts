@@ -68,6 +68,7 @@ export class PortalController {
       currency: shop.currency,
       paymentGateway: shop.paymentGateway,
       acceptCashOnCollection: shop.acceptCashOnCollection,
+      portalSettings: this.shopRepo.getPortalSettings(shop.id),
       onlinePaymentAvailable: shop.currency === 'INR' && paymentStatus.configured && paymentStatus.webhookConfigured,
       enabledPaperFormats: configuredPaperSizes,
       enabledColorModes: configuredColorModes,
@@ -99,6 +100,9 @@ export class PortalController {
 
     const copyDiscounts = this.pricingRepo.getCopyDiscountRules(body.shopId);
     const bulkDiscount = this.pricingRepo.getBulkDiscountRule(body.shopId);
+
+    const optionError = this.validatePortalOptions(this.shopRepo.getPortalSettings(shop.id), body.files);
+    if (optionError) return res.status(422).json({ error: optionError });
 
     try {
       const quote = calculateQuote(
@@ -133,6 +137,16 @@ export class PortalController {
 
     if (!shop || !Array.isArray(files) || files.length === 0 || files.length > 20) {
       return res.status(400).json({ error: 'Incomplete order submission payload' });
+    }
+    const portalSettings = this.shopRepo.getPortalSettings(shop.id);
+    // Versioned first-party portal clients submit this marker so the persisted
+    // form rules can be enforced without breaking older external API clients.
+    const usesPortalSettings = req.body?.portalSettingsVersion === 1;
+    if (usesPortalSettings && portalSettings.requiredFields.name && (typeof customerName !== 'string' || !customerName.trim())) {
+      return res.status(422).json({ error: 'Enter your name to place this order.' });
+    }
+    if (usesPortalSettings && portalSettings.requiredFields.phone && (typeof customerPhone !== 'string' || !/^[6-9]\d{9}$/.test(customerPhone.replace(/\D/g, '')))) {
+      return res.status(422).json({ error: 'Enter a valid 10-digit Indian mobile number to place this order.' });
     }
     const suppliedIdempotencyKey = req.get('Idempotency-Key');
     if (suppliedIdempotencyKey !== undefined && !/^[A-Za-z0-9_-]{16,128}$/.test(suppliedIdempotencyKey)) {
@@ -218,6 +232,8 @@ export class PortalController {
 
     const copyDiscountRules = this.pricingRepo.getCopyDiscountRules(shopId);
     const bulkDiscountRule = this.pricingRepo.getBulkDiscountRule(shopId) || undefined;
+    const optionError = this.validatePortalOptions(portalSettings, safeFiles);
+    if (optionError) return res.status(422).json({ error: optionError });
     let serverQuote;
     try {
       serverQuote = calculateQuote(
@@ -334,6 +350,18 @@ export class PortalController {
       currency: order.currency,
     });
   };
+
+  private validatePortalOptions(settings: ReturnType<ShopRepository['getPortalSettings']>, files: any[]): string | null {
+    const { allowedOptions } = settings;
+    for (const file of files) {
+      const options = file?.options || {};
+      if (!allowedOptions.colorModes.includes(options.colorMode) || (options.colorMode === 'mixed' && (!allowedOptions.colorModes.includes('bw') || !allowedOptions.colorModes.includes('color')))) return 'This color mode is no longer offered by the shop. Update your print settings.';
+      if (!allowedOptions.duplexModes.includes(options.duplexMode)) return 'This print style is no longer offered by the shop. Update your print settings.';
+      if (!allowedOptions.paperSizes.includes(options.paperSize)) return 'This paper size is no longer offered by the shop. Update your print settings.';
+      if (!allowedOptions.pageSelection && options.pageRange && !['all', ''].includes(String(options.pageRange).trim().toLowerCase())) return 'Custom page selection is not available at this shop.';
+    }
+    return null;
+  }
 
   public uploadDocument = async (req: Request, res: Response) => {
     try {
