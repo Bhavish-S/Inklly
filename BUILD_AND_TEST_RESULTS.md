@@ -5,7 +5,7 @@
 ## Current local verification
 
 - `npm run build` — passed for database, shared, desktop agent, server, and web workspaces using Vite 6.4.5. After route-level code splitting, the initial JavaScript bundle is 215.71 kB minified (61.06 kB gzip); PDF rendering is isolated in a 483.94 kB chunk. Vite reports no oversized JavaScript chunk.
-- `npm test` — 236 passed, 0 failed: database 14, shared 15, agent 14, server 193. New coverage includes membership revocation migration and immediate permission invalidation, persisted shop staff edits/revocation, dispatch-ack gating and lost-response recovery, customer-field enforcement without a client marker, optional +91 phone normalization, truthful failure when password-reset email delivery is unconfigured, malformed printer-profile rejection, hostile page-range and quote-size bounds, and platform audit-log response fields/limit validation.
+- `npm test` — 237 passed, 0 failed: database 14, shared 15, agent 14, server 194. New coverage includes membership revocation migration and immediate permission invalidation, persisted shop staff edits/revocation, dispatch-ack gating and lost-response recovery, customer-field enforcement without a client marker, optional +91 phone normalization, truthful failure when password-reset email delivery is unconfigured, malformed printer-profile rejection, hostile page-range and quote-size bounds, platform audit-log response fields/limit validation, and malformed customer request handling.
 - `npm audit --audit-level=high` — attempted twice; both requests to the npm advisory endpoint timed out, so no current audit result is available.
 - `npm run lint` — no root lint script is currently configured.
 
@@ -16,6 +16,8 @@ The current change set also locks print-file lifecycle rows while creating order
 Migration v19 adds revocable shop memberships. Owners can change a staff member's preset/custom grants or revoke/reactivate that shop membership; the operation is tenant-scoped, audited, and takes effect on existing sessions. Customer order requirements are now enforced from persisted shop policy on every public order request, independent of client markers; Indian numbers with optional `+91` are accepted. Agent tickets remain ineligible for local spooler execution until the server acknowledges the dispatch; local acknowledgment state is durable and retries recover committed acknowledgments whose HTTP response was lost. Password recovery remains unavailable until an email delivery provider is configured, and the API now reports that instead of claiming a link was sent.
 
 Merchant printer registration now validates capability profiles and does not trust client claims about IDs or live status. The shared quote engine bounds page expansion, files, copies, and total Paise; rejects malformed page ranges and invalid monetary rules. Platform audit-log display/export matches the API response fields and applies a bounded limit; historical cursor pagination is still not implemented.
+
+Public quote, upload, and order endpoints now return HTTP 400 for null or structurally invalid bodies, and malformed JSON no longer becomes a generic server error. Staff revocation audit coverage now selects the intended event deterministically when multiple events share the same timestamp.
 
 Marketing pages and authenticated portals load on demand; PDF preview code loads only when a customer previews a PDF. The initial JavaScript payload dropped from 1,201.35 kB to 215.46 kB minified. The web build passes, but visual browser testing remains unavailable in this environment.
 
@@ -35,7 +37,7 @@ WhatsApp Cloud API onboarding and message delivery are unavailable. The merchant
 
 ## Deployment and integration limits
 
-- GitHub `main` contains commit `0b02d2a`; Vercel reports successful deployment for that commit. The current printer-profile, quote-bound, and audit-log changes remain local pending the next push. Render still responds without a `revision` and serves a seven-path OpenAPI document, while current source documents a broader API. No Render CLI, API credential, MCP deployment tool, or browser dashboard session is available here, and the last supplied startup log lacked required private-storage configuration.
+- GitHub `main` contains code commits through `b6ccef9`; Vercel reports successful deployment for `aa3d8a7` and skips server-only `b6ccef9` as frontend-unaffected. Render still responds without a `revision` and serves a seven-path OpenAPI document, while current source documents a broader API. No Render CLI, API credential, MCP deployment tool, or browser dashboard session is available here, and the last supplied startup log lacked required private-storage configuration.
 - The latest Render log connected to Supabase PostgreSQL and then exited because Supabase Storage settings are missing or invalid. The current source reports the specific invalid settings; the supplied deployed log has an older generic error, so its revision is unverified.
 - Supabase Storage tests mock the HTTP API. Live bucket permissions and file retention have not been verified against the production project.
 - Razorpay tests use test doubles; a live sandbox checkout/webhook round trip has not been verified here.
