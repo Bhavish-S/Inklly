@@ -27,7 +27,7 @@ WhatsApp Cloud API onboarding and message delivery are unavailable. The merchant
 
 ## Deployment and integration limits
 
-- Commit `a93b83a` (inactive-shop authorization) is pushed. The invoice-only billing backend and UI changes in the current workspace are not pushed; Vercel serves the previous frontend bundle. Render still responds with the old seven-path API and no `revision`; anonymous `/api/v1/developer/keys` returns HTTP 200. `/api/v1/portal/shop/campus1` previously returned HTTP 404; customer tenant availability remains unverified.
+- Commit `70eca07` (invoice-only billing) is pushed. Vercel still serves the previous frontend bundle; Render responds with the old seven-path API and no `revision`, and anonymous `/api/v1/developer/keys` returns HTTP 200. `/api/v1/portal/shop/campus1` previously returned HTTP 404; customer tenant availability remains unverified. Deployment was not triggered because no Render deployment control is available here and the last supplied startup log lacked required private-storage configuration.
 - The latest Render log connected to Supabase PostgreSQL and then exited because Supabase Storage settings are missing or invalid. The current source reports the specific invalid settings; the supplied deployed log has an older generic error, so its revision is unverified.
 - Supabase Storage tests mock the HTTP API. Live bucket permissions and file retention have not been verified against the production project.
 - Razorpay tests use test doubles; a live sandbox checkout/webhook round trip has not been verified here.

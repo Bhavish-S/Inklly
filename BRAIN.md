@@ -55,7 +55,7 @@ Implemented locally with regression coverage:
 - Refund requests reserve the remaining verified payment balance. A merchant can reject a pending request with an audited reason and no money movement; approval remains unavailable until provider refund processing is configured.
 - Agent local status endpoints are read-only and host/origin validated. Physical printing remains disabled by default; the production installer is unavailable.
 
-Latest verified local run on 2026-10-29: `npm run build` passed and `npm test` passed 215 tests after the invoice-only pilot billing slice. `npm audit --audit-level=high` could not reach the npm advisory endpoint on two earlier attempts. Commit `a93b83a` is pushed; the invoice slice is local and unpushed. Vercel and Render deployment of the new UI/API remain unverified; Render was still serving an older seven-path API on the last live check. Live PostgreSQL migrations/triggers, object storage, provider, webhook destinations, browser, and hardware behavior remain unverified.
+Latest verified local run on 2026-10-29: `npm run build` passed and `npm test` passed 215 tests after the invoice-only pilot billing slice. `npm audit --audit-level=high` could not reach the npm advisory endpoint on two earlier attempts. Commit `70eca07` is pushed. Vercel still serves the previous JavaScript bundle; Render still serves an older seven-path API without a revision, and unauthenticated `/api/v1/developer/keys` returns HTTP 200. No deployment control is available in this environment. Live PostgreSQL migrations/triggers, object storage, provider, webhook destinations, browser, and hardware behavior remain unverified.
 
 ## Known incomplete product areas
 

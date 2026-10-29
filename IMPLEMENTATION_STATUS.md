@@ -27,7 +27,7 @@ Use `BUILD_AND_TEST_RESULTS.md` for the latest executed checks and `REMAINING_IS
 
 ## Incomplete or unverified
 
-- The local working tree includes invoice-only pilot billing with regression coverage. Commit `a93b83a` (inactive-shop authorization) is pushed, but the billing backend and UI changes are not. Vercel still serves the previous bundle. Render still serves an older API: live health omits `revision`, its OpenAPI document has seven paths, and anonymous `/api/v1/developer/keys` returns HTTP 200.
+- Invoice-only pilot billing with regression coverage is pushed in commit `70eca07`. Neither host has deployed it yet: Vercel serves the previous bundle, and Render health omits `revision`, its OpenAPI document has seven paths, and anonymous `/api/v1/developer/keys` returns HTTP 200.
 - PostgreSQL migration/startup against the live production project and Supabase private bucket behavior remain unverified.
 - Razorpay sandbox checkout and webhook round trip, refunds/reconciliation against provider statements, recurring subscription checkout/collection, tax calculation, and quota enforcement are not verified or fully implemented. Invoice-only hybrid billing is locally implemented; it does not collect money.
 - Database migrations now install append-only ledger triggers and a unique provider-transaction index; local SQLite tests cover immutability, compensating entries, and duplicate rejection. Live Supabase migration, pre-existing duplicate review, role/owner bypass protection, and complete reconciliation remain open.
