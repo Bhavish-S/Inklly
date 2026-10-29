@@ -4,8 +4,8 @@
 
 ## Current local verification
 
-- `npm run build` — passed for database, shared, desktop agent, server, and web workspaces using Vite 6.4.5. After route-level code splitting, the initial JavaScript bundle is 215.71 kB minified (61.06 kB gzip); PDF rendering is isolated in a 483.94 kB chunk. Vite reports no oversized JavaScript chunk.
-- `npm test` — 241 passed, 0 failed: database 15, shared 15, agent 14, server 197. New coverage includes membership revocation migration and immediate permission invalidation, persisted shop staff edits/revocation, dispatch-ack gating and lost-response recovery, customer-field enforcement without a client marker, optional +91 phone normalization, truthful failure when password-reset email delivery is unconfigured, malformed printer-profile rejection, hostile page-range and quote-size bounds, complete stable audit-log pagination, malformed customer request handling, and shared upload-rate migration/enforcement.
+- `npm run build` — passed for database, shared, desktop agent, server, and web workspaces using Vite 6.4.5. The initial JavaScript bundle is 215.91 kB minified (61.11 kB gzip); PDF rendering is isolated in a 483.94 kB lazy-loaded chunk. Vite reports no oversized JavaScript chunk.
+- `npm test` — 242 passed, 0 failed: database 15, shared 15, agent 14, server 198. New coverage includes membership revocation migration and immediate permission invalidation, persisted shop staff edits/revocation, dispatch-ack gating and lost-response recovery, customer-field enforcement without a client marker, optional +91 phone normalization, truthful failure when password-reset email delivery is unconfigured, malformed printer-profile rejection, hostile page-range and quote-size bounds, complete stable audit-log pagination, per-file instruction validation and persistence, malformed customer request handling, and shared upload-rate migration/enforcement.
 - `npm audit --audit-level=high` — attempted twice; both requests to the npm advisory endpoint timed out, so no current audit result is available.
 - `npm run lint` — no root lint script is currently configured.
 
@@ -18,6 +18,8 @@ Migration v19 adds revocable shop memberships. Owners can change a staff member'
 Merchant printer registration now validates capability profiles and does not trust client claims about IDs or live status. The shared quote engine bounds page expansion, files, copies, and total Paise; rejects malformed page ranges and invalid monetary rules. Platform audit logs have stable timestamp/ID cursor pagination, a load-more control, and a full-history CSV export that escapes spreadsheet formulas.
 
 Public quote, upload, and order endpoints now return HTTP 400 for null or structurally invalid bodies, and malformed JSON no longer becomes a generic server error. Staff revocation audit coverage now selects the intended event deterministically when multiple events share the same timestamp.
+
+Per-file customer instructions now pass through order submission, are capped at 500 characters by the server, persist with the file's print options, and appear in the merchant's order queue. The customer PDF preview uses the real uploaded file; optional crop/rotation/filter controls are labeled preview-only because they do not transform the stored print file.
 
 Migration v20 adds persistent upload-rate buckets. Customer document uploads now enforce shared atomic per-IP minute and UTC-day quotas before parsing large bodies; HMAC-derived keys avoid storing client IP addresses, and the limiter fails closed if its database counter cannot be updated. Concurrent simulated middleware instances share counters in regression tests. Merchant vault uploads remain authenticated and use the per-process concurrency guard.
 
@@ -39,7 +41,7 @@ WhatsApp Cloud API onboarding and message delivery are unavailable. The merchant
 
 ## Deployment and integration limits
 
-- GitHub `main` contains code through `dc219dc`; `https://inklly.vercel.app/` responds HTTP 200. Render health responds HTTP 200 but omits `revision`, and its live OpenAPI document still contains only seven paths while current source documents more. No Render CLI, API credential, MCP deployment tool, or browser dashboard session is available here, so the backend deployment cannot be triggered or verified from this environment. The last supplied startup log lacked required private-storage configuration.
+- GitHub `main` contains code through `dc219dc`; the current tested changes are pending push. `https://inklly.vercel.app/` responds HTTP 200. Render health responds HTTP 200 but omits `revision`, and its live OpenAPI document still contains only seven paths while current source documents more. No Render CLI, API credential, MCP deployment tool, or browser dashboard session is available here, so the backend deployment cannot be triggered or verified from this environment. The last supplied startup log lacked required private-storage configuration.
 - The latest Render log connected to Supabase PostgreSQL and then exited because Supabase Storage settings are missing or invalid. The current source reports the specific invalid settings; the supplied deployed log has an older generic error, so its revision is unverified.
 - Supabase Storage tests mock the HTTP API. Live bucket permissions and file retention have not been verified against the production project.
 - Razorpay tests use test doubles; a live sandbox checkout/webhook round trip has not been verified here.

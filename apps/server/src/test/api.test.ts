@@ -257,6 +257,20 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.match((await res.json() as any).error, /page count must be between 1 and 50000/i);
   });
 
+  it('rejects oversized per-file customer instructions', async () => {
+    const res = await fetch(`${baseUrl}/api/v1/portal/quote`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopId: 'shop-campus-1',
+        files: [{ fileName: 'notes.pdf', pageCount: 1, options: {
+          colorMode: 'bw', duplexMode: 'simplex', paperSize: 'A4', copies: 1, note: 'x'.repeat(501),
+        } }],
+      }),
+    });
+    assert.equal(res.status, 422);
+    assert.match((await res.json() as any).error, /instructions must be 500 characters or fewer/i);
+  });
+
   it('Submits order and queries order status via public portal', async () => {
     const uploadRes = await fetch(`${baseUrl}/api/v1/portal/upload`, {
       method: 'POST',
@@ -292,6 +306,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
             paperSize: 'A4',
             orientation: 'portrait',
             copies: 1,
+            note: 'Staple top-left corner',
             fitMode: 'fit',
             pagesPerSheet: 1,
             collation: true,
@@ -312,6 +327,8 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     cashOrderId = orderData.orderId;
     assert.ok(orderData.orderId);
     assert.equal(orderData.status, 'AWAITING_REVIEW');
+    const persistedPrintOptions = JSON.parse(db.queryOne<any>(`SELECT print_options FROM order_files WHERE order_id = ?`, [cashOrderId]).print_options);
+    assert.equal(persistedPrintOptions.note, 'Staple top-left corner', 'per-file customer instructions must reach the merchant order record');
     const persistedSnapshot = db.queryOne<any>(`SELECT pricing_snapshot FROM orders WHERE id = ?`, [cashOrderId]);
     assert.ok(persistedSnapshot?.pricing_snapshot);
     const pricingSnapshot = JSON.parse(persistedSnapshot.pricing_snapshot);

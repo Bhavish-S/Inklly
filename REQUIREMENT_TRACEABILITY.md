@@ -19,7 +19,7 @@ This table records what the current source and local tests prove. A working code
 | WhatsApp | Setup and pairing fail closed and do not claim a live connection. | Meta onboarding, secure account lifecycle, inbound webhooks, consent handling, and outbound delivery are not implemented. |
 | Developer APIs and webhooks | Shop-bound developer keys are gated off by default; webhook events use a transactional outbox, signed payloads, public-address checks, bounded retry and tenant-scoped history. | External access governance, production receiver delivery, live PostgreSQL behavior and replay controls need verification. |
 | Upload abuse controls | Customer uploads have atomic DB-backed per-IP minute/day limits shared across server instances, HMAC-hashed address keys, pre-parser enforcement and fail-closed behavior. | Limits for other public routes and production load/WAF validation remain open; the merchant vault currently relies on authorization and per-process concurrency limits. |
-| Local checks | `npm run build` passes all workspaces. `npm test` passes 241 tests (DB 15, shared 15, agent 14, server 197). | `npm audit --audit-level=high` timed out at the npm advisory endpoint; lint and browser visual/E2E checks are not configured. |
+| Local checks | `npm run build` passes all workspaces. `npm test` passes 242 tests (DB 15, shared 15, agent 14, server 198). | `npm audit --audit-level=high` timed out at the npm advisory endpoint; lint and browser visual/E2E checks are not configured. |
 
 ## Deployment blocker from current Render logs
 

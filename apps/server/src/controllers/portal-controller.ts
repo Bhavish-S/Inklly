@@ -361,6 +361,7 @@ export class PortalController {
     const { allowedOptions } = settings;
     for (const file of files) {
       const options = file?.options || {};
+      if (options.note !== undefined && (typeof options.note !== 'string' || options.note.length > 500)) return 'Special instructions must be 500 characters or fewer.';
       if (!allowedOptions.colorModes.includes(options.colorMode) || (options.colorMode === 'mixed' && (!allowedOptions.colorModes.includes('bw') || !allowedOptions.colorModes.includes('color')))) return 'This color mode is no longer offered by the shop. Update your print settings.';
       if (!allowedOptions.duplexModes.includes(options.duplexMode)) return 'This print style is no longer offered by the shop. Update your print settings.';
       if (!allowedOptions.paperSizes.includes(options.paperSize)) return 'This paper size is no longer offered by the shop. Update your print settings.';

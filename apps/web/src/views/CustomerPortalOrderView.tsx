@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { lazy, Suspense, useState, useEffect, useRef } from 'react';
 import { api } from '../api/client';
 import { DocumentViewer } from '../components/DocumentViewer';
 import {
@@ -20,6 +20,8 @@ import {
   CameraIcon,
   MessageSquareIcon,
 } from '../components/icons';
+
+const PdfPageRenderer = lazy(() => import('../components/PdfPageRenderer').then((module) => ({ default: module.PdfPageRenderer })));
 
 declare global {
   interface Window { Razorpay?: new (options: any) => any; }
@@ -244,6 +246,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const activeDoc = documents[activeDocIndex] || documents[0];
+  const activeDocIsImage = Boolean(activeDoc?.file?.type?.startsWith('image/') || /\.(jpg|jpeg|png|webp|bmp|gif|svg)$/i.test(activeDoc?.fileName || ''));
 
   // Upload every source or generated sheet through the same private server path.
   const handleFileSelect = async (
@@ -686,11 +689,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
       });
     };
 
-    const isImageFile =
-      activeDoc?.file?.type?.startsWith('image/') ||
-      /\.(jpg|jpeg|png|webp|bmp|gif|svg)$/i.test(activeDoc?.fileName || '');
-
-    if (isImageFile && (activeDoc?.previewUrl || activeDoc?.fileUrl)) {
+    if (activeDocIsImage && (activeDoc?.previewUrl || activeDoc?.fileUrl)) {
       const img = new Image();
       img.onload = () => {
         if (!canvasRef.current) return;
@@ -721,61 +720,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
       return;
     }
 
-    // For PDF / Document files: Render clean real document representation
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    ctx.save();
-    ctx.translate(canvas.width / 2, canvas.height / 2);
-    ctx.rotate((editorRotation * Math.PI) / 180);
-    ctx.translate(-canvas.width / 2, -canvas.height / 2);
-    ctx.filter = filterString;
-
-    // Document header badge
-    ctx.fillStyle = '#4D64E6';
-    ctx.fillRect(30, 30, 110, 26);
-    ctx.fillStyle = '#FFFFFF';
-    ctx.font = 'bold 12px Inter, sans-serif';
-    ctx.fillText(`${activeDoc?.pageCount || 1} PAGE DOCUMENT`, 38, 47);
-
-    // Real document file title
-    ctx.fillStyle = '#0F172A';
-    ctx.font = 'bold 18px Inter, sans-serif';
-    const rawTitle = activeDoc?.fileName || 'Document Preview';
-    const displayTitle = rawTitle.length > 28 ? `${rawTitle.substring(0, 25)}...` : rawTitle;
-    ctx.fillText(displayTitle, 30, 85);
-
-    // Print specifications subtitle
-    ctx.fillStyle = '#64748B';
-    ctx.font = '12px Inter, sans-serif';
-    const colorLabel = activeDoc?.options?.colorMode === 'color' ? 'Full Colour' : 'B&W Monochrome';
-    const sidesLabel = activeDoc?.options?.duplexMode === 'duplex_auto' ? 'Two-Sided (Duplex)' : 'Single-Sided';
-    ctx.fillText(`${activeDoc?.options?.paperSize || 'A4'} • ${colorLabel} • ${sidesLabel}`, 30, 108);
-
-    // Realistic document layout lines
-    ctx.strokeStyle = '#E2E8F0';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(30, 125);
-    ctx.lineTo(410, 125);
-    ctx.stroke();
-
-    ctx.fillStyle = '#E2E8F0';
-    for (let y = 145; y < 490; y += 18) {
-      const lineWidth = y % 54 === 0 ? 240 : (y % 36 === 0 ? 320 : 380);
-      ctx.fillRect(30, y, lineWidth, 8);
-    }
-
-    // Document footer with page indicator
-    ctx.fillStyle = '#94A3B8';
-    ctx.font = 'bold 11px Inter, sans-serif';
-    ctx.fillText(`Page 1 of ${activeDoc?.pageCount || 1}`, 30, 530);
-    ctx.fillText(`${activeDoc?.fileSizeText || ''}`, 330, 530);
-
-    ctx.restore();
-    drawCropOverlay();
-  }, [editorOpen, editorRotation, editorFilter, editorBrightness, editorContrast, editorCrop, activeDoc]);
+  }, [editorOpen, editorRotation, editorFilter, editorBrightness, editorContrast, editorCrop, activeDoc, activeDocIsImage]);
 
   // Submit only with a fresh server quote; the server rechecks the amount against its current rates.
   const handlePlaceOrder = async () => {
@@ -823,6 +768,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
               orientation: document.options.orientation,
               pageRange: document.options.pageRange,
               copies: document.options.copies * globalCopies,
+              note: document.note?.trim() || '',
               fitMode: 'fit',
               pagesPerSheet: 1,
               collation: true,
@@ -1784,6 +1730,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                     </label>
                     <input
                       type="text"
+                      maxLength={500}
                       value={activeDoc.note || ''}
                       onChange={(e) => {
                         const noteVal = e.target.value;
@@ -2232,7 +2179,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
               <div className="flex items-center gap-2">
                 <CropIcon size={18} className="text-emerald-400" />
                 <span className="text-white font-bold text-sm">
-                  Document Editor — {activeDoc?.fileName}
+                  Preview adjustments — {activeDoc?.fileName}
                 </span>
                 <span className="text-xs text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full">
                   Page 1 of {activeDoc?.pageCount}
@@ -2249,16 +2196,20 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
 
             {/* Modal Content: Canvas & Control Palette */}
             <div className="flex-1 overflow-y-auto p-4 flex flex-col md:flex-row gap-4 items-center justify-center bg-slate-950">
-              {/* Left: Canvas Area */}
+              {/* Left: Rendered file preview */}
               <div className="relative bg-slate-900 rounded-xl overflow-hidden flex items-center justify-center p-2 border border-slate-800 shadow-inner">
-                <canvas
-                  ref={canvasRef}
-                  className="rounded shadow max-h-[460px] max-w-full object-contain cursor-crosshair"
-                />
+                {activeDocIsImage ? (
+                  <canvas ref={canvasRef} className="rounded shadow max-h-[460px] max-w-full object-contain cursor-crosshair" />
+                ) : activeDoc?.previewUrl || activeDoc?.fileUrl ? (
+                  <div className="h-[460px] w-[340px] max-w-full"><Suspense fallback={<div className="p-8 text-center text-sm text-slate-300" role="status">Loading PDF preview…</div>}><PdfPageRenderer fileUrl={activeDoc.previewUrl || activeDoc.fileUrl!} currentPage={1} rotation={editorRotation} /></Suspense></div>
+                ) : <p className="p-8 text-center text-sm text-slate-300">A local preview is unavailable for this file.</p>}
               </div>
 
               {/* Right: Controls Panel */}
               <div className="w-full md:w-80 bg-slate-900 border border-slate-800 rounded-xl p-4 text-xs space-y-4">
+                <p className="rounded-lg border border-amber-700/60 bg-amber-950/50 p-3 text-[11px] leading-relaxed text-amber-100">
+                  Preview only: rotation, crop, filters, brightness, and contrast are not applied to the file sent to the shop. Use Print Settings for options that affect the order.
+                </p>
                 {/* Crop & Orientation */}
                 <div>
                   <div className="text-slate-400 font-semibold uppercase tracking-wider text-[10px] mb-2">
@@ -2421,7 +2372,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                   className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg shadow-md flex items-center gap-1.5"
                 >
                   <CheckIcon size={14} />
-                  ✓ Use Document
+                  Save preview settings
                 </button>
               </div>
             </div>

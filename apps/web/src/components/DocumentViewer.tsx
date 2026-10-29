@@ -100,7 +100,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
             <div className="text-xs font-bold text-slate-900 truncate w-full mb-1">{fileName}</div>
             <div className="text-[11px] text-slate-500 mb-2">{pageCount} page(s) ready to print</div>
             <div className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-bold text-[10px] border border-emerald-200">
-              Verified Spool Format
+              Ready for shop review
             </div>
           </div>
         )}
