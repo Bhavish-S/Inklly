@@ -3,7 +3,9 @@ import { api } from '../api/client';
 import { ShieldIcon, SearchIcon, DownloadIcon, CheckCircleIcon, PrinterIcon, UsersIcon, FileTextIcon, SlidersIcon } from '../components/icons';
 
 type AdminTab = 'overview' | 'merchants' | 'enquiries' | 'builds' | 'plans' | 'ledger' | 'agents' | 'incidents' | 'retention' | 'audit' | 'access' | 'config';
-const PLATFORM_PERMISSION_OPTIONS = ['platform:view', 'platform:manage', 'support:view', 'finance:view', 'security:audit', 'billing:view', 'billing:manage'];
+const PLATFORM_PERMISSION_OPTIONS = ['platform:view', 'platform:manage', 'support:view', 'support:manage', 'finance:view', 'security:audit', 'billing:view', 'billing:manage'];
+const INCIDENT_STATUSES = ['OPEN', 'INVESTIGATING', 'RESOLVED', 'CLOSED'] as const;
+const INCIDENT_SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const;
 
 export interface PlatformAdminProps {
   onNavigate?: (path: string) => void;
@@ -28,6 +30,18 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
   const [auditLoadingMore, setAuditLoadingMore] = useState(false);
   const [auditExporting, setAuditExporting] = useState(false);
   const [enquiries, setEnquiries] = useState<any[]>([]);
+  const [incidents, setIncidents] = useState<any[]>([]);
+  const [incidentNextCursor, setIncidentNextCursor] = useState<string | null>(null);
+  const [incidentLoading, setIncidentLoading] = useState(false);
+  const [incidentLoadingMore, setIncidentLoadingMore] = useState(false);
+  const [incidentError, setIncidentError] = useState('');
+  const [incidentStatusFilter, setIncidentStatusFilter] = useState('ALL');
+  const [incidentSeverityFilter, setIncidentSeverityFilter] = useState('ALL');
+  const [incidentAssignees, setIncidentAssignees] = useState<any[]>([]);
+  const [incidentCreateBusy, setIncidentCreateBusy] = useState(false);
+  const [incidentSavingId, setIncidentSavingId] = useState<string | null>(null);
+  const [incidentDrafts, setIncidentDrafts] = useState<Record<string, { status: string; severity: string; assignedToUserId: string; resolutionNotes: string }>>({});
+  const [incidentForm, setIncidentForm] = useState({ title: '', description: '', severity: 'MEDIUM', organizationId: '', shopId: '', orderId: '', agentId: '', assignedToUserId: '' });
   const [selectedDomain, setSelectedDomain] = useState<string>('ALL');
   const [merchantSearchQuery, setMerchantSearchQuery] = useState<string>('');
   const [merchantStatusFilter, setMerchantStatusFilter] = useState<string>('ALL');
@@ -70,6 +84,87 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
   };
 
   const hasPlatformPermission = (permission: string) => isPlatformOwner || currentPermissions.includes('*') || currentPermissions.includes(permission);
+  const canManageIncidents = hasPlatformPermission('support:manage');
+
+  const refreshIncidents = async () => {
+    setIncidentLoading(true);
+    setIncidentError('');
+    try {
+      const page = await api.getPlatformIncidents(undefined, 50, { status: incidentStatusFilter, severity: incidentSeverityFilter });
+      const rows = Array.isArray(page.incidents) ? page.incidents : [];
+      setIncidents(rows);
+      setIncidentNextCursor(typeof page.nextCursor === 'string' ? page.nextCursor : null);
+      setIncidentDrafts(Object.fromEntries(rows.map((incident: any) => [incident.id, {
+        status: incident.status, severity: incident.severity, assignedToUserId: incident.assignedToUserId || '', resolutionNotes: incident.resolutionNotes || '',
+      }])));
+    } catch (error) {
+      setIncidentError(error instanceof Error ? error.message : 'Could not load incidents.');
+    } finally {
+      setIncidentLoading(false);
+    }
+  };
+
+  const loadMoreIncidents = async () => {
+    if (!incidentNextCursor || incidentLoadingMore) return;
+    setIncidentLoadingMore(true);
+    setIncidentError('');
+    try {
+      const page = await api.getPlatformIncidents(incidentNextCursor, 50, { status: incidentStatusFilter, severity: incidentSeverityFilter });
+      const rows = Array.isArray(page.incidents) ? page.incidents : [];
+      setIncidents((current) => [...current, ...rows.filter((row: any) => !current.some((item) => item.id === row.id))]);
+      setIncidentNextCursor(typeof page.nextCursor === 'string' ? page.nextCursor : null);
+      setIncidentDrafts((current) => ({
+        ...current,
+        ...Object.fromEntries(rows.map((incident: any) => [incident.id, {
+          status: incident.status, severity: incident.severity, assignedToUserId: incident.assignedToUserId || '',
+          resolutionNotes: incident.resolutionNotes || '',
+        }])),
+      }));
+    } catch (error) {
+      setIncidentError(error instanceof Error ? error.message : 'Could not load older incidents.');
+    } finally {
+      setIncidentLoadingMore(false);
+    }
+  };
+
+  const createIncident = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setIncidentCreateBusy(true);
+    setIncidentError('');
+    try {
+      const payload = Object.fromEntries(Object.entries(incidentForm).filter(([key, value]) => key === 'severity' || value.trim()));
+      await api.createPlatformIncident(payload);
+      await refreshIncidents();
+      setIncidentForm({ title: '', description: '', severity: 'MEDIUM', organizationId: '', shopId: '', orderId: '', agentId: '', assignedToUserId: '' });
+      showToast('Incident created and audit logged.');
+    } catch (error) {
+      setIncidentError(error instanceof Error ? error.message : 'Could not create incident.');
+    } finally {
+      setIncidentCreateBusy(false);
+    }
+  };
+
+  const saveIncident = async (incidentId: string) => {
+    const draft = incidentDrafts[incidentId];
+    if (!draft) return;
+    if (['RESOLVED', 'CLOSED'].includes(draft.status) && !draft.resolutionNotes.trim()) {
+      setIncidentError('Add resolution notes before resolving or closing an incident.');
+      return;
+    }
+    setIncidentSavingId(incidentId);
+    setIncidentError('');
+    try {
+      await api.updatePlatformIncident(incidentId, {
+        status: draft.status, severity: draft.severity, assignedToUserId: draft.assignedToUserId || null, resolutionNotes: draft.resolutionNotes.trim(),
+      });
+      await refreshIncidents();
+      showToast('Incident updated and audit logged.');
+    } catch (error) {
+      setIncidentError(error instanceof Error ? error.message : 'Could not update incident.');
+    } finally {
+      setIncidentSavingId(null);
+    }
+  };
 
   useEffect(() => {
     if (isPlatformOwner) return;
@@ -88,10 +183,25 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
   }, [selectedDomain, platformAccessReady, currentPermissions.join('|')]);
 
   useEffect(() => {
+    if (platformAccessReady && (hasPlatformPermission('support:view') || hasPlatformPermission('support:manage'))) void refreshIncidents();
+  }, [platformAccessReady, currentPermissions.join('|'), incidentStatusFilter, incidentSeverityFilter]);
+
+  useEffect(() => {
+    if (!platformAccessReady || activeTab !== 'incidents' || !hasPlatformPermission('support:manage')) return;
+    let cancelled = false;
+    api.getPlatformIncidentAssignees().then((result: any) => {
+      if (!cancelled) setIncidentAssignees(Array.isArray(result.assignees) ? result.assignees : []);
+    }).catch((error: unknown) => {
+      if (!cancelled) setIncidentError(error instanceof Error ? error.message : 'Could not load incident assignees.');
+    });
+    return () => { cancelled = true; };
+  }, [activeTab, platformAccessReady, currentPermissions.join('|')]);
+
+  useEffect(() => {
     if (!platformAccessReady || isPlatformOwner || hasPlatformPermission('platform:view')) return;
     const firstAvailableTab: AdminTab | null = hasPlatformPermission('finance:view') ? 'ledger'
       : hasPlatformPermission('security:audit') ? 'audit'
-        : hasPlatformPermission('support:view') ? 'enquiries' : null;
+        : (hasPlatformPermission('support:view') || hasPlatformPermission('support:manage')) ? 'incidents' : null;
     if (firstAvailableTab) setActiveTab(firstAvailableTab);
   }, [platformAccessReady, isPlatformOwner, currentPermissions.join('|')]);
 
@@ -503,11 +613,11 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
             { id: 'merchants', label: '🏪 Merchants Directory' },
             { id: 'builds', label: '📦 Windows Agent Builds' },
             { id: 'agents', label: '🖨️ Edge Agents Fleet' },
-            { id: 'incidents', label: '🚨 Incident Response' },
             { id: 'retention', label: '🧹 Storage & Retention' },
           ] : []),
           ...(hasPlatformPermission('platform:view') && hasPlatformPermission('billing:view') ? [{ id: 'plans', label: '💎 Plans & Quotas' }] : []),
           ...(hasPlatformPermission('support:view') ? [{ id: 'enquiries', label: '✉️ Website Enquiries' }] : []),
+          ...((hasPlatformPermission('support:view') || hasPlatformPermission('support:manage')) ? [{ id: 'incidents', label: '🚨 Incident Response' }] : []),
           ...(hasPlatformPermission('finance:view') ? [{ id: 'ledger', label: '📒 Financial Ledger' }] : []),
           ...(hasPlatformPermission('security:audit') ? [{ id: 'audit', label: '🛡️ Audit Logs' }] : []),
           ...(isPlatformOwner ? [{ id: 'access', label: '🔐 Platform Access' }] : []),
@@ -1080,9 +1190,87 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
           TAB 6: INCIDENTS
       ═══════════════════════════════════════════════════════════════ */}
       {activeTab === 'incidents' && (
-        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100" role="status">
-          <h2 className="text-base font-extrabold">Incident management is not configured</h2>
-          <p className="mt-2 max-w-3xl text-sm leading-6">Inklly does not yet have a persistent incident intake, assignment, or resolution workflow. Agent and printer heartbeat data is available in Fleet; it is not an incident queue.</p>
+        <section className="space-y-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">Operational incidents</h2>
+              <p className="mt-1 max-w-3xl text-sm text-slate-500 dark:text-slate-400">Track customer-impacting and platform issues, assign an owner, and keep status changes in the privileged audit log. Fleet heartbeat data remains separate from incident records.</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <select aria-label="Filter incidents by status" value={incidentStatusFilter} onChange={(event) => setIncidentStatusFilter(event.target.value)} className="min-h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="ALL">All statuses</option>{INCIDENT_STATUSES.map((status) => <option key={status}>{status}</option>)}</select>
+              <select aria-label="Filter incidents by severity" value={incidentSeverityFilter} onChange={(event) => setIncidentSeverityFilter(event.target.value)} className="min-h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="ALL">All severities</option>{INCIDENT_SEVERITIES.map((severity) => <option key={severity}>{severity}</option>)}</select>
+              <button type="button" onClick={() => void refreshIncidents()} disabled={incidentLoading} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">{incidentLoading ? 'Refreshing…' : 'Refresh incidents'}</button>
+            </div>
+          </div>
+
+          {incidentError && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200" role="alert">{incidentError}</div>}
+
+          {canManageIncidents && (
+            <form onSubmit={(event) => void createIncident(event)} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900">
+              <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">Create incident</h3>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <label className="text-xs font-bold text-slate-600 dark:text-slate-300">Title
+                  <input required maxLength={180} value={incidentForm.title} onChange={(event) => setIncidentForm((current) => ({ ...current, title: event.target.value }))} className="mt-1.5 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-normal text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white" placeholder="Short, actionable summary" />
+                </label>
+                <label className="text-xs font-bold text-slate-600 dark:text-slate-300">Severity
+                  <select value={incidentForm.severity} onChange={(event) => setIncidentForm((current) => ({ ...current, severity: event.target.value }))} className="mt-1.5 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-white">{INCIDENT_SEVERITIES.map((severity) => <option key={severity}>{severity}</option>)}</select>
+                </label>
+                <label className="text-xs font-bold text-slate-600 dark:text-slate-300 md:col-span-2">Details
+                  <textarea required minLength={10} maxLength={4000} rows={3} value={incidentForm.description} onChange={(event) => setIncidentForm((current) => ({ ...current, description: event.target.value }))} className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-normal text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white" placeholder="Describe impact, observed behavior, and steps already taken." />
+                </label>
+                <label className="text-xs font-bold text-slate-600 dark:text-slate-300">Organization ID (optional)
+                  <input maxLength={120} value={incidentForm.organizationId} onChange={(event) => setIncidentForm((current) => ({ ...current, organizationId: event.target.value }))} className="mt-1.5 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-normal text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+                </label>
+                <label className="text-xs font-bold text-slate-600 dark:text-slate-300">Shop ID (optional)
+                  <input maxLength={120} value={incidentForm.shopId} onChange={(event) => setIncidentForm((current) => ({ ...current, shopId: event.target.value }))} className="mt-1.5 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-normal text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+                </label>
+                <label className="text-xs font-bold text-slate-600 dark:text-slate-300">Order ID (optional)
+                  <input maxLength={160} value={incidentForm.orderId} onChange={(event) => setIncidentForm((current) => ({ ...current, orderId: event.target.value }))} className="mt-1.5 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-normal text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+                </label>
+                <label className="text-xs font-bold text-slate-600 dark:text-slate-300">Agent ID (optional)
+                  <input maxLength={160} value={incidentForm.agentId} onChange={(event) => setIncidentForm((current) => ({ ...current, agentId: event.target.value }))} className="mt-1.5 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-normal text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+                </label>
+                <label className="text-xs font-bold text-slate-600 dark:text-slate-300">Assign to (optional)
+                  <select value={incidentForm.assignedToUserId} onChange={(event) => setIncidentForm((current) => ({ ...current, assignedToUserId: event.target.value }))} className="mt-1.5 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="">Unassigned</option>{incidentAssignees.map((assignee) => <option key={assignee.id} value={assignee.id}>{assignee.fullName} · {assignee.email}</option>)}</select>
+                </label>
+              </div>
+              <button type="submit" disabled={incidentCreateBusy} className="mt-4 min-h-10 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-extrabold text-white hover:bg-indigo-700 disabled:opacity-50">{incidentCreateBusy ? 'Creating…' : 'Create incident'}</button>
+            </form>
+          )}
+
+          <div className="space-y-3">
+            {incidentLoading && incidents.length === 0 ? <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900">Loading incident history…</div>
+              : incidents.length === 0 ? <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900">No incidents have been recorded.</div>
+                : incidents.map((incident) => {
+                  const draft = incidentDrafts[incident.id] || { status: incident.status, severity: incident.severity, assignedToUserId: incident.assignedToUserId || '', resolutionNotes: incident.resolutionNotes || '' };
+                  return <article key={incident.id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-extrabold text-slate-900 dark:text-white">{incident.title}</h3><span className="rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700 dark:bg-rose-950/40 dark:text-rose-200">{incident.severity}</span><span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-200">{incident.status}</span></div>
+                        <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-600 dark:text-slate-300">{incident.description}</p>
+                        {incident.resolutionNotes && <p className="mt-2 whitespace-pre-wrap rounded-lg bg-emerald-50 p-3 text-xs leading-5 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100"><strong>Resolution:</strong> {incident.resolutionNotes}</p>}
+                        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500 dark:text-slate-400">
+                          <span>Created {new Date(incident.createdAt).toLocaleString()}</span>
+                          <span>Updated {new Date(incident.updatedAt).toLocaleString()}</span>
+                          {incident.organizationName && <span>Organization: {incident.organizationName}</span>}
+                          {incident.shopName && <span>Shop: {incident.shopName}</span>}
+                          {incident.orderId && <span>Order: {incident.orderNumber || incident.orderId}</span>}
+                          {incident.agentId && <span>Agent: {incident.agentHostname || incident.agentId}</span>}
+                          {incident.assigneeEmail && <span>Assigned to: {incident.assigneeName} · {incident.assigneeEmail}</span>}
+                        </div>
+                      </div>
+                      {canManageIncidents && <div className="grid min-w-48 gap-2 sm:grid-cols-3">
+                        <select aria-label={`Severity for ${incident.title}`} value={draft.severity} onChange={(event) => setIncidentDrafts((current) => ({ ...current, [incident.id]: { ...draft, severity: event.target.value } }))} className="min-h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white">{INCIDENT_SEVERITIES.map((severity) => <option key={severity}>{severity}</option>)}</select>
+                        <select aria-label={`Status for ${incident.title}`} value={draft.status} onChange={(event) => setIncidentDrafts((current) => ({ ...current, [incident.id]: { ...draft, status: event.target.value } }))} className="min-h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white">{INCIDENT_STATUSES.map((status) => <option key={status}>{status}</option>)}</select>
+                        <select aria-label={`Assignee for ${incident.title}`} value={draft.assignedToUserId} onChange={(event) => setIncidentDrafts((current) => ({ ...current, [incident.id]: { ...draft, assignedToUserId: event.target.value } }))} className="min-h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="">Unassigned</option>{incidentAssignees.map((assignee) => <option key={assignee.id} value={assignee.id}>{assignee.fullName}</option>)}</select>
+                        <textarea aria-label={`Resolution notes for ${incident.title}`} maxLength={4000} rows={2} value={draft.resolutionNotes} onChange={(event) => setIncidentDrafts((current) => ({ ...current, [incident.id]: { ...draft, resolutionNotes: event.target.value } }))} placeholder="Resolution notes (required to resolve/close)" className="min-h-16 rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white sm:col-span-3" />
+                        <button type="button" disabled={incidentSavingId === incident.id} onClick={() => void saveIncident(incident.id)} className="min-h-9 rounded-lg bg-indigo-600 px-3 text-xs font-bold text-white disabled:opacity-50 sm:col-span-3">{incidentSavingId === incident.id ? 'Saving…' : 'Save changes'}</button>
+                      </div>}
+                    </div>
+                  </article>;
+                })}
+          </div>
+          {incidentNextCursor && <div className="text-center"><button type="button" disabled={incidentLoadingMore} onClick={() => void loadMoreIncidents()} className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">{incidentLoadingMore ? 'Loading…' : 'Load older incidents'}</button></div>}
         </section>
       )}
 

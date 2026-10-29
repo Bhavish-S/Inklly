@@ -700,3 +700,27 @@ CREATE TABLE IF NOT EXISTS account_invitations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_account_invitations_expiry ON account_invitations(expires_at, accepted_at);
+
+CREATE TABLE IF NOT EXISTS platform_incidents (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL,
+    severity TEXT NOT NULL CHECK (severity IN ('CRITICAL', 'HIGH', 'MEDIUM', 'LOW')),
+    status TEXT NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN', 'INVESTIGATING', 'RESOLVED', 'CLOSED')),
+    organization_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
+    shop_id TEXT REFERENCES shops(id) ON DELETE SET NULL,
+    order_id TEXT REFERENCES orders(id) ON DELETE SET NULL,
+    agent_id TEXT REFERENCES agent_registrations(id) ON DELETE SET NULL,
+    assigned_to_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    resolution_notes TEXT,
+    created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    updated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    resolved_at TEXT,
+    closed_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_platform_incidents_created ON platform_incidents(created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_platform_incidents_status ON platform_incidents(status, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_platform_incidents_org ON platform_incidents(organization_id, created_at DESC, id DESC);

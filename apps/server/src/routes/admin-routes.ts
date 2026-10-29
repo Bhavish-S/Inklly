@@ -14,6 +14,11 @@ export function createAdminRoutes(db: DatabaseService, fileStorage: PrivateFileS
 
   router.use(authenticate(db));
   router.use(requireRole('PLATFORM_OWNER', 'PLATFORM_ADMIN'));
+  const requireSupportRead = (req: any, res: any, next: any) => {
+    const permissions: string[] = req.user?.permissions || [];
+    if (req.user?.role === 'PLATFORM_OWNER' || permissions.includes('support:view') || permissions.includes('support:manage')) return next();
+    return res.status(403).json({ error: 'Platform support:view or support:manage permission required.' });
+  };
 
   router.get('/admins', requireRole('PLATFORM_OWNER'), controller.listPlatformAdmins);
   router.put('/admins/:id/permissions', requireRole('PLATFORM_OWNER'), controller.updatePlatformAdminPermissions);
@@ -29,6 +34,10 @@ export function createAdminRoutes(db: DatabaseService, fileStorage: PrivateFileS
   router.get('/ledger', requirePermission('finance:view'), controller.getPlatformLedger);
   router.get('/audit-logs', requirePermission('security:audit'), controller.getAuditLogs);
   router.get('/enquiries', requirePermission('support:view'), controller.getEnquiries);
+  router.get('/incidents/assignees', requirePermission('support:manage'), controller.getIncidentAssignees);
+  router.get('/incidents', requireSupportRead, controller.getIncidents);
+  router.post('/incidents', requirePermission('support:manage'), controller.createIncident);
+  router.patch('/incidents/:id', requirePermission('support:manage'), controller.updateIncident);
 
   // Subscription management
   router.get('/subscriptions', requirePermission('billing:view'), controller.listSubscriptions);

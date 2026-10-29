@@ -47,6 +47,7 @@ export class DatabaseService {
       this.ensureSqliteShopPortalSettingsMigration();
       this.ensureSqliteMembershipLifecycleMigration();
       this.ensureSqlitePublicUploadRateLimitMigration();
+      this.ensureSqlitePlatformIncidentMigration();
     }
   }
 
@@ -161,6 +162,75 @@ export class DatabaseService {
     this.ensurePostgresShopPortalSettingsMigration();
     this.ensurePostgresMembershipLifecycleMigration();
     this.ensurePostgresPublicUploadRateLimitMigration();
+    this.ensurePostgresPlatformIncidentMigration();
+  }
+
+  private ensureSqlitePlatformIncidentMigration(): void {
+    if (this.db!.prepare(`SELECT version FROM inklly_schema_migrations WHERE version = 21`).get()) return;
+    this.db!.exec('BEGIN');
+    try {
+      this.db!.exec(`CREATE TABLE IF NOT EXISTS platform_incidents (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL,
+        severity TEXT NOT NULL CHECK (severity IN ('CRITICAL', 'HIGH', 'MEDIUM', 'LOW')),
+        status TEXT NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN', 'INVESTIGATING', 'RESOLVED', 'CLOSED')),
+        organization_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
+        shop_id TEXT REFERENCES shops(id) ON DELETE SET NULL,
+        order_id TEXT REFERENCES orders(id) ON DELETE SET NULL,
+        agent_id TEXT REFERENCES agent_registrations(id) ON DELETE SET NULL,
+        assigned_to_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        resolution_notes TEXT,
+        created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        updated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        resolved_at TEXT,
+        closed_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`);
+      this.db!.exec(`CREATE INDEX IF NOT EXISTS idx_platform_incidents_created ON platform_incidents(created_at DESC, id DESC)`);
+      this.db!.exec(`CREATE INDEX IF NOT EXISTS idx_platform_incidents_status ON platform_incidents(status, created_at DESC, id DESC)`);
+      this.db!.exec(`CREATE INDEX IF NOT EXISTS idx_platform_incidents_org ON platform_incidents(organization_id, created_at DESC, id DESC)`);
+      this.db!.prepare(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (21, ?)`).run(new Date().toISOString());
+      this.db!.exec('COMMIT');
+    } catch (error) {
+      try { this.db!.exec('ROLLBACK'); } catch { /* preserve the original error */ }
+      throw new Error(`[Inklly DB] Platform incident migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+
+  private ensurePostgresPlatformIncidentMigration(): void {
+    if (this.queryPostgres(`SELECT version FROM inklly_schema_migrations WHERE version = ?`, [21]).length) return;
+    this.queryPostgres('BEGIN');
+    try {
+      this.queryPostgres(`CREATE TABLE IF NOT EXISTS platform_incidents (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL,
+        severity TEXT NOT NULL CHECK (severity IN ('CRITICAL', 'HIGH', 'MEDIUM', 'LOW')),
+        status TEXT NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN', 'INVESTIGATING', 'RESOLVED', 'CLOSED')),
+        organization_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
+        shop_id TEXT REFERENCES shops(id) ON DELETE SET NULL,
+        order_id TEXT REFERENCES orders(id) ON DELETE SET NULL,
+        agent_id TEXT REFERENCES agent_registrations(id) ON DELETE SET NULL,
+        assigned_to_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        resolution_notes TEXT,
+        created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        updated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        resolved_at TEXT,
+        closed_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`);
+      this.queryPostgres(`CREATE INDEX IF NOT EXISTS idx_platform_incidents_created ON platform_incidents(created_at DESC, id DESC)`);
+      this.queryPostgres(`CREATE INDEX IF NOT EXISTS idx_platform_incidents_status ON platform_incidents(status, created_at DESC, id DESC)`);
+      this.queryPostgres(`CREATE INDEX IF NOT EXISTS idx_platform_incidents_org ON platform_incidents(organization_id, created_at DESC, id DESC)`);
+      this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [21, new Date().toISOString()]);
+      this.queryPostgres('COMMIT');
+    } catch (error) {
+      try { this.queryPostgres('ROLLBACK'); } catch { /* preserve original error */ }
+      throw new Error(`[Inklly DB] Platform incident migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
   }
 
   private ensureSqliteMembershipLifecycleMigration(): void {

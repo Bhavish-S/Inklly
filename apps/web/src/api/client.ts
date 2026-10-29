@@ -695,6 +695,42 @@ export const api = {
     return body;
   },
 
+  async getPlatformIncidents(cursor?: string, limit = 50, filters?: { status?: string; severity?: string }) {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (cursor) params.set('cursor', cursor);
+    if (filters?.status && filters.status !== 'ALL') params.set('status', filters.status);
+    if (filters?.severity && filters.severity !== 'ALL') params.set('severity', filters.severity);
+    const res = await fetch(`${API_BASE}/platform/incidents?${params.toString()}`, { headers: getHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to load incidents');
+    return body;
+  },
+
+  async createPlatformIncident(payload: Record<string, unknown>) {
+    const res = await fetch(`${API_BASE}/platform/incidents`, {
+      method: 'POST', headers: getHeaders(), body: JSON.stringify(payload),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to create incident');
+    return body;
+  },
+
+  async updatePlatformIncident(incidentId: string, payload: Record<string, unknown>) {
+    const res = await fetch(`${API_BASE}/platform/incidents/${encodeURIComponent(incidentId)}`, {
+      method: 'PATCH', headers: getHeaders(), body: JSON.stringify(payload),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to update incident');
+    return body;
+  },
+
+  async getPlatformIncidentAssignees() {
+    const res = await fetch(`${API_BASE}/platform/incidents/assignees`, { headers: getHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to load incident assignees');
+    return body;
+  },
+
   // Subscriptions
   async getSubscriptions() {
     const res = await fetch(`${API_BASE}/platform/subscriptions`, { headers: getHeaders() });

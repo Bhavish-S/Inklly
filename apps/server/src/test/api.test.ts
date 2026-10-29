@@ -1525,6 +1525,139 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     }
   });
 
+  it('persists platform incidents with permission gates, tenant-safe links, resolution notes, and stable cursors', async () => {
+    const userId = `incident-admin-${crypto.randomUUID()}`;
+    const sessionId = crypto.randomUUID();
+    const incidentIds: string[] = [];
+    const createdAt = '2001-01-01T00:00:00.000Z';
+    const now = new Date().toISOString();
+    const orgId = db.queryOne<any>(`SELECT organization_id FROM shops WHERE id = 'shop-campus-1'`)?.organization_id;
+    const ownerId = db.queryOne<any>(`SELECT id FROM users WHERE role = 'PLATFORM_OWNER' AND is_active = 1 ORDER BY created_at LIMIT 1`)?.id;
+    assert.ok(orgId && ownerId);
+    const secondShopId = `incident-shop-${crypto.randomUUID()}`;
+    db.execute(
+      `INSERT INTO shops (id, organization_id, shop_code, name, phone, email, address, city, state, pin_code, currency, payment_gateway, accept_cash_on_collection, auto_print_mode, order_separator, is_active, created_at, updated_at)
+       VALUES (?, ?, ?, 'Incident Cross-Shop', '', '', '', '', '', '', 'INR', 'RAZORPAY', 1, 'MANUAL_OFF', 'NONE', 1, ?, ?)`,
+      [secondShopId, orgId, `incident-${crypto.randomUUID().slice(0, 8)}`, now, now]
+    );
+    db.execute(
+      `INSERT INTO users (id, email, password_hash, full_name, role, is_active, created_at, updated_at)
+       VALUES (?, ?, 'unused-test-hash', 'Incident Assignee', 'PLATFORM_ADMIN', 1, ?, ?)`,
+      [userId, `${userId}@inklly.test`, now, now]
+    );
+    const token = createSessionToken({ sessionId, userId, email: `${userId}@inklly.test`, role: 'PLATFORM_ADMIN', permissions: [] });
+    db.execute(
+      `INSERT INTO user_sessions (id, user_id, token_hash, created_at, last_used_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      [sessionId, userId, hashSessionToken(token), now, now, new Date(Date.now() + 60 * 60 * 1000).toISOString()]
+    );
+    const scopedHeaders = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+    const ownerHeaders = { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` };
+    const listUrl = `${baseUrl}/api/v1/platform/incidents`;
+    try {
+      assert.equal((await fetch(listUrl)).status, 401);
+      assert.equal((await fetch(listUrl, { headers: scopedHeaders })).status, 403, 'platform admins need an explicit support permission');
+      assert.equal((await fetch(`${baseUrl}/api/v1/platform/incidents/assignees`, { headers: scopedHeaders })).status, 403);
+      assert.equal((await fetch(listUrl, { method: 'POST', headers: scopedHeaders, body: JSON.stringify({}) })).status, 403);
+
+      db.execute(
+        `INSERT INTO platform_admin_permissions (user_id, permission, granted_by_user_id, granted_at) VALUES (?, 'support:view', ?, ?)`,
+        [userId, ownerId, now]
+      );
+      assert.equal((await fetch(listUrl, { headers: scopedHeaders })).status, 200);
+      assert.equal((await fetch(`${baseUrl}/api/v1/platform/incidents/assignees`, { headers: scopedHeaders })).status, 403, 'read-only support cannot enumerate platform administrator emails');
+      assert.equal((await fetch(listUrl, { method: 'POST', headers: scopedHeaders, body: JSON.stringify({}) })).status, 403, 'support:view cannot mutate incidents');
+      db.execute(`DELETE FROM platform_admin_permissions WHERE user_id = ?`, [userId]);
+      db.execute(
+        `INSERT INTO platform_admin_permissions (user_id, permission, granted_by_user_id, granted_at) VALUES (?, 'support:manage', ?, ?)`,
+        [userId, ownerId, now]
+      );
+
+      const assigneesResponse = await fetch(`${baseUrl}/api/v1/platform/incidents/assignees`, { headers: scopedHeaders });
+      assert.equal(assigneesResponse.status, 200);
+      const assignees = await assigneesResponse.json() as any;
+      assert.ok(assignees.assignees.some((entry: any) => entry.id === userId));
+      assert.ok(assignees.assignees.every((entry: any) => Object.keys(entry).sort().join(',') === ['email', 'fullName', 'id'].sort().join(',')));
+
+      const invalidAssignment = await fetch(listUrl, {
+        method: 'POST', headers: scopedHeaders,
+        body: JSON.stringify({ title: 'Invalid assignee', description: 'Must only assign to an active platform administrator.', severity: 'HIGH', assignedToUserId: db.queryOne<any>(`SELECT id FROM users WHERE role = 'MERCHANT_OWNER' AND is_active = 1 LIMIT 1`)?.id }),
+      });
+      assert.equal(invalidAssignment.status, 422);
+
+      const crossShopOrder = await fetch(listUrl, {
+        method: 'POST', headers: scopedHeaders,
+        body: JSON.stringify({ title: 'Cross-shop reference', description: 'Order and shop references must belong to the same shop.', severity: 'HIGH', shopId: secondShopId, orderId: 'order-demo-001' }),
+      });
+      assert.equal(crossShopOrder.status, 422);
+
+      for (let index = 0; index < 3; index += 1) {
+        const created = await fetch(listUrl, {
+          method: 'POST', headers: scopedHeaders,
+          body: JSON.stringify({
+            title: `Persisted incident ${index}`, description: 'A verified operational issue recorded by platform support.', severity: 'HIGH',
+            shopId: 'shop-campus-1', orderId: 'order-demo-001', agentId: null, assignedToUserId: userId,
+          }),
+        });
+        assert.equal(created.status, 201, await created.clone().text());
+        const body = await created.json() as any;
+        assert.equal(body.incident.status, 'OPEN');
+        assert.equal(body.incident.organizationId, orgId);
+        assert.equal(body.incident.shopId, 'shop-campus-1');
+        assert.equal(body.incident.orderId, 'order-demo-001');
+        assert.equal(body.incident.assignedToUserId, userId);
+        incidentIds.push(body.incident.id);
+      }
+      for (const id of incidentIds) db.execute(`UPDATE platform_incidents SET created_at = ? WHERE id = ?`, [createdAt, id]);
+
+      const firstPageResponse = await fetch(`${listUrl}?status=OPEN&severity=HIGH&limit=2`, { headers: scopedHeaders });
+      assert.equal(firstPageResponse.status, 200);
+      const firstPage = await firstPageResponse.json() as any;
+      assert.deepEqual(firstPage.incidents.map((entry: any) => entry.id), [...incidentIds].sort().reverse().slice(0, 2));
+      assert.equal(firstPage.hasMore, true);
+      const secondPageResponse = await fetch(`${listUrl}?status=OPEN&severity=HIGH&limit=2&cursor=${encodeURIComponent(firstPage.nextCursor)}`, { headers: scopedHeaders });
+      const secondPage = await secondPageResponse.json() as any;
+      assert.equal(secondPageResponse.status, 200);
+      assert.deepEqual(secondPage.incidents.map((entry: any) => entry.id), [...incidentIds].sort().reverse().slice(2));
+      assert.equal(secondPage.hasMore, false);
+      assert.equal(new Set([...firstPage.incidents, ...secondPage.incidents].map((entry: any) => entry.id)).size, 3);
+      assert.equal((await fetch(`${listUrl}?cursor=invalid`, { headers: scopedHeaders })).status, 400);
+
+      const targetId = incidentIds[0];
+      const missingNotes = await fetch(`${listUrl}/${targetId}`, {
+        method: 'PATCH', headers: scopedHeaders, body: JSON.stringify({ status: 'RESOLVED' }),
+      });
+      assert.equal(missingNotes.status, 422);
+      const resolved = await fetch(`${listUrl}/${targetId}`, {
+        method: 'PATCH', headers: scopedHeaders, body: JSON.stringify({ status: 'RESOLVED', resolutionNotes: 'The shop reported a stale fleet view; heartbeat recovered after service restart.' }),
+      });
+      assert.equal(resolved.status, 200, await resolved.clone().text());
+      const resolvedBody = await resolved.json() as any;
+      assert.equal(resolvedBody.incident.status, 'RESOLVED');
+      assert.equal(resolvedBody.incident.resolutionNotes, 'The shop reported a stale fleet view; heartbeat recovered after service restart.');
+      assert.ok(resolvedBody.incident.resolvedAt);
+      const mutations = db.query<any>(`SELECT action, details FROM audit_events WHERE target_type = 'PLATFORM_INCIDENT' AND target_id = ? ORDER BY created_at, id`, [targetId]);
+      assert.equal(mutations.length, 2);
+      const updateEvent = mutations.find((event) => event.action === 'PLATFORM_INCIDENT_UPDATED');
+      assert.ok(updateEvent);
+      assert.equal(JSON.parse(updateEvent.details).resolutionNotes, resolvedBody.incident.resolutionNotes);
+      assert.equal(JSON.parse(updateEvent.details).previousResolutionNotes, '');
+
+      const specResponse = await fetch(`${baseUrl}/api/v1/developer/openapi.json`);
+      const spec = await specResponse.json() as any;
+      assert.ok(spec.paths['/platform/incidents']);
+      assert.ok(spec.paths['/platform/incidents/{id}']);
+      assert.ok(spec.paths['/platform/incidents/assignees']);
+    } finally {
+      if (incidentIds.length) {
+        const placeholders = incidentIds.map(() => '?').join(',');
+        db.execute(`DELETE FROM audit_events WHERE target_id IN (${placeholders}) AND target_type = 'PLATFORM_INCIDENT'`, incidentIds);
+        db.execute(`DELETE FROM platform_incidents WHERE id IN (${placeholders})`, incidentIds);
+      }
+      db.execute(`DELETE FROM users WHERE id = ?`, [userId]);
+      db.execute(`DELETE FROM shops WHERE id = ?`, [secondShopId]);
+    }
+  });
+
   it('validates tenant status changes and records the update atomically in the audit log', async () => {
     const organizationId = `org-status-${crypto.randomUUID()}`;
     const now = new Date().toISOString();

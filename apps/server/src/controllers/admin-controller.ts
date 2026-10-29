@@ -66,7 +66,7 @@ const ALLOWED_PLAN_STATUSES = new Set([
 ]);
 
 export const PLATFORM_ADMIN_PERMISSION_OPTIONS = [
-  'platform:view', 'platform:manage', 'support:view', 'finance:view', 'security:audit', 'billing:view', 'billing:manage',
+  'platform:view', 'platform:manage', 'support:view', 'support:manage', 'finance:view', 'security:audit', 'billing:view', 'billing:manage',
 ] as const;
 
 export class AdminController {
@@ -537,6 +537,263 @@ export class AdminController {
       createdAt: new Date().toISOString(),
     });
     res.json(this.enquiryRepo.list(limit, offset));
+  };
+
+  public getIncidentAssignees = (_req: Request, res: Response) => {
+    const assignees = this.db.query<any>(
+      `SELECT id, full_name, email FROM users
+       WHERE is_active = 1 AND role IN ('PLATFORM_OWNER', 'PLATFORM_ADMIN')
+       ORDER BY full_name COLLATE NOCASE ASC, id ASC`
+    );
+    return res.json({ assignees: assignees.map((user) => ({ id: user.id, fullName: user.full_name, email: user.email })) });
+  };
+
+  private presentIncident(row: any) {
+    return {
+      id: row.id,
+      title: row.title,
+      description: row.description,
+      severity: row.severity,
+      status: row.status,
+      organizationId: row.organization_id || null,
+      organizationName: row.organization_name || null,
+      shopId: row.shop_id || null,
+      shopName: row.shop_name || null,
+      orderId: row.order_id || null,
+      orderNumber: row.order_number || null,
+      agentId: row.agent_id || null,
+      agentHostname: row.agent_hostname || null,
+      assignedToUserId: row.assigned_to_user_id || null,
+      assigneeName: row.assignee_name || null,
+      assigneeEmail: row.assignee_email || null,
+      resolutionNotes: row.resolution_notes || '',
+      createdByUserId: row.created_by_user_id || null,
+      createdByName: row.created_by_name || null,
+      updatedByUserId: row.updated_by_user_id || null,
+      updatedByName: row.updated_by_name || null,
+      resolvedAt: row.resolved_at || null,
+      closedAt: row.closed_at || null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private incidentCursor(raw: unknown): { createdAt: string; id: string } | null | undefined {
+    if (raw === undefined) return undefined;
+    if (typeof raw !== 'string' || raw.length > 512) return null;
+    try {
+      const decoded = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
+      if (!decoded || typeof decoded.createdAt !== 'string' || !decoded.createdAt || decoded.createdAt.length > 64 ||
+          !Number.isFinite(Date.parse(decoded.createdAt)) || typeof decoded.id !== 'string' || !decoded.id || decoded.id.length > 128 ||
+          Object.keys(decoded).some((key) => !['createdAt', 'id'].includes(key))) return null;
+      return { createdAt: decoded.createdAt, id: decoded.id };
+    } catch { return null; }
+  }
+
+  public getIncidents = (req: Request, res: Response) => {
+    const limit = req.query.limit === undefined ? 50 : Number(req.query.limit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) return res.status(400).json({ error: 'limit must be an integer between 1 and 100.' });
+    const statuses = new Set(['OPEN', 'INVESTIGATING', 'RESOLVED', 'CLOSED']);
+    const severities = new Set(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']);
+    const status = req.query.status === undefined ? undefined : req.query.status;
+    const severity = req.query.severity === undefined ? undefined : req.query.severity;
+    if (status !== undefined && (typeof status !== 'string' || !statuses.has(status))) return res.status(400).json({ error: 'Unsupported incident status filter.' });
+    if (severity !== undefined && (typeof severity !== 'string' || !severities.has(severity))) return res.status(400).json({ error: 'Unsupported incident severity filter.' });
+    const cursor = this.incidentCursor(req.query.cursor);
+    if (cursor === null) return res.status(400).json({ error: 'cursor is invalid.' });
+
+    const filters: string[] = [];
+    const params: Array<string | number | null> = [];
+    if (status) { filters.push('i.status = ?'); params.push(status); }
+    if (severity) { filters.push('i.severity = ?'); params.push(severity); }
+    if (cursor) { filters.push('(i.created_at < ? OR (i.created_at = ? AND i.id < ?))'); params.push(cursor.createdAt, cursor.createdAt, cursor.id); }
+    const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+    const rows = this.db.query<any>(
+      `SELECT i.*, o.name AS organization_name, s.name AS shop_name, ord.order_number,
+              ar.hostname AS agent_hostname, assignee.full_name AS assignee_name, assignee.email AS assignee_email,
+              creator.full_name AS created_by_name, updater.full_name AS updated_by_name
+       FROM platform_incidents i
+       LEFT JOIN organizations o ON o.id = i.organization_id
+       LEFT JOIN shops s ON s.id = i.shop_id
+       LEFT JOIN orders ord ON ord.id = i.order_id
+       LEFT JOIN agent_registrations ar ON ar.id = i.agent_id
+       LEFT JOIN users assignee ON assignee.id = i.assigned_to_user_id
+       LEFT JOIN users creator ON creator.id = i.created_by_user_id
+       LEFT JOIN users updater ON updater.id = i.updated_by_user_id
+       ${where}
+       ORDER BY i.created_at DESC, i.id DESC LIMIT ?`,
+      [...params, limit + 1]
+    );
+    const hasMore = rows.length > limit;
+    const incidents = (hasMore ? rows.slice(0, limit) : rows).map((row) => this.presentIncident(row));
+    const last = incidents[incidents.length - 1];
+    const nextCursor = hasMore && last ? Buffer.from(JSON.stringify({ createdAt: last.createdAt, id: last.id })).toString('base64url') : null;
+    return res.json({ incidents, nextCursor, hasMore, limit });
+  };
+
+  private parseOptionalIncidentId(body: any, key: string, fallback: string | null): { value: string | null; error?: string } {
+    if (!Object.prototype.hasOwnProperty.call(body, key)) return { value: fallback };
+    const value = body[key];
+    if (value === null || value === '') return { value: null };
+    if (typeof value !== 'string' || !value.trim() || value.trim().length > 128) return { value: fallback, error: `${key} must be a valid identifier or null.` };
+    return { value: value.trim() };
+  }
+
+  private validateIncidentLinks(input: { organizationId: string | null; shopId: string | null; orderId: string | null; agentId: string | null; assignedToUserId: string | null }): { values?: typeof input; error?: string } {
+    const orgs: string[] = [];
+    const shops: string[] = [];
+    if (input.organizationId) {
+      if (!this.db.queryOne(`SELECT id FROM organizations WHERE id = ?`, [input.organizationId])) return { error: 'Organization was not found.' };
+      orgs.push(input.organizationId);
+    }
+    if (input.shopId) {
+      const shop = this.db.queryOne<any>(`SELECT id, organization_id FROM shops WHERE id = ?`, [input.shopId]);
+      if (!shop) return { error: 'Shop was not found.' };
+      shops.push(shop.id); orgs.push(shop.organization_id);
+    }
+    if (input.orderId) {
+      const order = this.db.queryOne<any>(
+        `SELECT ord.id, ord.shop_id, s.organization_id FROM orders ord JOIN shops s ON s.id = ord.shop_id WHERE ord.id = ?`,
+        [input.orderId]
+      );
+      if (!order) return { error: 'Order was not found.' };
+      shops.push(order.shop_id); orgs.push(order.organization_id);
+    }
+    if (input.agentId) {
+      const agent = this.db.queryOne<any>(
+        `SELECT ar.id, ar.shop_id, s.organization_id FROM agent_registrations ar JOIN shops s ON s.id = ar.shop_id WHERE ar.id = ?`,
+        [input.agentId]
+      );
+      if (!agent) return { error: 'Agent was not found.' };
+      shops.push(agent.shop_id); orgs.push(agent.organization_id);
+    }
+    if (new Set(orgs).size > 1) return { error: 'Incident organization, shop, order, and agent must belong to the same organization.' };
+    if (new Set(shops).size > 1) return { error: 'Incident shop, order, and agent must refer to the same shop.' };
+    const organizationId = orgs[0] || null;
+    const shopId = shops[0] || null;
+    if (input.assignedToUserId) {
+      const assignee = this.db.queryOne<any>(`SELECT id FROM users WHERE id = ? AND is_active = 1 AND role IN ('PLATFORM_OWNER', 'PLATFORM_ADMIN')`, [input.assignedToUserId]);
+      if (!assignee) return { error: 'Assignee must be an active platform administrator.' };
+    }
+    return { values: { ...input, organizationId, shopId } };
+  }
+
+  public createIncident = (req: Request, res: Response) => {
+    const body = req.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return res.status(400).json({ error: 'Incident request body must be an object.' });
+    const title = typeof body.title === 'string' ? body.title.trim() : '';
+    const description = typeof body.description === 'string' ? body.description.trim() : '';
+    const severity = body.severity;
+    const resolutionNotes = body.resolutionNotes === undefined ? '' : typeof body.resolutionNotes === 'string' ? body.resolutionNotes.trim() : null;
+    if (!title || title.length > 160 || !description || description.length > 4000 || !['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].includes(severity) || resolutionNotes === null || resolutionNotes.length > 4000) {
+      return res.status(400).json({ error: 'Provide a title (1–160 characters), description (1–4000 characters), and supported severity.' });
+    }
+    const org = this.parseOptionalIncidentId(body, 'organizationId', null);
+    const shop = this.parseOptionalIncidentId(body, 'shopId', null);
+    const order = this.parseOptionalIncidentId(body, 'orderId', null);
+    const agent = this.parseOptionalIncidentId(body, 'agentId', null);
+    const assignee = this.parseOptionalIncidentId(body, 'assignedToUserId', null);
+    const idErrors = [org, shop, order, agent, assignee].find((parsed) => parsed.error);
+    if (idErrors?.error) return res.status(400).json({ error: idErrors.error });
+    const context = this.validateIncidentLinks({ organizationId: org.value, shopId: shop.value, orderId: order.value, agentId: agent.value, assignedToUserId: assignee.value });
+    if (context.error) return res.status(422).json({ error: context.error });
+    const actorId = req.user?.userId;
+    if (!actorId) return res.status(401).json({ error: 'Unauthenticated' });
+
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    this.db.transaction(() => {
+      this.db.execute(
+        `INSERT INTO platform_incidents (id, title, description, severity, status, organization_id, shop_id, order_id, agent_id, assigned_to_user_id, resolution_notes, created_by_user_id, updated_by_user_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, title, description, severity, context.values!.organizationId, context.values!.shopId, order.value, agent.value, assignee.value, resolutionNotes, actorId, actorId, now, now]
+      );
+      this.userRepo.logAuditEvent({
+        id: crypto.randomUUID(), actorUserId: actorId, actorRole: req.user?.role,
+        organizationId: context.values!.organizationId || undefined, shopId: context.values!.shopId || undefined,
+        action: 'PLATFORM_INCIDENT_CREATED', targetType: 'PLATFORM_INCIDENT', targetId: id, outcome: 'SUCCESS', ipAddress: req.ip,
+        details: { severity, status: 'OPEN', organizationId: context.values!.organizationId, shopId: context.values!.shopId, orderId: order.value, agentId: agent.value, assignedToUserId: assignee.value, resolutionNotes }, createdAt: now,
+      });
+    });
+    const row = this.db.queryOne<any>(`SELECT * FROM platform_incidents WHERE id = ?`, [id]);
+    return res.status(201).json({ incident: this.presentIncident(row) });
+  };
+
+  public updateIncident = (req: Request, res: Response) => {
+    const body = req.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return res.status(400).json({ error: 'Incident request body must be an object.' });
+    const id = String(req.params.id || '');
+    const current = this.db.queryOne<any>(`SELECT * FROM platform_incidents WHERE id = ?`, [id]);
+    if (!current) return res.status(404).json({ error: 'Incident not found.' });
+
+    const title = Object.hasOwn(body, 'title') ? (typeof body.title === 'string' ? body.title.trim() : '') : current.title;
+    const description = Object.hasOwn(body, 'description') ? (typeof body.description === 'string' ? body.description.trim() : '') : current.description;
+    const severity = Object.hasOwn(body, 'severity') ? body.severity : current.severity;
+    const status = Object.hasOwn(body, 'status') ? body.status : current.status;
+    const resolutionNotes = Object.hasOwn(body, 'resolutionNotes') ? (typeof body.resolutionNotes === 'string' ? body.resolutionNotes.trim() : null) : (current.resolution_notes || '');
+    if (!title || title.length > 160 || !description || description.length > 4000 || !['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].includes(severity) || !['OPEN', 'INVESTIGATING', 'RESOLVED', 'CLOSED'].includes(status) || resolutionNotes === null || resolutionNotes.length > 4000) {
+      return res.status(400).json({ error: 'Incident title, description, severity, or status is invalid.' });
+    }
+    const allowedTransitions: Record<string, string[]> = {
+      OPEN: ['INVESTIGATING', 'RESOLVED', 'CLOSED'],
+      INVESTIGATING: ['OPEN', 'RESOLVED', 'CLOSED'],
+      RESOLVED: ['OPEN', 'CLOSED'],
+      CLOSED: ['OPEN'],
+    };
+    if (status !== current.status && !allowedTransitions[current.status]?.includes(status)) return res.status(409).json({ error: `Incident cannot move from ${current.status} to ${status}.` });
+    if (status !== current.status && ['RESOLVED', 'CLOSED'].includes(status) && !(typeof body.resolutionNotes === 'string' && body.resolutionNotes.trim())) {
+      return res.status(422).json({ error: 'Provide resolution notes before resolving or closing an incident.' });
+    }
+    const parsed = {
+      organizationId: this.parseOptionalIncidentId(body, 'organizationId', current.organization_id || null),
+      shopId: this.parseOptionalIncidentId(body, 'shopId', current.shop_id || null),
+      orderId: this.parseOptionalIncidentId(body, 'orderId', current.order_id || null),
+      agentId: this.parseOptionalIncidentId(body, 'agentId', current.agent_id || null),
+      assignedToUserId: this.parseOptionalIncidentId(body, 'assignedToUserId', current.assigned_to_user_id || null),
+    };
+    const invalidId = Object.values(parsed).find((result) => result.error);
+    if (invalidId?.error) return res.status(400).json({ error: invalidId.error });
+    const context = this.validateIncidentLinks({
+      organizationId: parsed.organizationId.value, shopId: parsed.shopId.value, orderId: parsed.orderId.value,
+      agentId: parsed.agentId.value, assignedToUserId: parsed.assignedToUserId.value,
+    });
+    if (context.error) return res.status(422).json({ error: context.error });
+    const actorId = req.user?.userId;
+    if (!actorId) return res.status(401).json({ error: 'Unauthenticated' });
+    const now = new Date().toISOString();
+    const resolvedAt = status === 'RESOLVED' ? (current.resolved_at || now) : null;
+    const closedAt = status === 'CLOSED' ? (current.closed_at || now) : null;
+    const changedFields = ['title', 'description', 'severity', 'status', 'organizationId', 'shopId', 'orderId', 'agentId', 'assignedToUserId', 'resolutionNotes']
+      .filter((key) => key === 'organizationId' ? context.values!.organizationId !== (current.organization_id || null)
+        : key === 'shopId' ? context.values!.shopId !== (current.shop_id || null)
+          : key === 'orderId' ? parsed.orderId.value !== (current.order_id || null)
+            : key === 'agentId' ? parsed.agentId.value !== (current.agent_id || null)
+              : key === 'assignedToUserId' ? parsed.assignedToUserId.value !== (current.assigned_to_user_id || null)
+                : key === 'resolutionNotes' ? resolutionNotes !== (current.resolution_notes || '')
+                : (key === 'title' ? title : key === 'description' ? description : key === 'severity' ? severity : status) !== current[key]);
+    this.db.transaction(() => {
+      const changed = this.db.queryOne<{ id: string }>(
+        `UPDATE platform_incidents SET title = ?, description = ?, severity = ?, status = ?, organization_id = ?, shop_id = ?, order_id = ?, agent_id = ?, assigned_to_user_id = ?, resolution_notes = ?, updated_by_user_id = ?, resolved_at = ?, closed_at = ?, updated_at = ? WHERE id = ? AND updated_at = ? RETURNING id`,
+        [title, description, severity, status, context.values!.organizationId, context.values!.shopId, parsed.orderId.value, parsed.agentId.value, parsed.assignedToUserId.value, resolutionNotes, actorId, resolvedAt, closedAt, now, id, current.updated_at]
+      );
+      if (!changed) throw new Error('Incident changed concurrently. Reload before updating it again.');
+      this.userRepo.logAuditEvent({
+        id: crypto.randomUUID(), actorUserId: actorId, actorRole: req.user?.role,
+        organizationId: context.values!.organizationId || undefined, shopId: context.values!.shopId || undefined,
+        action: 'PLATFORM_INCIDENT_UPDATED', targetType: 'PLATFORM_INCIDENT', targetId: id, outcome: 'SUCCESS', ipAddress: req.ip,
+        details: { changedFields, previousStatus: current.status, status, previousSeverity: current.severity, severity, assignedToUserId: parsed.assignedToUserId.value, previousResolutionNotes: current.resolution_notes || '', resolutionNotes }, createdAt: now,
+      });
+    });
+    const updated = this.db.queryOne<any>(
+      `SELECT i.*, o.name AS organization_name, s.name AS shop_name, ord.order_number,
+              ar.hostname AS agent_hostname, assignee.full_name AS assignee_name, assignee.email AS assignee_email,
+              creator.full_name AS created_by_name, updater.full_name AS updated_by_name
+       FROM platform_incidents i LEFT JOIN organizations o ON o.id = i.organization_id LEFT JOIN shops s ON s.id = i.shop_id
+       LEFT JOIN orders ord ON ord.id = i.order_id LEFT JOIN agent_registrations ar ON ar.id = i.agent_id
+       LEFT JOIN users assignee ON assignee.id = i.assigned_to_user_id LEFT JOIN users creator ON creator.id = i.created_by_user_id
+       LEFT JOIN users updater ON updater.id = i.updated_by_user_id WHERE i.id = ?`, [id]
+    );
+    return res.json({ incident: this.presentIncident(updated) });
   };
 
   // Subscription management
