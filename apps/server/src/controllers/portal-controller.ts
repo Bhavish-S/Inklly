@@ -6,6 +6,10 @@ import { ShopPaymentCredentialsService } from '../services/shop-payment-credenti
 import { PrivateFileStorage } from '../services/private-file-storage';
 import { inspectDocument } from '../services/document-page-count';
 
+const AGENT_SUPPORTED_PAPER_SIZES = new Set(['A4', 'A3', 'PLAIN']);
+const AGENT_SUPPORTED_COLOR_MODES = new Set(['bw', 'color']);
+const AGENT_SUPPORTED_DUPLEX_MODES = new Set(['simplex', 'duplex_auto']);
+
 function stableJson(value: any): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
   if (value && typeof value === 'object') {
@@ -49,7 +53,9 @@ export class PortalController {
       return res.status(402).json({ error: 'This shop is not currently accepting orders. Please contact the shop owner.' });
     }
 
-    const rates = this.pricingRepo.getRateRules(shop.id);
+    const rates = this.pricingRepo.getRateRules(shop.id).filter((rule) =>
+      AGENT_SUPPORTED_PAPER_SIZES.has(rule.paperSize) && AGENT_SUPPORTED_DUPLEX_MODES.has(rule.duplexMode)
+    );
     const paymentStatus = this.paymentCredentials.getRazorpayStatus(shop.id);
     const bwSimplex = rates.find((r) => r.paperSize === 'A4' && r.colorMode === 'bw' && r.duplexMode === 'simplex')?.pricePerPrintedSidePaise;
     const bwDuplex = rates.find((r) => r.paperSize === 'A4' && r.colorMode === 'bw' && r.duplexMode === 'duplex_auto')?.pricePerPrintedSidePaise;
@@ -57,6 +63,10 @@ export class PortalController {
     const configuredPaperSizes = [...new Set(rates.map((rule) => rule.paperSize))];
     const configuredColorModes = [...new Set(rates.map((rule) => rule.colorMode))];
     const configuredSides = [...new Set(rates.map((rule) => rule.duplexMode))];
+    const portalSettings = this.shopRepo.getPortalSettings(shop.id);
+    portalSettings.allowedOptions.colorModes = portalSettings.allowedOptions.colorModes.filter((mode) => AGENT_SUPPORTED_COLOR_MODES.has(mode));
+    portalSettings.allowedOptions.duplexModes = portalSettings.allowedOptions.duplexModes.filter((mode) => AGENT_SUPPORTED_DUPLEX_MODES.has(mode));
+    portalSettings.allowedOptions.paperSizes = portalSettings.allowedOptions.paperSizes.filter((size) => AGENT_SUPPORTED_PAPER_SIZES.has(size));
 
     res.json({
       id: shop.id,
@@ -68,7 +78,7 @@ export class PortalController {
       currency: shop.currency,
       paymentGateway: shop.paymentGateway,
       acceptCashOnCollection: shop.acceptCashOnCollection,
-      portalSettings: this.shopRepo.getPortalSettings(shop.id),
+      portalSettings,
       onlinePaymentAvailable: shop.currency === 'INR' && paymentStatus.configured && paymentStatus.webhookConfigured,
       enabledPaperFormats: configuredPaperSizes,
       enabledColorModes: configuredColorModes,
@@ -362,6 +372,10 @@ export class PortalController {
     for (const file of files) {
       const options = file?.options || {};
       if (options.note !== undefined && (typeof options.note !== 'string' || options.note.length > 500)) return 'Special instructions must be 500 characters or fewer.';
+      if (!AGENT_SUPPORTED_COLOR_MODES.has(String(options.colorMode))) return 'Mixed-color printing is not currently supported. Choose black and white or color for this file.';
+      if (!AGENT_SUPPORTED_DUPLEX_MODES.has(String(options.duplexMode))) return 'Manual duplex is not currently supported. Choose single-sided or automatic duplex printing.';
+      if (!AGENT_SUPPORTED_PAPER_SIZES.has(String(options.paperSize))) return 'This paper size or type is not currently supported by the print agent. Choose A4, A3, or plain paper.';
+      if (options.pagesPerSheet !== undefined && options.pagesPerSheet !== 1) return 'Multiple pages per sheet are not currently supported by the print agent.';
       if (!allowedOptions.colorModes.includes(options.colorMode) || (options.colorMode === 'mixed' && (!allowedOptions.colorModes.includes('bw') || !allowedOptions.colorModes.includes('color')))) return 'This color mode is no longer offered by the shop. Update your print settings.';
       if (!allowedOptions.duplexModes.includes(options.duplexMode)) return 'This print style is no longer offered by the shop. Update your print settings.';
       if (!allowedOptions.paperSizes.includes(options.paperSize)) return 'This paper size is no longer offered by the shop. Update your print settings.';

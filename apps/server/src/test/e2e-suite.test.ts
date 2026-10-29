@@ -32,6 +32,27 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
   };
 
   const pairTestAgent = async (hostname: string) => {
+    const registerProfile = async (profile: { name: string; systemDriverName: string; supportsColor: boolean; supportsDuplex: boolean; supportedSizes: string[] }) => {
+      const response = await fetch(`${baseUrl}/api/v1/merchant/printers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+        body: JSON.stringify({
+          name: profile.name, systemDriverName: profile.systemDriverName,
+          supportsColor: profile.supportsColor, supportsDuplex: profile.supportsDuplex,
+          trays: [{ name: 'Configured tray', supportedSizes: profile.supportedSizes, isDefault: true }],
+        }),
+      });
+      assert.equal(response.status, 201, await response.clone().text());
+      return await response.json() as any;
+    };
+    const configuredBwPrinter = await registerProfile({
+      name: 'HP LaserJet Pro M401dne (B&W High-Speed)', systemDriverName: 'HP LaserJet Pro M401 PCL6',
+      supportsColor: false, supportsDuplex: false, supportedSizes: ['A4'],
+    });
+    const configuredColorPrinter = await registerProfile({
+      name: 'Canon imageRUNNER ADVANCE C3530i (Color/Multi-Format)', systemDriverName: 'Canon Generic Plus PCL6',
+      supportsColor: true, supportsDuplex: true, supportedSizes: ['A4', 'A3'],
+    });
     const pairingRes = await fetch(`${baseUrl}/api/v1/merchant/agents/pairing-code`, { method: 'POST', headers: { Authorization: `Bearer ${merchantToken}` } });
     assert.equal(pairingRes.status, 201);
     const pairing = await pairingRes.json() as any;
@@ -48,8 +69,12 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
     });
     assert.equal(heartbeat.status, 200);
     const printer = db.queryOne<any>(`SELECT id FROM printers WHERE agent_id = ? AND system_driver_name = ?`, [agent.agentId, 'HP LaserJet Pro M401 PCL6']);
+    const colorPrinter = db.queryOne<any>(`SELECT id FROM printers WHERE agent_id = ? AND system_driver_name = ?`, [agent.agentId, 'Canon Generic Plus PCL6']);
     assert.ok(printer);
-    return { headers, printerId: printer.id as string };
+    assert.ok(colorPrinter);
+    assert.equal(printer.id, configuredBwPrinter.id);
+    assert.equal(colorPrinter.id, configuredColorPrinter.id);
+    return { headers, printerId: printer.id as string, colorPrinterId: colorPrinter.id as string };
   };
 
   before(async () => {
@@ -216,7 +241,10 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       assert.ok(shop.rates);
       assert.ok(shop.enabledPaperFormats.includes('A4'));
       assert.deepEqual(shop.portalSettings.requiredFields, { name: true, phone: true });
-      assert.deepEqual(shop.portalSettings.allowedOptions.colorModes, ['bw', 'color', 'mixed']);
+      assert.deepEqual(shop.portalSettings.allowedOptions.colorModes, ['bw', 'color']);
+      assert.deepEqual(shop.portalSettings.allowedOptions.duplexModes, ['simplex', 'duplex_auto']);
+      assert.ok(!shop.portalSettings.allowedOptions.paperSizes.includes('PHOTO_4X6'));
+      assert.ok(!shop.enabledPaperFormats.includes('PHOTO_4X6'));
       assert.deepEqual(shop.portalSettings.services, { idCardPrinting: false, photoPrinting: false });
     });
 
@@ -255,6 +283,22 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       const restoredShopRes = await fetch(`${baseUrl}/api/v1/portal/shop/campus1`);
       const restoredShop = await restoredShopRes.json() as any;
       assert.deepEqual(restoredShop.portalSettings.services, { idCardPrinting: true, photoPrinting: true }, 'legacy portal-setting writes preserve persisted service flags');
+      assert.deepEqual(restoredShop.portalSettings.allowedOptions.colorModes, ['bw', 'color']);
+      assert.deepEqual(restoredShop.portalSettings.allowedOptions.duplexModes, ['simplex', 'duplex_auto']);
+      assert.ok(!restoredShop.portalSettings.allowedOptions.paperSizes.includes('PHOTO_4X6'));
+
+      for (const options of [
+        { colorMode: 'mixed', colorPages: '1', duplexMode: 'simplex', paperSize: 'A4', copies: 1 },
+        { colorMode: 'bw', duplexMode: 'duplex_manual', paperSize: 'A4', copies: 1 },
+        { colorMode: 'bw', duplexMode: 'simplex', paperSize: 'PHOTO_4X6', copies: 1 },
+        { colorMode: 'bw', duplexMode: 'simplex', paperSize: 'A4', copies: 1, pagesPerSheet: 2 },
+      ]) {
+        const unsupported = await fetch(`${baseUrl}/api/v1/portal/quote`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ shopId: 'shop-campus-1', files: [{ fileName: 'unsupported.pdf', pageCount: 2, options }] }),
+        });
+        assert.equal(unsupported.status, 422);
+      }
     });
 
     it('enforces persisted customer fields for public orders without a client version marker', async () => {
@@ -1397,7 +1441,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
           'Content-Type': 'application/json',
           Authorization: `Bearer ${merchantToken}`,
         },
-        body: JSON.stringify({ printerId: agentSetup.printerId }),
+        body: JSON.stringify({ printerId: agentSetup.colorPrinterId }),
       });
       assert.equal(printDispatch.status, 200);
 
@@ -1494,7 +1538,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       const dispatchRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${orderId}/print`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
-        body: JSON.stringify({ printerId: agentSetup.printerId }),
+        body: JSON.stringify({ printerId: agentSetup.colorPrinterId }),
       });
       assert.equal(dispatchRes.status, 200);
       const polled = await fetch(`${baseUrl}/api/v1/agent/poll-commands`, { headers: agentSetup.headers });
@@ -1602,6 +1646,38 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       const orderId = submitData.orderId;
 
       const agentSetup = await pairTestAgent('PAPER-JAM-TEST-AGENT');
+      const orderFile = db.queryOne<any>(`SELECT id, print_options FROM order_files WHERE order_id = ?`, [orderId]);
+      const updatePrintOptions = (overrides: Record<string, unknown>) => {
+        const current = JSON.parse(orderFile.print_options);
+        db.execute(`UPDATE order_files SET print_options = ? WHERE id = ?`, [JSON.stringify({ ...current, ...overrides }), orderFile.id]);
+      };
+      // The live inventory only proves queue identity and reachability. Dispatch
+      // must also match each stored file's requested capabilities to a saved
+      // printer profile, and a rejected attempt must leave the order untouched.
+      const incompatibleModes = [
+        { colorMode: 'color' },
+        { duplexMode: 'duplex_auto' },
+        { colorMode: 'mixed', colorPages: '2' },
+        { duplexMode: 'duplex_manual' },
+        { pagesPerSheet: 2 },
+        { paperSize: 'A3' },
+        { paperSize: 'PHOTO_4X6' },
+      ];
+      for (const mode of incompatibleModes) {
+        updatePrintOptions(mode);
+        const incompatible = await fetch(`${baseUrl}/api/v1/merchant/orders/${orderId}/print`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+          body: JSON.stringify({ printerId: agentSetup.printerId }),
+        });
+        assert.equal(incompatible.status, 409);
+        assert.equal(db.queryOne<any>(`SELECT status FROM orders WHERE id = ?`, [orderId]).status, 'AWAITING_REVIEW');
+        const untouchedJob = db.queryOne<any>(`SELECT status, printer_id FROM print_jobs WHERE order_id = ?`, [orderId]);
+        assert.equal(untouchedJob.status, 'RECEIVED');
+        assert.equal(untouchedJob.printer_id, null);
+      }
+      updatePrintOptions({ colorMode: 'bw', duplexMode: 'simplex', paperSize: 'A4' });
+
       // 2. Dispatch to the queue reported by this simulated agent.
       const printRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${orderId}/print`, {
         method: 'POST',

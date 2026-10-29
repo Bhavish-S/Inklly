@@ -203,7 +203,8 @@ export class SpoolerExecutor {
     }
 
     const printOptions = ticket.options;
-    if (printOptions.colorMode === 'mixed' || printOptions.duplexMode === 'duplex_manual' || printOptions.pagesPerSheet !== 1) {
+    const pagesPerSheet = printOptions.pagesPerSheet ?? 1;
+    if (printOptions.colorMode === 'mixed' || printOptions.duplexMode === 'duplex_manual' || pagesPerSheet !== 1) {
       return {
         attemptId: ticket.attemptId,
         jobId: ticket.jobId,

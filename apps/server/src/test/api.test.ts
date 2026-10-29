@@ -1132,6 +1132,18 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
   });
 
   it('Desktop Print Agent pairs, receives heartbeat, and polls queued tickets', async () => {
+    const profileRes = await fetch(`${baseUrl}/api/v1/merchant/printers`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+      body: JSON.stringify({
+        name: 'API Test Queue', systemDriverName: 'API Test Driver',
+        supportsColor: false, supportsDuplex: false,
+        trays: [{ name: 'A4 tray', supportedSizes: ['A4'], isDefault: true }],
+      }),
+    });
+    assert.equal(profileRes.status, 201);
+    const configuredPrinter = await profileRes.json() as any;
+
     const pairingRes = await fetch(`${baseUrl}/api/v1/merchant/agents/pairing-code`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${merchantToken}` },
@@ -1213,6 +1225,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
 
     const livePrinter = db.queryOne<any>(`SELECT id FROM printers WHERE agent_id = ? AND name = ?`, [enrollData.agentId, 'API Test Queue']);
     assert.ok(livePrinter);
+    assert.equal(livePrinter.id, configuredPrinter.id, 'agent inventory should attach to the saved shop printer profile');
     assert.equal(new AgentRepository(db).isPhysicalPrintingEnabled('shop-campus-1', enrollData.agentId), false);
     const disabledDispatch = await fetch(`${baseUrl}/api/v1/merchant/orders/${cashOrderId}/print`, {
       method: 'POST',

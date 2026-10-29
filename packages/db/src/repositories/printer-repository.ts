@@ -103,7 +103,22 @@ export class PrinterRepository {
       for (const queue of queues) {
         const name = queue.name.trim();
         if (!name || name.length > 256) continue;
-        const id = `prn-${crypto.createHash('sha256').update(`${shopId}\0${agentId}\0${name}`).digest('hex').slice(0, 24)}`;
+        // Preserve a merchant-configured capability profile when the paired
+        // agent reports the exact same queue identity. A display name alone is
+        // insufficient: the system driver name must also match and the profile
+        // must not already belong to another agent.
+        const assigned = this.db.query<any>(
+          `SELECT id FROM printers WHERE shop_id = ? AND agent_id = ? AND name = ? AND system_driver_name = ? ORDER BY id LIMIT 2`,
+          [shopId, agentId, name, queue.driverName.slice(0, 256)]
+        );
+        const candidates = this.db.query<any>(
+          `SELECT id FROM printers WHERE shop_id = ? AND agent_id IS NULL AND name = ? AND system_driver_name = ? ORDER BY id LIMIT 2`,
+          [shopId, name, queue.driverName.slice(0, 256)]
+        );
+        const configuredId = assigned.length === 1
+          ? String(assigned[0].id)
+          : candidates.length === 1 ? String(candidates[0].id) : null;
+        const id = configuredId || `prn-${crypto.createHash('sha256').update(`${shopId}\0${agentId}\0${name}`).digest('hex').slice(0, 24)}`;
         this.db.execute(
           `INSERT INTO printers (id, shop_id, name, system_driver_name, is_online, is_default, supports_color, supports_duplex, last_heartbeat, created_at, updated_at, agent_id)
            VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)

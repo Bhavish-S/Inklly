@@ -236,6 +236,29 @@ describe('Relational Database & Multi-Tenancy Tests', () => {
     assert.equal(printerRepo.getPrintersByShop('shop-campus-1').find((printer) => printer.name === 'Other Agent Queue')?.isOnline, true);
   });
 
+  it('attaches an agent queue to its exact saved capability profile and keeps that identity on later heartbeats', () => {
+    const profile = {
+      id: 'printer-profile-queue-link-test', shopId: 'shop-campus-1', name: 'Configured Queue Test',
+      systemDriverName: 'Configured Test Driver', isOnline: false, isDefault: false,
+      supportsColor: true, supportsDuplex: true, lastHeartbeat: '',
+      trays: [{ id: 'tray-profile-queue-link-test', name: 'A4 and A3', supportedSizes: ['A4', 'A3'] as any, isDefault: true }],
+    };
+    printerRepo.registerPrinter(profile);
+    const reported = [{ name: profile.name, driverName: profile.systemDriverName, isOnline: true, isDefault: true }];
+
+    printerRepo.syncAgentInventory('shop-campus-1', 'agent-profile-link', reported);
+    printerRepo.syncAgentInventory('shop-campus-1', 'agent-profile-link', reported);
+
+    const rows = printerRepo.getPrintersByShop('shop-campus-1').filter((printer) => printer.name === profile.name);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].id, profile.id);
+    assert.equal(rows[0].agentId, 'agent-profile-link');
+    assert.equal(rows[0].isOnline, true);
+    assert.equal(rows[0].supportsColor, true);
+    assert.equal(rows[0].supportsDuplex, true);
+    assert.deepEqual(rows[0].trays[0].supportedSizes, ['A4', 'A3']);
+  });
+
   it('stores and retrieves rate rules scoped to shop', () => {
     const rates = pricingRepo.getRateRules('shop-campus-1');
     assert.ok(rates.length >= 6);

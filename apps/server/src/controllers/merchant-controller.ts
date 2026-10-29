@@ -15,6 +15,7 @@ import { OrderStatus, PaperSize, PrintJobStatus, ROLE_PRESETS, STAFF_PERMISSIONS
 import { ShopPaymentCredentialsService } from '../services/shop-payment-credentials';
 import { PrivateFileStorage } from '../services/private-file-storage';
 import { getPrinterHealthStatus, hasFreshOnlinePrinterEvidence } from '../services/printer-health';
+import { getPrinterCompatibilityIssues } from '../services/printer-compatibility';
 import { inspectDocument } from '../services/document-page-count';
 
 export class MerchantController {
@@ -340,6 +341,14 @@ export class MerchantController {
       return res.status(409).json({ error: 'Physical printing is disabled or has not been reported by the paired agent. No print job was released.' });
     }
 
+    const compatibilityIssues = getPrinterCompatibilityIssues(order.files || [], printer);
+    if (compatibilityIssues.length) {
+      return res.status(409).json({
+        error: 'The selected printer is not verified as compatible with every file in this order. No print job was released.',
+        compatibilityIssues,
+      });
+    }
+
     try {
       // Assignment and order-state changes must commit together so an agent
       // cannot see an in-progress order without a real, shop-owned target.
@@ -578,7 +587,7 @@ export class MerchantController {
     };
 
     this.printerRepo.registerPrinter(newPrinter);
-    res.status(201).json(newPrinter);
+    return res.status(201).json(newPrinter);
   };
 
   public getSettings = (req: Request, res: Response) => {
