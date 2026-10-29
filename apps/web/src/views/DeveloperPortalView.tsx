@@ -35,13 +35,12 @@ const API_ENDPOINTS: ApiEndpointDef[] = [
     method: 'POST',
     path: '/portal/quote',
     summary: 'Deterministic Quote Calculation (Integer Paise)',
-    description: 'Calculates the exact billing quote for uploaded documents in integer Paise (₹1 = 100 Paise) without floating-point inaccuracies.',
+    description: 'POST /portal/quote accepts shopId and files with fileName, pageCount, and print options. It does not upload or store a file. For an order, first upload the file, then quote it, and submit using the returned storageKey and exact quote response.',
     headers: { 'Content-Type': 'application/json' },
     defaultBody: {
-      shopCode: 'campus1',
-      documents: [
+      shopId: 'shop-campus-1',
+      files: [
         {
-          id: 'doc-preview-001',
           fileName: 'Final_Year_Project_Report.pdf',
           pageCount: 18,
           options: {
@@ -49,10 +48,28 @@ const API_ENDPOINTS: ApiEndpointDef[] = [
             duplexMode: 'duplex_auto',
             copies: 2,
             paperSize: 'A4',
-            spiralBinding: false,
+            orientation: 'portrait',
+            pageRange: 'all',
+            fitMode: 'fit',
+            pagesPerSheet: 1,
+            collation: true,
           },
         },
       ],
+    },
+  },
+  {
+    id: 'upload_document',
+    domain: 'Customer Portal',
+    method: 'POST',
+    path: '/portal/upload',
+    summary: 'Upload a Private Customer Document',
+    description: 'Upload accepts shopId, fileName, and Base64 fileData for a valid PDF, JPEG, or PNG. Replace the sample fileData with the actual document bytes encoded as Base64; use the returned storageKey and pageCount in the quote/order flow. This endpoint is documentation-only in this explorer.',
+    headers: { 'Content-Type': 'application/json' },
+    defaultBody: {
+      shopId: 'shop-campus-1',
+      fileName: 'Project_Report_v2.pdf',
+      fileData: '<base64-encoded PDF bytes>',
     },
   },
   {
@@ -61,22 +78,36 @@ const API_ENDPOINTS: ApiEndpointDef[] = [
     method: 'POST',
     path: '/portal/orders',
     summary: 'Submit Customer Print Order',
-    description: 'Registers a print job from the customer counter QR portal, returning tracking code and instant pickup PIN.',
+    description: 'Submit only after POST /portal/upload returns a storageKey and POST /portal/quote returns the current exact quote. Use the same shopId, file options, and storageKey. Replace the quote sample with the exact quote response so the server can reject stale pricing; paymentMethod must be CASH_ON_COLLECTION or ONLINE_RAZORPAY.',
     headers: { 'Content-Type': 'application/json' },
     defaultBody: {
-      shopCode: 'campus1',
+      shopId: 'shop-campus-1',
       customerName: 'Aarav Sharma',
       customerPhone: '+91 98765 43210',
-      paymentMethod: 'UPI_ONLINE',
-      documents: [
+      paymentMethod: 'CASH_ON_COLLECTION',
+      quote: {
+        quoteId: '<quote.quoteId>',
+        shopId: 'shop-campus-1',
+        currency: 'INR',
+        quoteVersion: '<quote.quoteVersion>',
+        totalPaise: 1200,
+        expiresAt: '<quote.expiresAt>',
+      },
+      files: [
         {
           fileName: 'Project_Report_v2.pdf',
           pageCount: 12,
+          storageKey: '<storageKey returned by POST /portal/upload>',
           options: {
             colorMode: 'bw',
             duplexMode: 'duplex_auto',
             copies: 1,
             paperSize: 'A4',
+            orientation: 'portrait',
+            pageRange: 'all',
+            fitMode: 'fit',
+            pagesPerSheet: 1,
+            collation: true,
           },
         },
       ],
@@ -88,16 +119,16 @@ const API_ENDPOINTS: ApiEndpointDef[] = [
     method: 'GET',
     path: '/portal/shop/campus1',
     summary: 'Fetch Shop Metadata & Online Capabilities',
-    description: 'Retrieves public shop profile, rate card, enabled paper sizes, and active spooler status for customer QR intake.',
+    description: 'Retrieves the public shop profile, configured rates, portal options, and whether online payment is configured for customer QR intake.',
     headers: {},
   },
   {
     id: 'merchant_orders',
     domain: 'Merchant POS',
     method: 'GET',
-    path: '/merchant/orders?status=PENDING',
+    path: '/merchant/orders?status=AWAITING_REVIEW',
     summary: 'List Inbound Merchant Orders Queue',
-    description: 'Polls incoming print orders placed via WhatsApp or Web Counter QR awaiting one-click spooling.',
+    description: 'Requires a merchant bearer token with orders:view. Lists orders awaiting merchant review; PENDING is a payment state, not an order status. The legacy array response is capped at the 100 latest matches.',
     headers: { Authorization: 'Bearer <authorized-token>' },
   },
   {
@@ -105,17 +136,14 @@ const API_ENDPOINTS: ApiEndpointDef[] = [
     domain: 'Merchant POS',
     method: 'POST',
     path: '/merchant/orders/{orderId}/print',
-    summary: 'Dispatch Print Job to Windows Spooler',
-    description: 'Sends the order to the local Windows Desktop Edge Agent on loopback port 8765 for automated hardware printing.',
+    summary: 'Queue Print Jobs for a Connected Agent',
+    description: 'Requires live_print:manage and an online printer registered to this shop. The response means jobs were queued for the paired agent; it does not prove physical output or successful printing. Confirm output through the operator reconciliation flow. Physical printing is disabled in the current pilot agent.',
     headers: {
       'Content-Type': 'application/json',
       Authorization: 'Bearer <authorized-token>',
     },
     defaultBody: {
-      printerName: 'Canon LBP2900',
-      copies: 1,
-      duplex: 'duplex_auto',
-      paperSize: 'A4',
+      printerId: '<online printer id returned by GET /merchant/printers>',
     },
   },
   {
@@ -193,11 +221,12 @@ export const DeveloperPortalView: React.FC<DeveloperPortalProps> = ({ onNavigate
         timestamp: new Date().toISOString(),
         data: {
           orderId: 'ord_example',
-          shopCode: 'example-shop',
-          customerName: 'Example Customer',
-          totalAmountPaise: 0,
-          documentCount: 1,
-          status: 'PENDING',
+          orderNumber: 'INK-20261029-EXAMPLE',
+          shopId: 'shop-campus-1',
+          status: 'AWAITING_REVIEW',
+          totalAmountPaise: 1200,
+          currency: 'INR',
+          createdAt: new Date().toISOString(),
         },
       },
       null,
@@ -316,7 +345,7 @@ export const DeveloperPortalView: React.FC<DeveloperPortalProps> = ({ onNavigate
           body: res,
         });
       } else if (selectedEndpoint.id === 'merchant_orders') {
-        const res = await api.getOrders('PENDING');
+        const res = await api.getOrders('AWAITING_REVIEW');
         const timeMs = Math.round(performance.now() - start);
         setExecutionResult({
           status: 200,
@@ -1154,18 +1183,28 @@ class Program
                   <select
                     value={selectedWebhookEvent}
                     onChange={(e) => {
-                      setSelectedWebhookEvent(e.target.value);
+                      const eventType = e.target.value;
+                      setSelectedWebhookEvent(eventType);
                       setWebhookPayloadJson(
                         JSON.stringify(
                           {
                             eventId: `evt_${Date.now()}`,
-                            eventType: e.target.value,
+                            eventType,
                             timestamp: new Date().toISOString(),
-                            data: {
-                              orderId: 'ord_example',
-                              shopCode: 'campus1',
-                              status: e.target.value === 'order.created' ? 'PENDING' : 'READY_FOR_PICKUP',
-                            },
+                            data: eventType === 'order.created'
+                              ? {
+                                orderId: 'ord_example', orderNumber: 'INK-20261029-EXAMPLE', shopId: 'shop-campus-1',
+                                status: 'AWAITING_REVIEW', totalAmountPaise: 1200, currency: 'INR', createdAt: new Date().toISOString(),
+                              }
+                              : eventType === 'order.status_changed'
+                                ? {
+                                  orderId: 'ord_example', orderNumber: 'INK-20261029-EXAMPLE', shopId: 'shop-campus-1',
+                                  previousStatus: 'IN_PROGRESS', status: 'READY_FOR_COLLECTION', updatedAt: new Date().toISOString(),
+                                }
+                                : {
+                                  paymentId: 'pay_example', orderId: 'ord_example', amountPaise: 1200,
+                                  currency: 'INR', provider: 'MANUAL_CASH', capturedAt: new Date().toISOString(),
+                                },
                           },
                           null,
                           2
@@ -1337,7 +1376,7 @@ class Program
                 Loopback HTTP :8765
               </div>
               <p className="text-xs text-slate-500 mt-1">
-                Bypasses browser print dialogs directly into the Windows spooler buffer.
+                Receives authenticated print tickets and reports dispatch state. Physical printing is disabled in the current pilot.
               </p>
             </div>
 

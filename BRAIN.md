@@ -47,7 +47,7 @@ Implemented locally with regression coverage:
 - Paired-agent authentication now joins the current shop record and rejects inactive shops; the print-ticket query independently excludes inactive shops. Heartbeat, polling, and agent-file access are covered by a regression test after shop deactivation.
 - Customer upload and server-side quote/order paths use stored document metadata, integer Paise, and retry idempotency when clients provide a stable key.
 - Accepted customer orders persist an immutable pricing snapshot containing the server-computed quote and the exact applicable rate/discount rules. Rate-rule writes use partial unique indexes and atomic upsert semantics to prevent conflicting duplicates.
-- Merchant order search/filter/sort/pagination is tenant-scoped. Dashboard status counts and recent orders are aggregated without hydrating all shop order history.
+- Merchant order search/filter/sort/pagination is tenant-scoped. The legacy no-paging array response is capped at 100 orders and reports total/page metadata plus a continuation link; explicit paginated responses retain their existing object contract. Dashboard status counts and recent orders are aggregated without hydrating all shop order history.
 - Printer health uses fresh agent heartbeat evidence; print dispatch requires a shop-owned online printer and does not auto-retry uncertain output.
 - Agent heartbeat payload counters, health fields, and optional printer inventories are strictly type/range checked before heartbeat or inventory persistence; malformed entries cannot be silently discarded or partially applied.
 - Merchant rate API methods surface non-2xx responses, and the business settings form shows failure as a failure rather than a success toast.

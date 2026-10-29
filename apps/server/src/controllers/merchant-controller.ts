@@ -123,8 +123,26 @@ export class MerchantController {
     }
     const paginationRequested = statusFilters.length > 1 || ['page', 'pageSize', 'search', 'sortBy', 'sortOrder'].some((key) => req.query[key] !== undefined);
     if (!paginationRequested) {
-      const orders = this.orderRepo.getOrdersByShop(shopId, (statusFilters[0] as OrderStatus) || 'ALL');
-      return res.json(orders.map((order) => this.presentOrder(order)));
+      const pageSize = 100;
+      const result = this.orderRepo.getOrdersPageByShop(shopId, {
+        status: (statusFilters[0] as OrderStatus) || 'ALL',
+        page: 1,
+        pageSize,
+        sortBy: 'createdAt',
+        sortOrder: 'desc',
+      });
+      res.setHeader('X-Total-Count', String(result.total));
+      res.setHeader('X-Page', '1');
+      res.setHeader('X-Page-Size', String(pageSize));
+      res.setHeader('X-Total-Pages', String(result.totalPages));
+      if (result.totalPages > 1) {
+        const query = new URLSearchParams();
+        if (statusFilters[0]) query.set('status', statusFilters[0]);
+        query.set('page', '2');
+        query.set('pageSize', String(pageSize));
+        res.setHeader('Link', `<${req.baseUrl}${req.path}?${query.toString()}>; rel="next"`);
+      }
+      return res.json(result.orders.map((order) => this.presentOrder(order)));
     }
     const parsePositiveInteger = (value: unknown, fallback: number): number | null => {
       if (value === undefined) return fallback;
