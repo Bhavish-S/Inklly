@@ -8,7 +8,7 @@
     "apps/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build:render && npm run build --workspace=apps/agent && npm run build --workspace=apps/web",
     "build:render": "npm run build --workspace=packages/shared --workspace=packages/db --workspace=apps/server",
     "test": "npm run test --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",

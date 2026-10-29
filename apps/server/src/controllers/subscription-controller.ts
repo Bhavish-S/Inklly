@@ -81,15 +81,17 @@ export class SubscriptionController {
   public usage = (req: Request, res: Response) => {
     const organizationId = req.user?.organizationId;
     if (!organizationId) return res.status(403).json({ error: 'An organization owner account is required.' });
+    const now = new Date().toISOString();
     const subscription = this.db.queryOne<any>(
       `SELECT current_period_start, current_period_end FROM subscriptions
        WHERE organization_id = ? AND status IN ('ACTIVE', 'TRIALING', 'GRACE')
+         AND current_period_start <= ? AND current_period_end > ?
        ORDER BY created_at DESC LIMIT 1`,
-      [organizationId]
+      [organizationId, now, now]
     );
-    const now = new Date();
-    const periodStart = subscription?.current_period_start || new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
-    const periodEnd = subscription?.current_period_end || new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString();
+    const clock = new Date(now);
+    const periodStart = subscription?.current_period_start || new Date(Date.UTC(clock.getUTCFullYear(), clock.getUTCMonth(), 1)).toISOString();
+    const periodEnd = subscription?.current_period_end || new Date(Date.UTC(clock.getUTCFullYear(), clock.getUTCMonth() + 1, 1)).toISOString();
     const totals = this.db.queryOne<any>(
       `SELECT COUNT(*) AS confirmed_orders, COALESCE(SUM(confirmed_sides), 0) AS confirmed_sides
        FROM subscription_usage_events WHERE organization_id = ? AND created_at >= ? AND created_at < ?`,

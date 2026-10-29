@@ -211,6 +211,7 @@ CREATE TABLE IF NOT EXISTS orders (
     total_amount_paise INTEGER NOT NULL DEFAULT 0,
     currency TEXT NOT NULL DEFAULT 'INR',
     quote_version TEXT NOT NULL,
+    pricing_snapshot TEXT,
     notes TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,

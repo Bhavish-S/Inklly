@@ -81,6 +81,27 @@ describe('Relational Database & Multi-Tenancy Tests', () => {
     assert.equal(Number(balance?.total), 0);
   });
 
+  it('keeps confirmed subscription usage append-only and prevents cascading history deletion', () => {
+    const migration = db.queryOne<any>(`SELECT version FROM inklly_schema_migrations WHERE version = 11`);
+    assert.equal(migration?.version, 11);
+    const order = orderRepo.getOrderByNumber('INK-DEMO-001');
+    assert.ok(order);
+    const organization = db.queryOne<any>(`SELECT organization_id FROM shops WHERE id = ?`, [order.shopId]);
+    assert.ok(organization?.organization_id);
+    const eventId = `usage-append-only-${Date.now()}`;
+    const now = new Date().toISOString();
+    db.execute(
+      `INSERT INTO subscription_usage_events (id, organization_id, shop_id, order_id, confirmed_sides, created_at)
+       VALUES (?, ?, ?, ?, 12, ?)`,
+      [eventId, organization.organization_id, order.shopId, order.id, now]
+    );
+
+    assert.throws(() => db.execute(`UPDATE subscription_usage_events SET confirmed_sides = 1 WHERE id = ?`, [eventId]), /append-only/i);
+    assert.throws(() => db.execute(`DELETE FROM subscription_usage_events WHERE id = ?`, [eventId]), /append-only/i);
+    assert.throws(() => db.execute(`DELETE FROM orders WHERE id = ?`, [order.id]), /append-only/i);
+    assert.equal(Number(db.queryOne<any>(`SELECT confirmed_sides FROM subscription_usage_events WHERE id = ?`, [eventId])?.confirmed_sides), 12);
+  });
+
   it('prevents posting a provider transaction to the ledger more than once', () => {
     const migration = db.queryOne<any>(`SELECT version FROM inklly_schema_migrations WHERE version = 10`);
     assert.equal(migration?.version, 10);
@@ -178,6 +199,14 @@ describe('Relational Database & Multi-Tenancy Tests', () => {
     );
     assert.ok(a4BwSimplex);
     assert.equal(a4BwSimplex.pricePerPrintedSidePaise, 200);
+    assert.equal(db.queryOne<any>(`SELECT version FROM inklly_schema_migrations WHERE version = 12`)?.version, 12);
+    const matchingCount = () => Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM rate_rules WHERE shop_id = ? AND printer_id IS NULL AND paper_size = 'A4' AND color_mode = 'bw' AND duplex_mode = 'simplex'`, ['shop-campus-1'])?.count);
+    const before = matchingCount();
+    pricingRepo.setRateRule({ ...a4BwSimplex, id: 'replayed-rate-rule', pricePerPrintedSidePaise: 225 });
+    assert.equal(matchingCount(), before, 'upsert keeps a single rule for a nullable-printer key');
+    assert.equal(pricingRepo.getRateRules('shop-campus-1').find((rule) => rule.paperSize === 'A4' && rule.colorMode === 'bw' && rule.duplexMode === 'simplex')?.pricePerPrintedSidePaise, 225);
+    assert.equal(db.queryOne<any>(`SELECT version FROM inklly_schema_migrations WHERE version = 13`)?.version, 13);
+    assert.ok(db.query<{ name: string }>(`PRAGMA table_info(orders)`).some((column) => column.name === 'pricing_snapshot'));
   });
 
   it('persists and updates orders with state machine validation', () => {

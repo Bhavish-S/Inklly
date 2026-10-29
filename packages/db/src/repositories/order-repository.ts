@@ -118,8 +118,8 @@ export class OrderRepository {
         `INSERT INTO orders (
           id, shop_id, order_number, token_number, customer_name, customer_phone, customer_email,
           channel, status, payment_status, payment_method, total_amount_paise,
-          currency, quote_version, notes, created_at, updated_at, collected_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          currency, quote_version, pricing_snapshot, notes, created_at, updated_at, collected_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           order.id,
           order.shopId,
@@ -135,6 +135,7 @@ export class OrderRepository {
           order.totalAmountPaise,
           order.currency || 'INR',
           order.quoteVersion || 'v1.0',
+          order.pricingSnapshot ? JSON.stringify(order.pricingSnapshot) : null,
           order.notes || null,
           order.createdAt,
           order.updatedAt,
@@ -269,6 +270,7 @@ export class OrderRepository {
       totalAmountPaise: row.total_amount_paise,
       currency: row.currency,
       quoteVersion: row.quote_version,
+      pricingSnapshot: row.pricing_snapshot ? JSON.parse(row.pricing_snapshot) : undefined,
       files,
       notes: row.notes,
       createdAt: row.created_at,

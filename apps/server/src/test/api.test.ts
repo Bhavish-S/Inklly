@@ -251,6 +251,18 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     cashOrderId = orderData.orderId;
     assert.ok(orderData.orderId);
     assert.equal(orderData.status, 'AWAITING_REVIEW');
+    const persistedSnapshot = db.queryOne<any>(`SELECT pricing_snapshot FROM orders WHERE id = ?`, [cashOrderId]);
+    assert.ok(persistedSnapshot?.pricing_snapshot);
+    const pricingSnapshot = JSON.parse(persistedSnapshot.pricing_snapshot);
+    assert.equal(pricingSnapshot.quote.totalPaise, 2000);
+    assert.equal(pricingSnapshot.quote.lineItems[0].printedSides, 10);
+    assert.equal(pricingSnapshot.rateRules.find((rule: any) => rule.paperSize === 'A4' && rule.colorMode === 'bw' && rule.duplexMode === 'simplex').pricePerPrintedSidePaise, 200);
+    const snapshotBeforeRateChange = persistedSnapshot.pricing_snapshot;
+    assert.throws(() => db.execute(`UPDATE orders SET pricing_snapshot = '{}' WHERE id = ?`, [cashOrderId]), /pricing snapshots are immutable/i);
+    const rate = db.queryOne<any>(`SELECT id, price_per_printed_side_paise FROM rate_rules WHERE shop_id = 'shop-campus-1' AND printer_id IS NULL AND paper_size = 'A4' AND color_mode = 'bw' AND duplex_mode = 'simplex'`);
+    db.execute(`UPDATE rate_rules SET price_per_printed_side_paise = 999 WHERE id = ?`, [rate.id]);
+    assert.equal(db.queryOne<any>(`SELECT pricing_snapshot FROM orders WHERE id = ?`, [cashOrderId]).pricing_snapshot, snapshotBeforeRateChange);
+    db.execute(`UPDATE rate_rules SET price_per_printed_side_paise = ? WHERE id = ?`, [rate.price_per_printed_side_paise, rate.id]);
 
     // Query status
     const statusRes = await fetch(`${baseUrl}/api/v1/portal/orders/${orderData.orderId}`);
@@ -847,6 +859,23 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       assert.equal(db.queryOne<any>(`SELECT status FROM orders WHERE id = ?`, [cashOrderId]).status, 'READY_FOR_COLLECTION');
       assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM audit_events WHERE action = 'MERCHANT_PRINT_OUTPUT_RECONCILED' AND target_id = ?`, [cashOrderId]).count), 1);
 
+      const anonymousUsage = await fetch(`${baseUrl}/api/v1/subscriptions/usage`);
+      assert.equal(anonymousUsage.status, 401);
+      const usage = await fetch(`${baseUrl}/api/v1/subscriptions/usage`, { headers: { Authorization: `Bearer ${merchantToken}` } });
+      assert.equal(usage.status, 200);
+      const usageBody = await usage.json() as any;
+      assert.equal(usageBody.confirmedOrders, 1);
+      assert.equal(usageBody.confirmedSides, 10);
+      assert.equal(usageBody.billingStatus, 'METERING_ONLY');
+      assert.equal(usageBody.chargeCreated, false);
+
+      const replayReconciliation = await fetch(`${baseUrl}/api/v1/merchant/orders/${cashOrderId}/reconcile-output`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+        body: JSON.stringify({ physicalOutputConfirmed: true, reason: 'Rechecked the full output and confirmed the order remains complete.' }),
+      });
+      assert.equal(replayReconciliation.status, 200);
+      assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM subscription_usage_events WHERE order_id = ?`, [cashOrderId]).count), 1);
+
       const delayedAgentReport = await fetch(`${baseUrl}/api/v1/agent/command-result`, {
         method: 'POST', headers: agentHeaders,
         body: JSON.stringify({ attemptId: ticket.attemptId, jobId: ticket.jobId, status: 'OUTPUT_UNCERTAIN', errorMessage: 'Delayed retry of the earlier agent report.', timestamp: new Date().toISOString() }),
@@ -1215,6 +1244,8 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     const spec = await specRes.json();
     assert.equal(spec.openapi, '3.0.3');
     assert.ok(spec.paths['/portal/quote']);
+    assert.ok(spec.paths['/subscriptions/usage']?.get.description.includes('does not create a charge'));
+    assert.ok(!spec.paths['/subscriptions/usage']?.get.description.includes('active subscription'));
 
     const requiredMerchantOperations: Record<string, string[]> = {
       '/merchant/dashboard': ['get'],
@@ -1865,8 +1896,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.match(processBody.error, /remains pending/);
   });
 
-  it('Rejects a refund request', async () => {
-    // Create a fresh refund to reject
+  it('Rejects a refund request without moving money and releases its reserved balance', async () => {
     const createRes = await fetch(`${baseUrl}/api/v1/payments/orders/${cashOrderId}/refunds`, {
       method: 'POST',
       headers: {
@@ -1887,9 +1917,15 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       },
       body: JSON.stringify({ action: 'REJECT', reason: 'Customer abuse' }),
     });
-    assert.equal(rejectRes.status, 503);
+    assert.equal(rejectRes.status, 200);
     const rejectBody = await rejectRes.json();
-    assert.match(rejectBody.error, /remains pending/);
+    assert.equal(rejectBody.status, 'FAILED');
+    assert.equal(rejectBody.moneyMoved, false);
+    assert.equal(db.queryOne<any>(`SELECT status, failure_reason FROM refunds WHERE id = ?`, [createBody.refundId]).status, 'FAILED');
+    assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM audit_events WHERE action = 'REFUND_REQUEST_REJECTED' AND target_id = ?`, [createBody.refundId]).count), 1);
+    assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM ledger_entries WHERE domain = 'CUSTOMER_PRINT_PAYMENT' AND order_id = ? AND amount_paise = -200`, [cashOrderId]).count), 0);
+    const remainingReservation = Number(db.queryOne<any>(`SELECT COALESCE(SUM(amount_paise), 0) AS total FROM refunds WHERE order_id = ? AND status IN ('REQUESTED', 'PROCESSING', 'COMPLETED')`, [cashOrderId]).total);
+    assert.equal(remainingReservation, 800, 'the rejected refund is excluded from reserved refundable amount');
   });
 
   // ─── MILESTONE 3: SUBSCRIPTIONS ───

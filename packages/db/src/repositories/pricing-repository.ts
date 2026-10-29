@@ -28,36 +28,16 @@ export class PricingRepository {
   }
 
   public setRateRule(rule: RateRule): void {
-    const existing = this.db.queryOne<any>(
-      `SELECT id FROM rate_rules
-       WHERE shop_id = ? AND paper_size = ? AND color_mode = ? AND duplex_mode = ? AND (printer_id = ? OR (printer_id IS NULL AND ? IS NULL))`,
-      [rule.shopId, rule.paperSize, rule.colorMode, rule.duplexMode, rule.printerId || null, rule.printerId || null]
-    );
-
     const now = new Date().toISOString();
-
-    if (existing) {
-      this.db.execute(
-        `UPDATE rate_rules SET price_per_printed_side_paise = ?, updated_at = ? WHERE id = ?`,
-        [rule.pricePerPrintedSidePaise, now, existing.id]
-      );
-    } else {
-      this.db.execute(
-        `INSERT INTO rate_rules (id, shop_id, printer_id, paper_size, color_mode, duplex_mode, price_per_printed_side_paise, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          rule.id,
-          rule.shopId,
-          rule.printerId || null,
-          rule.paperSize,
-          rule.colorMode,
-          rule.duplexMode,
-          rule.pricePerPrintedSidePaise,
-          now,
-          now,
-        ]
-      );
-    }
+    const conflictTarget = rule.printerId
+      ? `(shop_id, printer_id, paper_size, color_mode, duplex_mode) WHERE printer_id IS NOT NULL`
+      : `(shop_id, paper_size, color_mode, duplex_mode) WHERE printer_id IS NULL`;
+    this.db.execute(
+      `INSERT INTO rate_rules (id, shop_id, printer_id, paper_size, color_mode, duplex_mode, price_per_printed_side_paise, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT ${conflictTarget} DO UPDATE SET price_per_printed_side_paise = excluded.price_per_printed_side_paise, updated_at = excluded.updated_at`,
+      [rule.id, rule.shopId, rule.printerId || null, rule.paperSize, rule.colorMode, rule.duplexMode, rule.pricePerPrintedSidePaise, now, now]
+    );
   }
 
   public getCopyDiscountRules(shopId: string): CopyDiscountRule[] {

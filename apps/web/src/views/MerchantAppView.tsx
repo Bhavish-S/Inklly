@@ -710,6 +710,10 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [creditsRemaining, setCreditsRemaining] = useState<number>(50);
   const [creditsUsed, setCreditsUsed] = useState<number>(12);
   const [creditsPurchased, setCreditsPurchased] = useState<number>(0);
+  const [subscriptionUsage, setSubscriptionUsage] = useState<{ periodStart: string; periodEnd: string; confirmedOrders: number; confirmedSides: number } | null>(null);
+  const [subscriptionUsageError, setSubscriptionUsageError] = useState('');
+  const [subscriptionUsageLoading, setSubscriptionUsageLoading] = useState(false);
+  const [collectingOrder, setCollectingOrder] = useState(false);
   const [creditPurchaseToast, setCreditPurchaseToast] = useState<string | null>(null);
 
   // Withdraw State
@@ -1048,6 +1052,21 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     return () => { cancelled = true; };
   }, [activeView]);
 
+  useEffect(() => {
+    if (activeView !== 'credits' || liveUser?.role !== 'MERCHANT_OWNER') return;
+    let cancelled = false;
+    setSubscriptionUsageLoading(true);
+    setSubscriptionUsageError('');
+    api.getSubscriptionUsage().then((usage) => {
+      if (!cancelled) setSubscriptionUsage(usage);
+    }).catch((error: unknown) => {
+      if (!cancelled) setSubscriptionUsageError(error instanceof Error ? error.message : 'Could not load usage.');
+    }).finally(() => {
+      if (!cancelled) setSubscriptionUsageLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [activeView, liveUser?.role]);
+
   // Synchronize orders with Customer Portal via LocalStorage
   const updateOrderInStorage = (orderId: string, updates: any) => {
     try {
@@ -1116,6 +1135,13 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const handleMarkCollected = async (orderId: string) => {
     const order = findCachedOrder(orderId);
     const targetId = order?.rawId || orderId;
+    const isCashOnCollection = order?.paymentMethod === 'CASH_ON_COLLECTION';
+    const isPaymentVerified = order?.paymentStatus === 'VERIFIED';
+    if (!isCashOnCollection && !isPaymentVerified) {
+      setOrderActionToast('Collection requires cash recording or a verified online payment. Refresh the order and check its payment status.');
+      return;
+    }
+    setCollectingOrder(true);
     try {
       if (order?.rawStatus === 'COLLECTED') {
         setSelectedOrder(null);
@@ -1125,22 +1151,17 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
         setOrderActionToast('An order can be collected only after the print agent confirms every job is ready.');
         return;
       }
-      await api.updateOrderStatus(targetId, 'COLLECTED');
+      if (isCashOnCollection && !isPaymentVerified) await api.collectCash(targetId);
+      else await api.updateOrderStatus(targetId, 'COLLECTED');
     } catch (e) {
       console.warn('Update order status to COLLECTED warning:', e);
       setOrderActionToast(e instanceof Error ? e.message : 'Could not mark this order collected.');
       return;
+    } finally {
+      setCollectingOrder(false);
     }
-    updateOrderInStorage(orderId, { tab: 'done', rawStatus: 'COLLECTED', status: 'Cash Collected · Order Delivered' });
-    setOrdersList((prev) =>
-      prev.map((o) =>
-        o.id === orderId || o.rawId === orderId
-          ? { ...o, tab: 'done', rawStatus: 'COLLECTED', status: 'Cash Collected · Order Delivered' }
-          : o
-      )
-    );
-    fetchLiveOrdersFromApi();
-    setOrderActionToast(`Order #${orderId} marked as Completed & Delivered.`);
+    await fetchLiveOrdersFromApi();
+    setOrderActionToast(isCashOnCollection && !isPaymentVerified ? `Cash recorded and order #${orderId} completed.` : `Order #${orderId} completed; payment was already verified.`);
     setTimeout(() => setOrderActionToast(null), 3000);
     setSelectedOrder(null);
   };
@@ -2479,11 +2500,12 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                     </button>}
                     {selectedOrder.rawStatus === 'READY_FOR_COLLECTION' && <button
                       type="button"
+                      disabled={collectingOrder || (!['CASH_ON_COLLECTION', 'ONLINE_RAZORPAY'].includes(selectedOrder.paymentMethod) || selectedOrder.paymentStatus !== 'VERIFIED' && selectedOrder.paymentMethod !== 'CASH_ON_COLLECTION')}
                       onClick={() => handleMarkCollected(selectedOrder.id)}
-                      className="flex-1 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer flex items-center justify-center gap-1.5"
+                      className="flex-1 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 flex items-center justify-center gap-1.5"
                     >
                       <span>✓</span>
-                      <span>Mark collected</span>
+                      <span>{collectingOrder ? 'Recording payment…' : selectedOrder.paymentMethod === 'CASH_ON_COLLECTION' && selectedOrder.paymentStatus !== 'VERIFIED' ? 'Record cash & complete' : 'Mark collected'}</span>
                     </button>}
                     {selectedOrder.tab === 'pending' && (
                       <button
@@ -3086,8 +3108,27 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
 {activeView === 'credits' && (
   <section className="mx-auto my-10 max-w-3xl rounded-2xl border border-slate-200 bg-white p-8 shadow-sm dark:border-slate-700 dark:bg-slate-900">
     <p className="text-xs font-bold uppercase tracking-wider text-indigo-600">Pilot billing</p>
-    <h2 className="mt-2 text-2xl font-extrabold text-slate-900 dark:text-white">Usage billing is not active yet</h2>
-    <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">The pilot will use a monthly subscription plus a configurable fee for each successfully printed side. Inkly does not currently sell conversion credits, so this page will not show a balance or take payment.</p>
+    <h2 className="mt-2 text-2xl font-extrabold text-slate-900 dark:text-white">Print-side usage</h2>
+    <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">Usage is recorded after staff confirm complete physical output. These totals are informational; subscription pricing and payment collection are not active, and this meter does not create charges.</p>
+    {liveUser?.role !== 'MERCHANT_OWNER' ? (
+      <p className="mt-5 rounded-xl bg-slate-50 p-4 text-sm text-slate-600 dark:bg-slate-800 dark:text-slate-300">Usage totals are available to the merchant owner.</p>
+    ) : subscriptionUsageLoading ? (
+      <p className="mt-5 text-sm text-slate-500">Loading usage…</p>
+    ) : subscriptionUsageError ? (
+      <p role="alert" className="mt-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-200">{subscriptionUsageError}</p>
+    ) : subscriptionUsage ? (
+      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+        <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+          <div className="text-xs font-semibold text-slate-500">Confirmed print sides</div>
+          <div className="mt-1 text-3xl font-black text-slate-900 dark:text-white">{subscriptionUsage.confirmedSides.toLocaleString()}</div>
+        </div>
+        <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+          <div className="text-xs font-semibold text-slate-500">Orders confirmed</div>
+          <div className="mt-1 text-3xl font-black text-slate-900 dark:text-white">{subscriptionUsage.confirmedOrders.toLocaleString()}</div>
+        </div>
+        <p className="text-xs text-slate-500 sm:col-span-2">Period: {new Date(subscriptionUsage.periodStart).toLocaleDateString('en-IN')} – {new Date(subscriptionUsage.periodEnd).toLocaleDateString('en-IN')}. Side totals use server-stored page ranges and copies, confirmed by shop staff.</p>
+      </div>
+    ) : null}
     <button type="button" onClick={() => onNavigate?.('/pricing')} className="mt-6 min-h-11 rounded-xl bg-indigo-600 px-5 text-sm font-bold text-white hover:bg-indigo-700">View pilot pricing</button>
   </section>
 )}

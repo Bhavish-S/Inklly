@@ -224,8 +224,16 @@ export const api = {
       method: 'POST',
       headers: getHeaders(),
     });
-    if (!res.ok) throw new Error('Failed to record cash');
-    return res.json();
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to record cash');
+    return body;
+  },
+
+  async getSubscriptionUsage() {
+    const res = await fetch(`${API_BASE}/subscriptions/usage`, { headers: getHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not load print-side usage');
+    return body as { periodStart: string; periodEnd: string; confirmedOrders: number; confirmedSides: number; meter: string; billingStatus: 'METERING_ONLY'; chargeCreated: false };
   },
 
   // Refunds

@@ -494,6 +494,32 @@ export class PaymentController {
     if (action !== 'APPROVE' && action !== 'REJECT') {
       return res.status(400).json({ error: "Action must be 'APPROVE' or 'REJECT'." });
     }
+    if (action === 'REJECT') {
+      if (typeof reason !== 'string' || reason.trim().length < 3 || reason.trim().length > 500) {
+        return res.status(400).json({ error: 'A rejection reason between 3 and 500 characters is required.' });
+      }
+      const now = new Date().toISOString();
+      try {
+        const rejected = this.db.transaction(() => {
+          const current = this.db.queryOne<any>(`SELECT status FROM refunds WHERE id = ? AND order_id = ?`, [refundId, refund.order_id]);
+          if (!current || current.status !== 'REQUESTED') return false;
+          const locked = this.db.queryOne<any>(`UPDATE refunds SET status = status WHERE id = ? AND status = 'REQUESTED' RETURNING id`, [refundId]);
+          if (!locked) return false;
+          this.db.execute(`UPDATE refunds SET status = 'FAILED', failure_reason = ?, processed_at = ? WHERE id = ? AND status = 'REQUESTED'`, [reason.trim(), now, refundId]);
+          this.db.execute(
+            `INSERT INTO audit_events (id, actor_user_id, actor_role, shop_id, organization_id, action, target_type, target_id, outcome, ip_address, details, created_at)
+             VALUES (?, ?, ?, ?, ?, 'REFUND_REQUEST_REJECTED', 'REFUND', ?, 'SUCCESS', ?, ?, ?)`,
+            [crypto.randomUUID(), req.user?.userId || null, req.user?.role || null, refund.shop_id, req.user?.organizationId || null, refundId, req.ip, JSON.stringify({ amountPaise: refund.amount_paise, reason: reason.trim(), moneyMoved: false }), now]
+          );
+          return true;
+        });
+        if (!rejected) return res.status(409).json({ error: 'Refund is no longer pending.' });
+        return res.json({ success: true, refundId, status: 'FAILED', moneyMoved: false, message: 'Refund request rejected. No payment or ledger entry was changed.' });
+      } catch (error) {
+        console.error('[Refund rejection]', error);
+        return res.status(503).json({ error: 'Refund request could not be rejected. Refresh its status and retry.' });
+      }
+    }
     return res.status(503).json({ error: 'Refund processing is not configured. The request remains pending and no ledger entry was created.' });
   };
 }

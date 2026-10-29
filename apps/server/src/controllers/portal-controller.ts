@@ -216,13 +216,15 @@ export class PortalController {
       return res.status(storageUnavailable ? 503 : 422).json({ error: storageUnavailable ? 'Private file storage is temporarily unavailable.' : message });
     }
 
+    const copyDiscountRules = this.pricingRepo.getCopyDiscountRules(shopId);
+    const bulkDiscountRule = this.pricingRepo.getBulkDiscountRule(shopId) || undefined;
     let serverQuote;
     try {
       serverQuote = calculateQuote(
         { shopId, files: safeFiles.map((file: any) => ({ fileName: String(file.fileName || ''), pageCount: Number(file.pageCount), options: file.options })) },
         rateRules,
-        this.pricingRepo.getCopyDiscountRules(shopId),
-        this.pricingRepo.getBulkDiscountRule(shopId) || undefined,
+        copyDiscountRules,
+        bulkDiscountRule,
         0,
         shop.currency || 'INR'
       );
@@ -285,6 +287,7 @@ export class PortalController {
       totalAmountPaise: serverQuote.totalPaise,
       currency: shop.currency || 'INR',
       quoteVersion: serverQuote.quoteVersion,
+      pricingSnapshot: { acceptedAt: now, quote: serverQuote, rateRules, copyDiscountRules, bulkDiscountRule },
       files: orderFiles,
       createdAt: now,
       updatedAt: now,

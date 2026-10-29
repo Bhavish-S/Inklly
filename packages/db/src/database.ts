@@ -38,6 +38,8 @@ export class DatabaseService {
       this.ensureSqliteLedgerAppendOnlyMigration();
       this.ensureSqliteLedgerIdempotencyMigration();
       this.ensureSqliteSubscriptionUsageMigration();
+      this.ensureSqliteRateRuleUniquenessMigration();
+      this.ensureSqliteOrderPricingSnapshotMigration();
     }
   }
 
@@ -143,6 +145,8 @@ export class DatabaseService {
     this.ensurePostgresLedgerAppendOnlyMigration();
     this.ensurePostgresLedgerIdempotencyMigration();
     this.ensurePostgresSubscriptionUsageMigration();
+    this.ensurePostgresRateRuleUniquenessMigration();
+    this.ensurePostgresOrderPricingSnapshotMigration();
   }
 
   private ensureSqliteSubscriptionUsageMigration(): void {
@@ -188,6 +192,89 @@ export class DatabaseService {
     } catch (error) {
       try { this.queryPostgres('ROLLBACK'); } catch { /* preserve original error */ }
       throw new Error(`[Inklly DB] Subscription usage migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+
+  private ensureSqliteRateRuleUniquenessMigration(): void {
+    if (this.db!.prepare(`SELECT version FROM inklly_schema_migrations WHERE version = 12`).get()) return;
+    this.db!.exec('BEGIN');
+    try {
+      const duplicate = this.db!.prepare(`SELECT shop_id FROM rate_rules WHERE printer_id IS NULL
+        GROUP BY shop_id, paper_size, color_mode, duplex_mode HAVING COUNT(*) > 1 LIMIT 1`).get()
+        || this.db!.prepare(`SELECT shop_id FROM rate_rules WHERE printer_id IS NOT NULL
+          GROUP BY shop_id, printer_id, paper_size, color_mode, duplex_mode HAVING COUNT(*) > 1 LIMIT 1`).get();
+      if (duplicate) throw new Error('Duplicate rate-rule keys exist; reconcile conflicting prices before enabling unique rate keys.');
+      this.db!.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_rate_rules_default_unique
+        ON rate_rules(shop_id, paper_size, color_mode, duplex_mode) WHERE printer_id IS NULL`);
+      this.db!.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_rate_rules_printer_unique
+        ON rate_rules(shop_id, printer_id, paper_size, color_mode, duplex_mode) WHERE printer_id IS NOT NULL`);
+      this.db!.prepare(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (12, ?)`).run(new Date().toISOString());
+      this.db!.exec('COMMIT');
+    } catch (error) {
+      try { this.db!.exec('ROLLBACK'); } catch { /* preserve original error */ }
+      throw error;
+    }
+  }
+
+  private ensurePostgresRateRuleUniquenessMigration(): void {
+    if (this.queryPostgres(`SELECT version FROM inklly_schema_migrations WHERE version = ?`, [12]).length) return;
+    this.queryPostgres('BEGIN');
+    try {
+      const duplicate = this.queryPostgres<any>(`SELECT shop_id FROM rate_rules WHERE printer_id IS NULL
+        GROUP BY shop_id, paper_size, color_mode, duplex_mode HAVING COUNT(*) > 1 LIMIT 1`)[0]
+        || this.queryPostgres<any>(`SELECT shop_id FROM rate_rules WHERE printer_id IS NOT NULL
+          GROUP BY shop_id, printer_id, paper_size, color_mode, duplex_mode HAVING COUNT(*) > 1 LIMIT 1`)[0];
+      if (duplicate) throw new Error('Duplicate rate-rule keys exist; reconcile conflicting prices before enabling unique rate keys.');
+      this.queryPostgres(`CREATE UNIQUE INDEX IF NOT EXISTS idx_rate_rules_default_unique
+        ON rate_rules(shop_id, paper_size, color_mode, duplex_mode) WHERE printer_id IS NULL`);
+      this.queryPostgres(`CREATE UNIQUE INDEX IF NOT EXISTS idx_rate_rules_printer_unique
+        ON rate_rules(shop_id, printer_id, paper_size, color_mode, duplex_mode) WHERE printer_id IS NOT NULL`);
+      this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [12, new Date().toISOString()]);
+      this.queryPostgres('COMMIT');
+    } catch (error) {
+      try { this.queryPostgres('ROLLBACK'); } catch { /* preserve original error */ }
+      throw new Error(`[Inklly DB] Rate-rule uniqueness migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+
+  private ensureSqliteOrderPricingSnapshotMigration(): void {
+    if (this.db!.prepare(`SELECT version FROM inklly_schema_migrations WHERE version = 13`).get()) return;
+    this.db!.exec('BEGIN');
+    try {
+      const columns = this.db!.prepare(`PRAGMA table_info(orders)`).all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === 'pricing_snapshot')) this.db!.exec(`ALTER TABLE orders ADD COLUMN pricing_snapshot TEXT`);
+      this.db!.exec(`CREATE TRIGGER IF NOT EXISTS orders_pricing_snapshot_immutable
+        BEFORE UPDATE OF pricing_snapshot ON orders
+        WHEN OLD.pricing_snapshot IS NOT NULL AND NEW.pricing_snapshot IS NOT OLD.pricing_snapshot
+        BEGIN SELECT RAISE(ABORT, 'accepted order pricing snapshots are immutable'); END`);
+      this.db!.prepare(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (13, ?)`).run(new Date().toISOString());
+      this.db!.exec('COMMIT');
+    } catch (error) {
+      try { this.db!.exec('ROLLBACK'); } catch { /* preserve original error */ }
+      throw error;
+    }
+  }
+
+  private ensurePostgresOrderPricingSnapshotMigration(): void {
+    if (this.queryPostgres(`SELECT version FROM inklly_schema_migrations WHERE version = ?`, [13]).length) return;
+    this.queryPostgres('BEGIN');
+    try {
+      this.queryPostgres(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS pricing_snapshot TEXT`);
+      this.queryPostgres(`CREATE OR REPLACE FUNCTION prevent_order_pricing_snapshot_mutation() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          IF OLD.pricing_snapshot IS NOT NULL AND NEW.pricing_snapshot IS DISTINCT FROM OLD.pricing_snapshot THEN
+            RAISE EXCEPTION 'accepted order pricing snapshots are immutable';
+          END IF;
+          RETURN NEW;
+        END; $$`);
+      this.queryPostgres(`DROP TRIGGER IF EXISTS orders_pricing_snapshot_immutable ON orders`);
+      this.queryPostgres(`CREATE TRIGGER orders_pricing_snapshot_immutable BEFORE UPDATE OF pricing_snapshot ON orders
+        FOR EACH ROW EXECUTE FUNCTION prevent_order_pricing_snapshot_mutation()`);
+      this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [13, new Date().toISOString()]);
+      this.queryPostgres('COMMIT');
+    } catch (error) {
+      try { this.queryPostgres('ROLLBACK'); } catch { /* preserve original error */ }
+      throw new Error(`[Inklly DB] Order pricing snapshot migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
     }
   }
 

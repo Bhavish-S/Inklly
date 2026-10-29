@@ -1,4 +1,13 @@
 import { PrintOptions } from './printing';
+import { BulkDiscountRule, CopyDiscountRule, PriceQuoteResult, RateRule } from './pricing';
+
+export interface OrderPricingSnapshot {
+  acceptedAt: string;
+  quote: PriceQuoteResult;
+  rateRules: RateRule[];
+  copyDiscountRules: CopyDiscountRule[];
+  bulkDiscountRule?: BulkDiscountRule;
+}
 
 export type OrderStatus =
   | 'DRAFT'
@@ -85,6 +94,7 @@ export interface Order {
   totalAmountPaise: number;
   currency: string;
   quoteVersion: string;
+  pricingSnapshot?: OrderPricingSnapshot;
   files: OrderFile[];
   notes?: string;
   createdAt: string;

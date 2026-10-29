@@ -7,7 +7,6 @@ import { encryptWebhookSecret } from '../services/webhook-secrets';
 const WEBHOOK_EVENT_TYPES = ['order.created', 'order.status_changed', 'payment.succeeded', 'print_job.jammed', 'spooler.offline'];
 
 const MERCHANT_ROUTE_DOCUMENTATION: Array<{ path: string; method: string; summary: string; access: string }> = [
-  { path: '/subscriptions/usage', method: 'get', summary: 'Read operator-confirmed print-side usage for the current billing period', access: 'Restricted to MERCHANT_OWNER. Metering only; no charge is created.' },
   { path: '/merchant/dashboard', method: 'get', summary: 'Get merchant dashboard data', access: 'Requires orders:view.' },
   { path: '/merchant/orders', method: 'get', summary: 'List merchant orders', access: 'Requires orders:view.' },
   { path: '/merchant/orders/{id}', method: 'get', summary: 'Get a merchant order', access: 'Requires orders:view.' },
@@ -72,6 +71,42 @@ function buildMerchantOpenApiPaths(): Record<string, Record<string, unknown>> {
     paths[route.path][route.method] = operation;
   }
   return paths;
+}
+
+function buildSubscriptionOpenApiPaths(): Record<string, Record<string, unknown>> {
+  return {
+    '/subscriptions/plans': {
+      get: {
+        summary: 'List planned subscription tiers',
+        description: 'Public catalog only. Returned tiers are not purchasable and contain no active pilot prices.',
+        responses: { 200: { description: 'Planned tiers; no active pricing is returned.' } },
+      },
+    },
+    '/subscriptions/usage': {
+      get: {
+        summary: 'Read operator-confirmed print-side usage for the current period',
+        description: 'Requires an authenticated MERCHANT_OWNER session. Reports selected document pages multiplied by copies after operator confirmation. This is metering only and does not create a charge.',
+        security: [{ bearerAuth: [] }],
+        responses: { 200: { description: 'Organization-scoped usage totals.' }, 401: { description: 'Authentication required.' }, 403: { description: 'Merchant owner role and organization membership required.' } },
+      },
+    },
+    '/subscriptions/checkout': {
+      post: {
+        summary: 'Create a subscription checkout',
+        description: 'Requires an authenticated MERCHANT_OWNER session. Not available during the pilot; no charge or subscription change is created.',
+        security: [{ bearerAuth: [] }],
+        responses: { 503: { description: 'Subscription checkout is unavailable.' } },
+      },
+    },
+    '/subscriptions/verify': {
+      post: {
+        summary: 'Verify a subscription payment',
+        description: 'Requires an authenticated MERCHANT_OWNER session. Not available during the pilot.',
+        security: [{ bearerAuth: [] }],
+        responses: { 503: { description: 'Subscription payment verification is unavailable.' } },
+      },
+    },
+  };
 }
 
 function normalizeWebhookUrl(value: unknown): string | null {
@@ -170,6 +205,7 @@ export class DeveloperController {
           },
         },
         ...buildMerchantOpenApiPaths(),
+        ...buildSubscriptionOpenApiPaths(),
       },
     });
   };
