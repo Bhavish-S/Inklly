@@ -341,6 +341,17 @@ export const api = {
     return body;
   },
 
+  async updateDiscountSettings(settings: any) {
+    const res = await fetch(`${API_BASE}/merchant/discounts`, {
+      method: 'PUT',
+      headers: getHeaders(),
+      body: JSON.stringify(settings),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not save discount settings');
+    return body;
+  },
+
   async getPrinters() {
     const res = await fetch(`${API_BASE}/merchant/printers`, { headers: getHeaders() });
     const body = await res.json().catch(() => ({}));

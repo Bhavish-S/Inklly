@@ -415,7 +415,7 @@ export class MerchantController {
     const { minOrderValuePaise, discountPercentage, isEnabled } = req.body;
 
     if (!Number.isSafeInteger(minOrderValuePaise) || minOrderValuePaise < 0 || minOrderValuePaise > 5_000_000_000 ||
-        typeof discountPercentage !== 'number' || !Number.isFinite(discountPercentage) || discountPercentage < 0 || discountPercentage > 100 ||
+        !Number.isSafeInteger(discountPercentage) || discountPercentage < 0 || discountPercentage > 100 ||
         (isEnabled !== undefined && typeof isEnabled !== 'boolean')) {
       return res.status(400).json({ error: 'Bulk discount values must be valid Paise amounts, a percentage from 0 to 100, and a boolean enabled flag.' });
     }
@@ -429,6 +429,70 @@ export class MerchantController {
     });
 
     res.json({ success: true, bulkDiscount: this.pricingRepo.getBulkDiscountRule(shopId) });
+  };
+
+  public updateDiscountSettings = (req: Request, res: Response) => {
+    const shopId = this.getShopId(req);
+    const bulk = req.body?.bulk;
+    const copyRules = req.body?.copyRules;
+    if (!bulk || typeof bulk !== 'object' || Array.isArray(bulk) ||
+        !Number.isSafeInteger(bulk.minOrderValuePaise) || bulk.minOrderValuePaise < 0 || bulk.minOrderValuePaise > 5_000_000_000 ||
+        !Number.isSafeInteger(bulk.discountPercentage) || bulk.discountPercentage < 0 || bulk.discountPercentage > 100 ||
+        typeof bulk.isEnabled !== 'boolean' || !Array.isArray(copyRules) || copyRules.length < 1 || copyRules.length > 24) {
+      return res.status(400).json({ error: 'Provide a valid bulk discount and one or more copy discount rules.' });
+    }
+
+    const validPaperSizes = new Set(['A4', 'A3', 'PHOTO_4X6', 'PHOTO_5X7', 'GLOSSY', 'PLAIN']);
+    const uniqueKeys = new Set<string>();
+    const baseRates = this.pricingRepo.getRateRules(shopId);
+    const persistedCopyRules: Array<{ paperSize: any; colorMode: any; duplexMode: any; copyOnePricePaise: number; additionalCopyPricePaise: number; isEnabled: boolean }> = [];
+    for (const rule of copyRules) {
+      if (!rule || typeof rule !== 'object' || Array.isArray(rule) ||
+          typeof rule.paperSize !== 'string' || !validPaperSizes.has(rule.paperSize) ||
+          !['bw', 'color'].includes(rule.colorMode) || !['simplex', 'duplex_auto', 'duplex_manual'].includes(rule.duplexMode) ||
+          !Number.isSafeInteger(rule.additionalCopyPricePaise) || rule.additionalCopyPricePaise < 0 || rule.additionalCopyPricePaise > 100_000_000 ||
+          typeof rule.isEnabled !== 'boolean') {
+        return res.status(400).json({ error: 'A copy discount rule contains an invalid paper size, print mode, additional-copy price, or enabled flag.' });
+      }
+      const key = `${rule.paperSize}:${rule.colorMode}:${rule.duplexMode}`;
+      if (uniqueKeys.has(key)) return res.status(400).json({ error: 'Copy discount rules must not contain duplicate configurations.' });
+      uniqueKeys.add(key);
+      const baseRate = baseRates.find((rate) => rate.paperSize === rule.paperSize && rate.colorMode === rule.colorMode && rate.duplexMode === rule.duplexMode);
+      if (!baseRate) return res.status(400).json({ error: `Set a normal ${rule.paperSize} ${rule.colorMode} ${rule.duplexMode} rate before configuring its copy discount.` });
+      if (rule.additionalCopyPricePaise > baseRate.pricePerPrintedSidePaise) {
+        return res.status(400).json({ error: 'An additional-copy rate cannot be higher than its normal per-side rate.' });
+      }
+      persistedCopyRules.push({ ...rule, copyOnePricePaise: baseRate.pricePerPrintedSidePaise });
+    }
+
+    const now = new Date().toISOString();
+    try {
+      this.db.transaction(() => {
+        this.pricingRepo.setBulkDiscountRule({
+          id: `bulk-${shopId}`,
+          shopId,
+          minOrderValuePaise: bulk.minOrderValuePaise,
+          discountPercentage: bulk.discountPercentage,
+          isEnabled: bulk.isEnabled,
+        });
+        this.pricingRepo.setCopyDiscountRules(shopId, persistedCopyRules);
+        this.db.execute(
+          `INSERT INTO audit_events (id, actor_user_id, actor_role, shop_id, organization_id, action, target_type, target_id, outcome, ip_address, details, created_at)
+           VALUES (?, ?, ?, ?, ?, 'MERCHANT_PRICING_SETTINGS_UPDATED', 'SHOP_PRICING', ?, 'SUCCESS', ?, ?, ?)`,
+          [crypto.randomUUID(), req.user?.userId || null, req.user?.role || null, shopId, req.user?.organizationId || null,
+            shopId, req.ip || null, JSON.stringify({ bulk, copyRules: persistedCopyRules }), now]
+        );
+      });
+    } catch (error) {
+      console.error('[Merchant pricing settings]', error);
+      return res.status(503).json({ error: 'Discount settings could not be saved. No changes were applied.' });
+    }
+
+    return res.json({
+      success: true,
+      bulkDiscount: this.pricingRepo.getBulkDiscountRule(shopId),
+      copyDiscounts: this.pricingRepo.getCopyDiscountRules(shopId),
+    });
   };
 
   public getPrinters = (req: Request, res: Response) => {
@@ -530,8 +594,10 @@ export class MerchantController {
     delete updates.portalSettings;
 
     try {
-      if (Object.keys(updates).length) this.shopRepo.updateShopSettings(shopId, updates);
-      const savedPortalSettings = portalSettings === undefined ? this.shopRepo.getPortalSettings(shopId) : this.shopRepo.updatePortalSettings(shopId, portalSettings);
+      const savedPortalSettings = this.db.transaction(() => {
+        if (Object.keys(updates).length) this.shopRepo.updateShopSettings(shopId, updates);
+        return portalSettings === undefined ? this.shopRepo.getPortalSettings(shopId) : this.shopRepo.updatePortalSettings(shopId, portalSettings);
+      });
       res.json({ success: true, shop: { ...this.shopRepo.getShopById(shopId), portalSettings: savedPortalSettings } });
     } catch (err: any) {
       res.status(400).json({ error: err.message });

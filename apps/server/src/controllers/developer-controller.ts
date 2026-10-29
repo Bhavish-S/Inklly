@@ -19,6 +19,7 @@ const MERCHANT_ROUTE_DOCUMENTATION: Array<{ path: string; method: string; summar
   { path: '/merchant/rates', method: 'get', summary: 'Get shop rate rules', access: 'Requires settings:view.' },
   { path: '/merchant/rates', method: 'put', summary: 'Update a shop rate rule', access: 'Requires settings:manage.' },
   { path: '/merchant/discounts/bulk', method: 'put', summary: 'Update the shop bulk discount', access: 'Requires settings:manage.' },
+  { path: '/merchant/discounts', method: 'put', summary: 'Atomically update shop bulk and additional-copy discounts', access: 'Requires settings:manage; writes an audit event.' },
   { path: '/merchant/printers', method: 'get', summary: 'List shop printers', access: 'Requires printers:view.' },
   { path: '/merchant/printers', method: 'post', summary: 'Add a shop printer', access: 'Requires printers:manage.' },
   { path: '/merchant/printers/{id}/default', method: 'put', summary: 'Set the default shop printer', access: 'Requires printers:manage.' },
@@ -68,6 +69,56 @@ function buildMerchantOpenApiPaths(): Record<string, Record<string, unknown>> {
       schema: { type: 'string' },
     }));
     if (pathParameters.length) operation.parameters = pathParameters;
+    if (route.path === '/merchant/discounts' && route.method === 'put') {
+      operation.requestBody = {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['bulk', 'copyRules'],
+              properties: {
+                bulk: {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: ['minOrderValuePaise', 'discountPercentage', 'isEnabled'],
+                  properties: {
+                    minOrderValuePaise: { type: 'integer', minimum: 0, maximum: 5000000000 },
+                    discountPercentage: { type: 'integer', minimum: 0, maximum: 100 },
+                    isEnabled: { type: 'boolean' },
+                  },
+                },
+                copyRules: {
+                  type: 'array',
+                  minItems: 1,
+                  maxItems: 24,
+                  items: {
+                    type: 'object',
+                    additionalProperties: false,
+                    required: ['paperSize', 'colorMode', 'duplexMode', 'additionalCopyPricePaise', 'isEnabled'],
+                    properties: {
+                      paperSize: { type: 'string', enum: ['A4', 'A3', 'PHOTO_4X6', 'PHOTO_5X7', 'GLOSSY', 'PLAIN'] },
+                      colorMode: { type: 'string', enum: ['bw', 'color'] },
+                      duplexMode: { type: 'string', enum: ['simplex', 'duplex_auto', 'duplex_manual'] },
+                      additionalCopyPricePaise: { type: 'integer', minimum: 0, maximum: 100000000 },
+                      isEnabled: { type: 'boolean' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      };
+      operation.responses = {
+        default: { description: 'Response status and body are defined by the route handler.' },
+        200: { description: 'Bulk and copy-discount rules were committed atomically and audited.' },
+        400: { description: 'Invalid rates, duplicate rules, or additional-copy price above its normal rate.' },
+        403: { description: 'Missing settings:manage permission.' },
+        503: { description: 'Persistence failed; no discount settings were applied.' },
+      };
+    }
     paths[route.path] ??= {};
     paths[route.path][route.method] = operation;
   }

@@ -56,6 +56,7 @@ export function createMerchantRoutes(db: DatabaseService, fileStorage: PrivateFi
   router.get('/rates', requirePermission('settings:view'), controller.getRates);
   router.put('/rates', requirePermission('settings:manage'), controller.updateRateRule);
   router.put('/discounts/bulk', requirePermission('settings:manage'), controller.updateBulkDiscount);
+  router.put('/discounts', requirePermission('settings:manage'), controller.updateDiscountSettings);
 
   router.get('/printers', requirePermission('printers:view'), controller.getPrinters);
   router.post('/printers', requirePermission('printers:manage'), controller.addPrinter);

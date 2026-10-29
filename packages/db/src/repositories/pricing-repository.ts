@@ -54,6 +54,26 @@ export class PricingRepository {
     }));
   }
 
+  public setCopyDiscountRules(shopId: string, rules: Array<Omit<CopyDiscountRule, 'id' | 'shopId'>>): CopyDiscountRule[] {
+    this.db.transaction(() => {
+      for (const rule of rules) {
+        const id = `copy-${shopId}-${rule.paperSize}-${rule.colorMode}-${rule.duplexMode}`;
+        this.db.execute(
+          `INSERT INTO copy_discount_rules
+             (id, shop_id, paper_size, color_mode, duplex_mode, copy_one_price_paise, additional_copy_price_paise, is_enabled)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(shop_id, paper_size, color_mode, duplex_mode) DO UPDATE SET
+             copy_one_price_paise = excluded.copy_one_price_paise,
+             additional_copy_price_paise = excluded.additional_copy_price_paise,
+             is_enabled = excluded.is_enabled`,
+          [id, shopId, rule.paperSize, rule.colorMode, rule.duplexMode, rule.copyOnePricePaise,
+            rule.additionalCopyPricePaise, rule.isEnabled ? 1 : 0]
+        );
+      }
+    });
+    return this.getCopyDiscountRules(shopId);
+  }
+
   public getBulkDiscountRule(shopId: string): BulkDiscountRule | null {
     const row = this.db.queryOne<any>(`SELECT * FROM bulk_discount_rules WHERE shop_id = ?`, [shopId]);
     if (!row) return null;

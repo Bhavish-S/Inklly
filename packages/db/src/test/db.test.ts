@@ -236,6 +236,40 @@ describe('Relational Database & Multi-Tenancy Tests', () => {
     assert.ok(db.query<{ name: string }>(`PRAGMA table_info(orders)`).some((column) => column.name === 'pricing_snapshot'));
   });
 
+  it('enforces unique copy discount configurations and fails closed on legacy duplicates', () => {
+    const migration = db.queryOne<any>(`SELECT version FROM inklly_schema_migrations WHERE version = 23`);
+    assert.equal(migration?.version, 23);
+    const index = db.queryOne<any>(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_copy_discount_rules_unique'`);
+    assert.equal(index?.name, 'idx_copy_discount_rules_unique');
+
+    db.execute(`DROP INDEX idx_copy_discount_rules_unique`);
+    db.execute(`DELETE FROM inklly_schema_migrations WHERE version = 23`);
+    for (const id of ['copy-legacy-a', 'copy-legacy-b']) {
+      db.execute(
+        `INSERT INTO copy_discount_rules (id, shop_id, paper_size, color_mode, duplex_mode, copy_one_price_paise, additional_copy_price_paise, is_enabled)
+         VALUES (?, 'shop-campus-1', 'A4', 'bw', 'simplex', 200, 100, 1)`, [id]
+      );
+    }
+    assert.throws(() => (db as any).ensureSqliteCopyDiscountUniquenessMigration(), /duplicate copy-discount keys/i);
+    assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM copy_discount_rules WHERE shop_id = 'shop-campus-1'`).count), 2,
+      'failed migration preserves ambiguous legacy rows for operator review');
+    assert.equal(db.queryOne<any>(`SELECT version FROM inklly_schema_migrations WHERE version = 23`)?.version, undefined);
+    db.execute(`DELETE FROM copy_discount_rules WHERE id IN ('copy-legacy-a', 'copy-legacy-b')`);
+    (db as any).ensureSqliteCopyDiscountUniquenessMigration();
+    assert.equal(db.queryOne<any>(`SELECT version FROM inklly_schema_migrations WHERE version = 23`)?.version, 23);
+  });
+
+  it('upserts additional-copy discounts by shop, paper and print mode', () => {
+    const rule = { paperSize: 'A4' as const, colorMode: 'bw' as const, duplexMode: 'simplex' as const,
+      copyOnePricePaise: 200, additionalCopyPricePaise: 125, isEnabled: true };
+    pricingRepo.setCopyDiscountRules('shop-campus-1', [rule]);
+    pricingRepo.setCopyDiscountRules('shop-campus-1', [{ ...rule, additionalCopyPricePaise: 100 }]);
+    const rules = pricingRepo.getCopyDiscountRules('shop-campus-1');
+    assert.equal(rules.length, 1);
+    assert.equal(rules[0].additionalCopyPricePaise, 100);
+    assert.equal(rules[0].copyOnePricePaise, 200);
+  });
+
   it('persists idempotent webhook events, leases retries, and scopes history by organization', () => {
     const migration = db.queryOne<any>(`SELECT version FROM inklly_schema_migrations WHERE version = 14`);
     assert.equal(migration?.version, 14);

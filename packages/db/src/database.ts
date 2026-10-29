@@ -49,6 +49,7 @@ export class DatabaseService {
       this.ensureSqlitePublicUploadRateLimitMigration();
       this.ensureSqlitePlatformIncidentMigration();
       this.ensureSqlitePlatformSubscriptionBillingMigration();
+      this.ensureSqliteCopyDiscountUniquenessMigration();
     }
   }
 
@@ -165,6 +166,41 @@ export class DatabaseService {
     this.ensurePostgresPublicUploadRateLimitMigration();
     this.ensurePostgresPlatformIncidentMigration();
     this.ensurePostgresPlatformSubscriptionBillingMigration();
+    this.ensurePostgresCopyDiscountUniquenessMigration();
+  }
+
+  private ensureSqliteCopyDiscountUniquenessMigration(): void {
+    if (this.db!.prepare(`SELECT version FROM inklly_schema_migrations WHERE version = 23`).get()) return;
+    const duplicate = this.db!.prepare(`SELECT shop_id, paper_size, color_mode, duplex_mode FROM copy_discount_rules
+      GROUP BY shop_id, paper_size, color_mode, duplex_mode HAVING COUNT(*) > 1 LIMIT 1`).get();
+    if (duplicate) throw new Error('[Inklly DB] Duplicate copy-discount keys exist; reconcile conflicting prices before enabling unique copy-discount rules.');
+    this.db!.exec('BEGIN');
+    try {
+      this.db!.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_copy_discount_rules_unique
+        ON copy_discount_rules(shop_id, paper_size, color_mode, duplex_mode)`);
+      this.db!.prepare(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (23, ?)`).run(new Date().toISOString());
+      this.db!.exec('COMMIT');
+    } catch (error) {
+      try { this.db!.exec('ROLLBACK'); } catch { /* preserve the original error */ }
+      throw new Error(`[Inklly DB] Copy-discount uniqueness migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+
+  private ensurePostgresCopyDiscountUniquenessMigration(): void {
+    if (this.queryPostgres(`SELECT version FROM inklly_schema_migrations WHERE version = ?`, [23]).length) return;
+    const duplicate = this.queryPostgres(`SELECT shop_id, paper_size, color_mode, duplex_mode FROM copy_discount_rules
+      GROUP BY shop_id, paper_size, color_mode, duplex_mode HAVING COUNT(*) > 1 LIMIT 1`);
+    if (duplicate.length) throw new Error('[Inklly DB] Duplicate copy-discount keys exist; reconcile conflicting prices before enabling unique copy-discount rules.');
+    this.queryPostgres('BEGIN');
+    try {
+      this.queryPostgres(`CREATE UNIQUE INDEX IF NOT EXISTS idx_copy_discount_rules_unique
+        ON copy_discount_rules(shop_id, paper_size, color_mode, duplex_mode)`);
+      this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [23, new Date().toISOString()]);
+      this.queryPostgres('COMMIT');
+    } catch (error) {
+      try { this.queryPostgres('ROLLBACK'); } catch { /* preserve the original error */ }
+      throw new Error(`[Inklly DB] PostgreSQL copy-discount uniqueness migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
   }
 
   private ensureSqlitePlatformSubscriptionBillingMigration(): void {

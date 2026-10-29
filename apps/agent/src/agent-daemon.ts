@@ -212,10 +212,8 @@ export class AgentDaemon {
   }
 
   public async processNextQueueItem(): Promise<SpoolerResult | null> {
-    const item = this.queue.getNextPending();
+    const item = this.queue.claimNextPending();
     if (!item) return null;
-
-    this.queue.updateStatus(item.commandId, 'DISPATCHED_TO_SPOOLER');
 
     const ticket: PrintCommandTicket = {
       commandId: item.commandId,

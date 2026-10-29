@@ -157,6 +157,68 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     }
   });
 
+  it('persists bulk and additional-copy discounts atomically with audited integer-Paise rules', async () => {
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` };
+    const originalBulk = db.queryOne<any>(`SELECT * FROM bulk_discount_rules WHERE shop_id = 'shop-campus-1'`);
+    const originalCopyRules = db.query<any>(`SELECT * FROM copy_discount_rules WHERE shop_id = 'shop-campus-1'`);
+    const originalAuditCount = Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM audit_events WHERE action = 'MERCHANT_PRICING_SETTINGS_UPDATED' AND shop_id = 'shop-campus-1'`).count);
+    let createdAuditId: string | undefined;
+    const baseRates = db.query<any>(`SELECT paper_size, color_mode, duplex_mode, price_per_printed_side_paise
+      FROM rate_rules WHERE shop_id = 'shop-campus-1' AND printer_id IS NULL AND paper_size = 'A4'
+      AND duplex_mode IN ('simplex', 'duplex_auto')`);
+    assert.equal(baseRates.length, 4, 'seeded A4 defaults cover the supported discount combinations');
+    const copyRules = baseRates.map((rate) => ({
+      paperSize: rate.paper_size,
+      colorMode: rate.color_mode,
+      duplexMode: rate.duplex_mode,
+      additionalCopyPricePaise: Math.max(0, Number(rate.price_per_printed_side_paise) - 25),
+      isEnabled: true,
+    }));
+    try {
+      const save = await fetch(`${baseUrl}/api/v1/merchant/discounts`, {
+        method: 'PUT', headers,
+        body: JSON.stringify({ bulk: { minOrderValuePaise: 15000, discountPercentage: 10, isEnabled: true }, copyRules }),
+      });
+      assert.equal(save.status, 200);
+      const saved = await save.json() as any;
+      assert.equal(saved.bulkDiscount.minOrderValuePaise, 15000);
+      assert.equal(saved.bulkDiscount.discountPercentage, 10);
+      assert.equal(saved.copyDiscounts.length, 4);
+      assert.ok(saved.copyDiscounts.every((rule: any) => rule.copyOnePricePaise >= rule.additionalCopyPricePaise && rule.isEnabled));
+      assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM audit_events WHERE action = 'MERCHANT_PRICING_SETTINGS_UPDATED' AND shop_id = 'shop-campus-1'`).count), originalAuditCount + 1);
+      createdAuditId = db.queryOne<any>(`SELECT id FROM audit_events WHERE action = 'MERCHANT_PRICING_SETTINGS_UPDATED' AND shop_id = 'shop-campus-1' ORDER BY created_at DESC LIMIT 1`)?.id;
+
+      const beforeInvalidBulk = db.queryOne<any>(`SELECT min_order_value_paise, discount_percentage, is_enabled FROM bulk_discount_rules WHERE shop_id = 'shop-campus-1'`);
+      const invalidFractionalPercent = await fetch(`${baseUrl}/api/v1/merchant/discounts/bulk`, {
+        method: 'PUT', headers, body: JSON.stringify({ minOrderValuePaise: 10000, discountPercentage: 2.5, isEnabled: true }),
+      });
+      assert.equal(invalidFractionalPercent.status, 400, 'persisted integer percentage rules reject fractional values');
+      const afterInvalidBulk = db.queryOne<any>(`SELECT min_order_value_paise, discount_percentage, is_enabled FROM bulk_discount_rules WHERE shop_id = 'shop-campus-1'`);
+      assert.equal(afterInvalidBulk.min_order_value_paise, beforeInvalidBulk.min_order_value_paise);
+      assert.equal(afterInvalidBulk.discount_percentage, beforeInvalidBulk.discount_percentage);
+
+      const invalidAdditionalRate = await fetch(`${baseUrl}/api/v1/merchant/discounts`, {
+        method: 'PUT', headers,
+        body: JSON.stringify({ bulk: { minOrderValuePaise: 1, discountPercentage: 5, isEnabled: false },
+          copyRules: [{ ...copyRules[0], additionalCopyPricePaise: Number(baseRates[0].price_per_printed_side_paise) + 1 }] }),
+      });
+      assert.equal(invalidAdditionalRate.status, 400, 'an additional-copy rate cannot exceed the normal print-side rate');
+      assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM audit_events WHERE action = 'MERCHANT_PRICING_SETTINGS_UPDATED' AND shop_id = 'shop-campus-1'`).count), originalAuditCount + 1,
+        'invalid pricing changes create no success audit event');
+    } finally {
+      db.execute(`DELETE FROM copy_discount_rules WHERE shop_id = 'shop-campus-1'`);
+      for (const rule of originalCopyRules) {
+        db.execute(`INSERT INTO copy_discount_rules (id, shop_id, paper_size, color_mode, duplex_mode, copy_one_price_paise, additional_copy_price_paise, is_enabled)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, [rule.id, rule.shop_id, rule.paper_size, rule.color_mode, rule.duplex_mode,
+          rule.copy_one_price_paise, rule.additional_copy_price_paise, rule.is_enabled]);
+      }
+      db.execute(`DELETE FROM bulk_discount_rules WHERE shop_id = 'shop-campus-1'`);
+      if (originalBulk) db.execute(`INSERT INTO bulk_discount_rules (id, shop_id, min_order_value_paise, discount_percentage, is_enabled) VALUES (?, ?, ?, ?, ?)`,
+        [originalBulk.id, originalBulk.shop_id, originalBulk.min_order_value_paise, originalBulk.discount_percentage, originalBulk.is_enabled]);
+      if (createdAuditId) db.execute(`DELETE FROM audit_events WHERE id = ?`, [createdAuditId]);
+    }
+  });
+
   it('does not create developer webhook configuration without an organization membership', async () => {
     const userId = `developer-without-org-${crypto.randomUUID()}`;
     const sessionId = crypto.randomUUID();
@@ -600,6 +662,24 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       body: JSON.stringify({ name: before.name, phone: before.phone, address: before.address, city: before.city, state: before.state, pinCode: before.pinCode, tagline: before.tagline || '' }),
     });
     assert.equal(restore.status, 200);
+  });
+
+  it('applies shop profile and portal settings atomically when one part is invalid', async () => {
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` };
+    const original = db.queryOne<any>(`SELECT tagline FROM shops WHERE id = ?`, ['shop-campus-1']).tagline;
+    const response = await fetch(`${baseUrl}/api/v1/merchant/settings`, {
+      method: 'PUT', headers,
+      body: JSON.stringify({
+        tagline: 'Must roll back with invalid portal settings',
+        portalSettings: {
+          requiredFields: { name: true, phone: true },
+          allowedOptions: { colorModes: [], duplexModes: ['simplex'], paperSizes: ['A4'], pageSelection: true },
+        },
+      }),
+    });
+    assert.equal(response.status, 400);
+    assert.equal(db.queryOne<any>(`SELECT tagline FROM shops WHERE id = ?`, ['shop-campus-1']).tagline, original,
+      'a rejected combined settings update must not partially change the shop profile');
   });
 
   it('requires settings:manage for merchant settings updates, including manager-role accounts', async () => {
@@ -2119,6 +2199,8 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.ok(spec.paths['/platform/admins']?.get.description.includes('Platform-owner only'));
     assert.ok(spec.paths['/platform/admins/{id}/permissions']?.put.description.includes('take effect on the next request'));
     assert.ok(spec.paths['/merchant/settings']?.put.description.includes('settings:manage'));
+    assert.ok(spec.paths['/merchant/discounts']?.put.requestBody.content['application/json'].schema.properties.copyRules);
+    assert.equal(spec.paths['/merchant/discounts']?.put.requestBody.content['application/json'].schema.properties.bulk.properties.discountPercentage.type, 'integer');
     assert.ok(!spec.paths['/subscriptions/usage']?.get.description.includes('active subscription'));
     assert.ok(spec.paths['/developer/webhooks/{id}/deliveries']?.get.description.includes('HMAC SHA-256'));
     assert.ok(spec.paths['/auth/me']?.put.description.includes('Email changes require a separate verification flow'));
@@ -2136,6 +2218,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       '/merchant/agents/{id}': ['delete'],
       '/merchant/rates': ['get', 'put'],
       '/merchant/discounts/bulk': ['put'],
+      '/merchant/discounts': ['put'],
       '/merchant/printers': ['get', 'post'],
       '/merchant/printers/{id}/default': ['put'],
       '/merchant/settings': ['get', 'put'],

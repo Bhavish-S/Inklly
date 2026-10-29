@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import QRCode from 'qrcode';
 import { api } from '../api/client';
+import { checkMerchantConnections, formatMerchantConnectionResult } from '../merchant-health-check.mjs';
+import { parseRupeesToPaise } from '../money-input.mjs';
 import {
   Logo,
   InkllyMark,
@@ -287,6 +289,8 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   // Real Edge Print Agent Health & Detection State (Port 8765)
   const [agentOnline, setAgentOnline] = useState<boolean>(false);
   const [agentInfo, setAgentInfo] = useState<{ version?: string; isPaired?: boolean; agentStatus?: string } | null>(null);
+  const [systemCheckBusy, setSystemCheckBusy] = useState(false);
+  const [systemCheckMessage, setSystemCheckMessage] = useState('');
 
   const checkAgentHealth = async (showToast: boolean = false) => {
     try {
@@ -303,6 +307,8 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
         }
         return pairedAndReachable;
       }
+      setAgentOnline(false);
+      setAgentInfo(null);
     } catch {
       setAgentOnline(false);
       if (showToast) {
@@ -582,6 +588,8 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [rateBwDuplex, setRateBwDuplex] = useState<string>('1.20');
   const [rateColorSingle, setRateColorSingle] = useState<string>('8.00');
   const [rateColorDuplex, setRateColorDuplex] = useState<string>('6.50');
+  const [pricingRulesLoaded, setPricingRulesLoaded] = useState(false);
+  const [pricingRulesError, setPricingRulesError] = useState('');
   // A3 rates
   const [rateA3BwSingle, setRateA3BwSingle] = useState<string>('3.00');
   const [rateA3BwDuplex, setRateA3BwDuplex] = useState<string>('2.50');
@@ -600,7 +608,9 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   // Hydrate Live Rate Rules from API
   useEffect(() => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('inklly_token') : null;
-    if (token) {
+    if (token && liveShop?.id) {
+      setPricingRulesLoaded(false);
+      setPricingRulesError('');
       api.getRates()
         .then((ratesData) => {
           if (ratesData?.rateRules && Array.isArray(ratesData.rateRules)) {
@@ -615,21 +625,44 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
             if (a4ColSimp) setRateColorSingle((a4ColSimp.pricePerPrintedSidePaise / 100).toFixed(2));
             if (a4ColDupl) setRateColorDuplex((a4ColDupl.pricePerPrintedSidePaise / 100).toFixed(2));
           }
+          if (ratesData?.bulkDiscount) {
+            setBulkDiscountEnabled(Boolean(ratesData.bulkDiscount.isEnabled));
+            setBulkMinThreshold((ratesData.bulkDiscount.minOrderValuePaise / 100).toFixed(2));
+            setBulkDiscountPercent(String(ratesData.bulkDiscount.discountPercentage));
+          } else {
+            setBulkDiscountEnabled(false);
+          }
+          if (Array.isArray(ratesData?.copyDiscounts)) {
+            const next = { ...defaultCopyDiscountSettings };
+            for (const rule of ratesData.copyDiscounts) {
+              if (rule.paperSize !== 'A4' || rule.duplexMode === 'duplex_manual') continue;
+              const key = `${rule.colorMode}-${rule.duplexMode}`;
+              if (key in next) next[key as keyof typeof next] = {
+                isEnabled: Boolean(rule.isEnabled),
+                additionalCopyRate: (rule.additionalCopyPricePaise / 100).toFixed(2),
+              };
+            }
+            setCopyDiscountSettings(next);
+          }
+          setPricingRulesLoaded(true);
         })
-        .catch(() => {});
+        .catch((error) => setPricingRulesError(error?.message || 'Could not load saved pricing settings.'))
     }
   }, [liveShop?.id]);
 
   // Business Setup: Discounts
-  const [bulkDiscountEnabled, setBulkDiscountEnabled] = useState<boolean>(true);
-  const [bulkMinThreshold, setBulkMinThreshold] = useState<number>(100);
-  const [bulkTiers, setBulkTiers] = useState([
-    { id: 't1', min: 100, max: 499, percent: 5 },
-    { id: 't2', min: 500, max: 999, percent: 10 },
-    { id: 't3', min: 1000, max: 99999, percent: 15 },
-  ]);
-  const [copyDiscountEnabled, setCopyDiscountEnabled] = useState<boolean>(true);
-  const [copyDiscountPercent, setCopyDiscountPercent] = useState<number>(10);
+  const [bulkDiscountEnabled, setBulkDiscountEnabled] = useState<boolean>(false);
+  const [bulkMinThreshold, setBulkMinThreshold] = useState<string>('100.00');
+  const [bulkDiscountPercent, setBulkDiscountPercent] = useState<string>('5');
+  const defaultCopyDiscountSettings = {
+    'bw-simplex': { isEnabled: false, additionalCopyRate: '' },
+    'bw-duplex_auto': { isEnabled: false, additionalCopyRate: '' },
+    'color-simplex': { isEnabled: false, additionalCopyRate: '' },
+    'color-duplex_auto': { isEnabled: false, additionalCopyRate: '' },
+  };
+  const [copyDiscountSettings, setCopyDiscountSettings] = useState(defaultCopyDiscountSettings);
+  const [discountSettingsSaving, setDiscountSettingsSaving] = useState(false);
+  const [discountSettingsError, setDiscountSettingsError] = useState('');
 
   // Business Setup: Portal Customization toggles
   const [portalShopTitle, setPortalShopTitle] = useState<string>('Printing Shopz · Fast Counter Print');
@@ -708,10 +741,68 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     setTimeout(() => setSaveSuccessToast(null), 3500);
   };
 
+  const handleSaveDiscountSettings = async () => {
+    setDiscountSettingsError('');
+    const thresholdPaise = parseRupeesToPaise(bulkMinThreshold);
+    const percentText = bulkDiscountPercent.trim();
+    const percent = /^\d{1,3}$/.test(percentText) ? Number(percentText) : NaN;
+    if (!pricingRulesLoaded || thresholdPaise === null || !Number.isSafeInteger(percent) || percent < 0 || percent > 100) {
+      setDiscountSettingsError('Enter a valid threshold in rupees and a whole-number discount from 0% to 100%.');
+      return;
+    }
+
+    const normalRates = {
+      'bw-simplex': parseRupeesToPaise(rateBwSingle),
+      'bw-duplex_auto': parseRupeesToPaise(rateBwDuplex),
+      'color-simplex': parseRupeesToPaise(rateColorSingle),
+      'color-duplex_auto': parseRupeesToPaise(rateColorDuplex),
+    };
+    const modes = [
+      { key: 'bw-simplex', colorMode: 'bw', duplexMode: 'simplex' },
+      { key: 'bw-duplex_auto', colorMode: 'bw', duplexMode: 'duplex_auto' },
+      { key: 'color-simplex', colorMode: 'color', duplexMode: 'simplex' },
+      { key: 'color-duplex_auto', colorMode: 'color', duplexMode: 'duplex_auto' },
+    ] as const;
+    const copyRules = [];
+    for (const mode of modes) {
+      const setting = copyDiscountSettings[mode.key];
+      const normalPrice = normalRates[mode.key];
+      const typedPrice = setting.additionalCopyRate.trim() ? parseRupeesToPaise(setting.additionalCopyRate) : normalPrice;
+      if (normalPrice === null || typedPrice === null || (setting.isEnabled && !setting.additionalCopyRate.trim()) || typedPrice > normalPrice) {
+        setDiscountSettingsError('Each enabled additional-copy price must be valid and no higher than its normal per-side rate.');
+        return;
+      }
+      copyRules.push({ paperSize: 'A4', colorMode: mode.colorMode, duplexMode: mode.duplexMode,
+        additionalCopyPricePaise: typedPrice, isEnabled: setting.isEnabled });
+    }
+
+    setDiscountSettingsSaving(true);
+    try {
+      await api.updateDiscountSettings({
+        bulk: { minOrderValuePaise: thresholdPaise, discountPercentage: percent, isEnabled: bulkDiscountEnabled },
+        copyRules,
+      });
+      triggerSaveNotification('Discount settings');
+    } catch (error: any) {
+      setDiscountSettingsError(error?.message || 'Discount settings could not be saved.');
+    } finally {
+      setDiscountSettingsSaving(false);
+    }
+  };
+
   const handleSaveBusinessSetup = async () => {
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('inklly_token') : null;
       if (token) {
+        const bwSimpPaise = parseRupeesToPaise(rateBwSingle);
+        const bwDuplPaise = parseRupeesToPaise(rateBwDuplex);
+        const colSimpPaise = parseRupeesToPaise(rateColorSingle);
+        const colDuplPaise = parseRupeesToPaise(rateColorDuplex);
+        if ([bwSimpPaise, bwDuplPaise, colSimpPaise, colDuplPaise].some((price) => price === null)) {
+          setSaveSuccessToast('Enter valid A4 prices with no more than two decimal places.');
+          setTimeout(() => setSaveSuccessToast(null), 5000);
+          return;
+        }
         // 1. Save Shop Details
         await api.updateShopSettings({
           name: shopName,
@@ -724,11 +815,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
         });
 
         // 2. Save Rate Rules (Integer Paise conversion)
-        const bwSimpPaise = Math.round(parseFloat(rateBwSingle || '2') * 100);
-        const bwDuplPaise = Math.round(parseFloat(rateBwDuplex || '1.5') * 100);
-        const colSimpPaise = Math.round(parseFloat(rateColorSingle || '10') * 100);
-        const colDuplPaise = Math.round(parseFloat(rateColorDuplex || '8') * 100);
-
         await Promise.all([
           api.updateRate({ paperSize: 'A4', colorMode: 'bw', duplexMode: 'simplex', pricePerPrintedSidePaise: bwSimpPaise }),
           api.updateRate({ paperSize: 'A4', colorMode: 'bw', duplexMode: 'duplex_auto', pricePerPrintedSidePaise: bwDuplPaise }),
@@ -1363,7 +1449,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     {
       step: 2,
       title: 'Printers & Desktop Agent Connection',
-      desc: 'Connect your physical printers (like Canon LBP2900) via the lightweight Inklly desktop agent for Windows. Includes automatic local offline queue and paper jam safety.',
+      desc: 'Pair the Inklly desktop agent and register the shop printers it reports. Physical printing remains pilot-gated until hardware support is verified.',
       badge: 'Step 2 of 5',
       targetTab: 'business_setup',
       targetSubtab: 'printers',
@@ -1372,8 +1458,8 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     },
     {
       step: 3,
-      title: 'Print Rates & Bulk Margin Discounts',
-      desc: 'Set accurate per-page simplex and duplex rates in integer Paise. Configure automatic volume tier discounts (e.g. 50+ pages get ₹1.00/page).',
+      title: 'Print Rates & Discounts',
+      desc: 'Set per-printed-side rates, one threshold discount and optional additional-copy prices. Quotes use integer Paise.',
       badge: 'Step 3 of 5',
       targetTab: 'business_setup',
       targetSubtab: 'pricing',
@@ -1382,12 +1468,12 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     },
     {
       step: 4,
-      title: 'Counter Standee & Permanent Shop QR',
-      desc: 'Download your print-ready royal blue counter standee placard. Customers scan the QR code to upload documents and pay directly without waiting in line.',
+      title: 'Shop QR',
+      desc: 'Open or share the shop QR portal so customers can upload documents and submit print orders.',
       badge: 'Step 4 of 5',
       targetTab: 'shop_qr',
       actionText: 'View Shop QR',
-      tip: 'Available in PDF and high-res PNG with UPI scan steps.',
+      tip: 'Shop QR downloads are available from the QR section when configured.',
     },
     {
       step: 5,
@@ -1418,7 +1504,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       }
     } else {
       setTourOpen(false);
-      triggerSaveNotification('🎉 Onboarding tour completed! You are ready to start printing.');
+      triggerSaveNotification('Setup tour completed. Verify shop, payment and agent readiness before accepting live orders.');
     }
   };
 
@@ -1465,6 +1551,21 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       return false;
     } finally {
       setDetectingPrinters(false);
+    }
+  };
+
+  const handleVerifyShopConnections = async () => {
+    if (systemCheckBusy) return;
+    setSystemCheckBusy(true);
+    setSystemCheckMessage('Checking this computer and the shop printer inventory…');
+    try {
+      const result = await checkMerchantConnections(
+        () => checkAgentHealth(false),
+        () => handleRefreshPrinters(false),
+      );
+      setSystemCheckMessage(formatMerchantConnectionResult(result));
+    } finally {
+      setSystemCheckBusy(false);
     }
   };
 
@@ -3598,7 +3699,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                         <h3 className="font-extrabold text-sm text-[#172031] dark:text-white flex items-center gap-2">
                           <span>Setup checklist</span>
                           <span className="text-[10px] bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-bold px-2 py-0.5 rounded-full">
-                            6 of 6 Ready
+                            Live setup status
                           </span>
                         </h3>
                         <p className="text-[11px] text-gray-400">Click any section to inspect or update settings.</p>
@@ -3607,12 +3708,12 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
 
                     <div className="space-y-2.5 text-xs">
                       {[
-                        { title: 'Profile', tab: 'profile', desc: 'Shop identity, hours & services', ready: true },
-                        { title: 'Printers', tab: 'printers', desc: detectedPrinters.length > 0 ? `${detectedPrinters.length} Printers Ready (Default: ${selectedDefaultPrinter || 'Canon LBP2900'})` : 'Pair local Windows agent', ready: detectedPrinters.length > 0 },
-                        { title: 'Pricing', tab: 'pricing', desc: 'A4 B&W ₹2.00, Color ₹10.00', ready: true },
-                        { title: 'Discounts', tab: 'discounts', desc: `${bulkTiers.length} bulk tiers configured`, ready: true },
-                        { title: 'Customer Portal', tab: 'portal', desc: 'Live QR portal & upload tools', ready: true },
-                        { title: 'Automation & Payment', tab: 'automation', desc: razorpayCheckoutConfigured ? 'Razorpay credentials + webhook saved; verify with provider' : 'Razorpay setup needed; cash collection available', ready: true },
+                        { title: 'Profile', tab: 'profile', desc: shopName.trim() && shopPhone.trim() ? 'Shop identity and contact details entered' : 'Complete shop identity and contact details', ready: Boolean(shopName.trim() && shopPhone.trim()) },
+                        { title: 'Printers', tab: 'printers', desc: detectedPrinters.length > 0 ? `${detectedPrinters.length} printer records · output not hardware-verified` : 'No verified printer connection', ready: false },
+                        { title: 'Pricing', tab: 'pricing', desc: pricingRulesLoaded ? 'Saved A4 per-side rates loaded' : pricingRulesError ? 'Could not load saved rate rules' : 'Loading saved rate rules', ready: pricingRulesLoaded },
+                        { title: 'Discounts', tab: 'discounts', desc: !pricingRulesLoaded ? 'Saved discount rules not loaded' : bulkDiscountEnabled ? 'One threshold discount enabled' : 'Bulk discount is disabled', ready: pricingRulesLoaded },
+                        { title: 'Customer Portal', tab: 'portal', desc: portalSettingsLoaded ? 'Saved customer options loaded' : 'Loading saved customer options', ready: portalSettingsLoaded },
+                        { title: 'Automation & Payment', tab: 'automation', desc: razorpayCheckoutConfigured ? 'Razorpay credentials saved; live checkout unverified' : 'Cash at collection; Razorpay not configured', ready: razorpayCheckoutConfigured },
                       ].map((item) => (
                         <div
                           key={item.title}
@@ -3644,13 +3745,13 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                     <div className="pt-2 space-y-2">
                       <button
                         type="button"
-                        onClick={() => {
-                          setGlobalToast('Hardware scan: Canon LBP2900 is online and ready for production jobs');
-                        }}
-                        className="w-full py-2.5 bg-gray-50 dark:bg-gray-700/60 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl text-xs font-bold text-gray-800 dark:text-gray-200 flex items-center justify-center gap-2 transition-colors"
+                        onClick={() => { void handleVerifyShopConnections(); }}
+                        disabled={systemCheckBusy || detectingPrinters}
+                        className="w-full py-2.5 bg-gray-50 dark:bg-gray-700/60 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl text-xs font-bold text-gray-800 dark:text-gray-200 flex items-center justify-center gap-2 transition-colors disabled:cursor-wait disabled:opacity-60"
                       >
-                        <span>🔄</span> Verify All Systems
+                        <span>🔄</span> {systemCheckBusy ? 'Checking connections…' : 'Check shop connections'}
                       </button>
+                      {systemCheckMessage && <p role="status" className="text-[11px] leading-5 text-gray-600 dark:text-gray-300">{systemCheckMessage}</p>}
 
                       <button
                         type="button"
@@ -3840,7 +3941,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                                   </span>
                                 )}
                                 <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${prn.status === 'Ready' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : prn.status === 'Stale' || prn.status === 'Unknown' ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300' : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'}`}>
-                                  {prn.status.toUpperCase()}
+                                  {prn.status === 'Ready' ? 'AGENT ONLINE · OUTPUT UNVERIFIED' : prn.status.toUpperCase()}
                                 </span>
                               </div>
                               <div className="text-[10px] text-gray-400 mt-0.5 font-mono">
@@ -3959,7 +4060,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                 </div>
                 <div>
                   <h2 className="text-xl font-extrabold text-[#172031] dark:text-white">Print pricing</h2>
-                  <p className="text-xs text-gray-400">Shop defaults and optional printer-specific rates</p>
+                  <p className="text-xs text-gray-400">Shop-wide default prices for each printed side</p>
                 </div>
 
                 {/* A4 Rates Card */}
@@ -3967,10 +4068,10 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                   <div>
                     <label className="block text-xs font-bold text-gray-500 mb-1">Edit rates for</label>
                     <select className="w-full px-3 py-2 border rounded-xl text-xs font-bold bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-700">
-                      <option>All printers - shop default</option>
+                      <option>All shop printers</option>
                     </select>
                     <span className="text-[10px] text-gray-400 block mt-1">
-                      New printers inherit these rates. Existing custom printer rates stay unchanged.
+                      These rates are used unless a future printer-specific rate is configured by support.
                     </span>
                   </div>
 
@@ -4049,42 +4150,8 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                   </div>
                 </div>
 
-                {/* Collage, Merge & Photo Pricing */}
-                <div className="space-y-3">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block">
-                    COLLAGE, MERGE &amp; PHOTO PRICING
-                  </span>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {[
-                      { title: 'collage', subtitle: 'Merchant-defined price per output page' },
-                      { title: 'merge', subtitle: 'Merchant-defined price per output page' },
-                      { title: 'ID Card', subtitle: 'Merchant-defined price per composed sheet' },
-                      { title: 'Passport Photo', subtitle: 'Merchant-defined price per composed sheet' },
-                    ].map((box) => (
-                      <div key={box.title} className="bg-white dark:bg-gray-800 border border-[#E8EAF3] dark:border-gray-800 rounded-2xl p-5 shadow-xs space-y-3 text-xs">
-                        <div className="flex justify-between items-center">
-                          <div>
-                            <div className="font-extrabold text-sm text-[#172031] dark:text-white capitalize">{box.title}</div>
-                            <div className="text-[10px] text-gray-400">{box.subtitle}</div>
-                          </div>
-                          <input type="checkbox" defaultChecked className="toggle-checkbox w-4 h-4 text-[#4D64E6]" />
-                        </div>
-
-                        <div className="space-y-2 pt-1">
-                          {['B&W - Single-Sided', 'B&W - Back-to-Back', 'Color - Single-Sided', 'Color - Back-to-Back'].map((row) => (
-                            <div key={row} className="flex justify-between items-center p-2 rounded-xl bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700">
-                              <span className="font-medium text-gray-700 dark:text-gray-300 text-[11px]">{row}</span>
-                              <div className="flex items-center gap-1 border rounded-lg px-2 py-0.5 bg-white dark:bg-gray-800">
-                                <span className="text-gray-400 font-bold text-[10px]">₹</span>
-                                <input type="text" placeholder="" className="w-14 text-right outline-hidden text-xs bg-transparent" />
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+                  Service-specific prices for collage, merge, ID cards and passport photos are not configured in this pilot. Customer quotes use the saved per-side rates shown above.
                 </div>
 
                 {/* Footer Navigation */}
@@ -4114,142 +4181,58 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                   <p className="text-xs text-gray-400">Reward high-value orders with selected lower page rates</p>
                 </div>
 
-                {/* Bulk Pricing Box */}
+                {pricingRulesError && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800">{pricingRulesError}</div>}
                 <div className="bg-white dark:bg-gray-800 border border-[#E8EAF3] dark:border-gray-800 rounded-2xl p-6 shadow-xs space-y-4">
-                  <div className="flex justify-between items-center">
+                  <div className="flex items-start justify-between gap-4">
                     <div>
-                      <h3 className="font-extrabold text-sm text-[#172031] dark:text-white">Enable bulk pricing</h3>
-                      <p className="text-[11px] text-gray-400">Normal prices remain active until the threshold is reached.</p>
+                      <h3 className="font-extrabold text-sm text-[#172031] dark:text-white">Bulk order discount</h3>
+                      <p className="text-[11px] text-gray-500 dark:text-gray-400">One percentage applies when the order subtotal reaches the threshold.</p>
                     </div>
-                    <input type="checkbox" defaultChecked className="toggle-checkbox w-4 h-4 text-[#4D64E6]" />
+                    <label className="inline-flex items-center gap-2 text-xs font-semibold">
+                      <input type="checkbox" checked={bulkDiscountEnabled} onChange={(event) => setBulkDiscountEnabled(event.target.checked)} className="h-4 w-4 rounded" />
+                      Enabled
+                    </label>
                   </div>
-
-                  <div className="space-y-1 text-xs">
-                    <label className="block text-gray-700 dark:text-gray-300 font-bold">Apply when normal order value is at least</label>
-                    <div className="flex items-center gap-2 border rounded-xl px-3 py-2 bg-gray-50 dark:bg-gray-900 w-48">
-                      <span className="text-gray-400 font-bold">₹</span>
-                      <input type="text" defaultValue="100" className="w-full font-bold outline-hidden bg-transparent" />
-                    </div>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <label className="text-xs font-semibold text-gray-700 dark:text-gray-300">Minimum order subtotal
+                      <span className="mt-1 flex items-center gap-2 rounded-xl border bg-gray-50 px-3 py-2 dark:bg-gray-900"><span aria-hidden="true">₹</span><input aria-label="Minimum order subtotal in rupees" inputMode="decimal" value={bulkMinThreshold} onChange={(event) => setBulkMinThreshold(event.target.value)} className="w-full bg-transparent font-bold outline-hidden" /></span>
+                    </label>
+                    <label className="text-xs font-semibold text-gray-700 dark:text-gray-300">Discount percentage
+                      <span className="mt-1 flex items-center gap-2 rounded-xl border bg-gray-50 px-3 py-2 dark:bg-gray-900"><input aria-label="Bulk discount percentage" inputMode="numeric" value={bulkDiscountPercent} onChange={(event) => setBulkDiscountPercent(event.target.value)} className="w-full bg-transparent font-bold outline-hidden" /><span aria-hidden="true">%</span></span>
+                    </label>
                   </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs pt-2">
-                    <div className="p-4 border rounded-xl bg-gray-50/50 dark:bg-gray-900/40 space-y-2">
-                      <div className="flex justify-between items-center">
-                        <span className="font-bold text-gray-800 dark:text-gray-200">Black &amp; White · Single-Sided</span>
-                        <input type="checkbox" className="rounded" />
-                      </div>
-                      <div className="flex justify-between items-center border rounded-lg px-3 py-1.5 bg-white dark:bg-gray-800">
-                        <span className="text-gray-400 font-bold">₹</span>
-                        <input type="text" placeholder="Discounted rate" className="w-full px-2 outline-hidden text-xs bg-transparent" />
-                        <span className="text-[10px] text-gray-400 whitespace-nowrap">per page</span>
-                      </div>
-                    </div>
-
-                    <div className="p-4 border-2 border-emerald-400 dark:border-emerald-600 rounded-xl bg-emerald-50/20 dark:bg-emerald-950/20 space-y-2">
-                      <div className="flex justify-between items-center">
-                        <span className="font-bold text-gray-800 dark:text-gray-200">Black &amp; White · Back-to-Back</span>
-                        <input type="checkbox" defaultChecked className="rounded text-emerald-600" />
-                      </div>
-                      <div className="flex justify-between items-center border rounded-lg px-3 py-1.5 bg-white dark:bg-gray-800">
-                        <span className="text-gray-400 font-bold">₹</span>
-                        <input type="text" placeholder="Discounted rate" className="w-full px-2 outline-hidden text-xs bg-transparent" />
-                        <span className="text-[10px] text-gray-400 whitespace-nowrap">per page</span>
-                      </div>
-                    </div>
-
-                    <div className="p-4 border rounded-xl bg-gray-50/50 dark:bg-gray-900/40 space-y-2">
-                      <div className="flex justify-between items-center">
-                        <span className="font-bold text-gray-800 dark:text-gray-200">Color · Single-Sided</span>
-                        <input type="checkbox" className="rounded" />
-                      </div>
-                      <div className="flex justify-between items-center border rounded-lg px-3 py-1.5 bg-white dark:bg-gray-800">
-                        <span className="text-gray-400 font-bold">₹</span>
-                        <input type="text" placeholder="Discounted rate" className="w-full px-2 outline-hidden text-xs bg-transparent" />
-                        <span className="text-[10px] text-gray-400 whitespace-nowrap">per page</span>
-                      </div>
-                    </div>
-
-                    <div className="p-4 border rounded-xl bg-gray-50/50 dark:bg-gray-900/40 space-y-2">
-                      <div className="flex justify-between items-center">
-                        <span className="font-bold text-gray-800 dark:text-gray-200">Color · Back-to-Back</span>
-                        <input type="checkbox" className="rounded" />
-                      </div>
-                      <div className="flex justify-between items-center border rounded-lg px-3 py-1.5 bg-white dark:bg-gray-800">
-                        <span className="text-gray-400 font-bold">₹</span>
-                        <input type="text" placeholder="Discounted rate" className="w-full px-2 outline-hidden text-xs bg-transparent" />
-                        <span className="text-[10px] text-gray-400 whitespace-nowrap">per page</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <p className="text-[10px] text-gray-400 italic">
-                    Each configuration is independent. Disabled configurations continue using your normal Pricing Grid rate.
-                  </p>
                 </div>
 
-                {/* Additional Copy Discount Box */}
                 <div className="bg-white dark:bg-gray-800 border border-[#E8EAF3] dark:border-gray-800 rounded-2xl p-6 shadow-xs space-y-4">
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <h3 className="font-extrabold text-sm text-[#172031] dark:text-white">Additional Copy Discount</h3>
-                      <p className="text-[11px] text-gray-400">Copy 1 uses the normal price. Copies 2 onward use the paper-specific rate below.</p>
-                    </div>
-                    <input type="checkbox" defaultChecked className="toggle-checkbox w-4 h-4 text-[#4D64E6]" />
+                  <div>
+                    <h3 className="font-extrabold text-sm text-[#172031] dark:text-white">Additional-copy rates</h3>
+                    <p className="text-[11px] text-gray-500 dark:text-gray-400">Copy 1 uses the normal A4 rate. The configured price applies to each copy after the first, before any bulk discount.</p>
                   </div>
-
-                  <div className="border border-gray-200 dark:border-gray-700 rounded-xl p-4 space-y-3">
-                    <div>
-                      <div className="font-extrabold text-xs text-[#172031] dark:text-white">A4 paper</div>
-                      <p className="text-[10px] text-gray-400">Set only the additional-copy prices you want to discount.</p>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-                      <div>
-                        <span className="block font-medium text-gray-700 dark:text-gray-300 mb-1 text-[11px]">Black &amp; White · Single-Sided</span>
-                        <div className="flex justify-between items-center border rounded-lg px-3 py-1.5 bg-gray-50 dark:bg-gray-900">
-                          <span className="text-gray-400 font-bold">₹</span>
-                          <input type="text" placeholder="Normal rate if blank" className="w-full px-2 outline-hidden text-xs bg-transparent" />
-                          <span className="text-[10px] text-gray-400 whitespace-nowrap">per page</span>
-                        </div>
-                      </div>
-
-                      <div>
-                        <span className="block font-medium text-gray-700 dark:text-gray-300 mb-1 text-[11px]">Black &amp; White · Back-to-Back</span>
-                        <div className="flex justify-between items-center border rounded-lg px-3 py-1.5 bg-gray-50 dark:bg-gray-900">
-                          <span className="text-gray-400 font-bold">₹</span>
-                          <input type="text" placeholder="Normal rate if blank" className="w-full px-2 outline-hidden text-xs bg-transparent" />
-                          <span className="text-[10px] text-gray-400 whitespace-nowrap">per page</span>
-                        </div>
-                      </div>
-
-                      <div>
-                        <span className="block font-medium text-gray-700 dark:text-gray-300 mb-1 text-[11px]">Color · Single-Sided</span>
-                        <div className="flex justify-between items-center border rounded-lg px-3 py-1.5 bg-gray-50 dark:bg-gray-900">
-                          <span className="text-gray-400 font-bold">₹</span>
-                          <input type="text" placeholder="Normal rate if blank" className="w-full px-2 outline-hidden text-xs bg-transparent" />
-                          <span className="text-[10px] text-gray-400 whitespace-nowrap">per page</span>
-                        </div>
-                      </div>
-
-                      <div>
-                        <span className="block font-medium text-gray-700 dark:text-gray-300 mb-1 text-[11px]">Color · Back-to-Back</span>
-                        <div className="flex justify-between items-center border rounded-lg px-3 py-1.5 bg-gray-50 dark:bg-gray-900">
-                          <span className="text-gray-400 font-bold">₹</span>
-                          <input type="text" placeholder="Normal rate if blank" className="w-full px-2 outline-hidden text-xs bg-transparent" />
-                          <span className="text-[10px] text-gray-400 whitespace-nowrap">per page</span>
-                        </div>
-                      </div>
-                    </div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    {[
+                      { key: 'bw-simplex', label: 'B&W · Single-sided' },
+                      { key: 'bw-duplex_auto', label: 'B&W · Back-to-back' },
+                      { key: 'color-simplex', label: 'Color · Single-sided' },
+                      { key: 'color-duplex_auto', label: 'Color · Back-to-back' },
+                    ].map(({ key, label }) => {
+                      const setting = copyDiscountSettings[key as keyof typeof copyDiscountSettings];
+                      return <div key={key} className="rounded-xl border border-gray-200 p-3 dark:border-gray-700">
+                        <label className="flex items-center justify-between gap-3 text-xs font-semibold text-gray-800 dark:text-gray-200">
+                          {label}<input type="checkbox" checked={setting.isEnabled} onChange={(event) => setCopyDiscountSettings((current) => ({ ...current, [key]: { ...current[key as keyof typeof current], isEnabled: event.target.checked } }))} className="h-4 w-4 rounded" />
+                        </label>
+                        <label className="mt-3 block text-[11px] text-gray-500">Price for each additional copy
+                          <span className="mt-1 flex items-center gap-2 rounded-lg border bg-gray-50 px-2 py-1.5 dark:bg-gray-900"><span aria-hidden="true">₹</span><input aria-label={`${label} additional-copy price in rupees`} inputMode="decimal" value={setting.additionalCopyRate} onChange={(event) => setCopyDiscountSettings((current) => ({ ...current, [key]: { ...current[key as keyof typeof current], additionalCopyRate: event.target.value } }))} placeholder="Normal rate" className="w-full bg-transparent text-right text-xs outline-hidden" /></span>
+                        </label>
+                      </div>;
+                    })}
                   </div>
-
-                  <p className="text-[10px] text-gray-400 italic">
-                    Only paper sizes enabled in Pricing appear here. Blank or higher rates safely use the normal price.
-                  </p>
                 </div>
 
                 {/* Footer Navigation */}
                 <div className="flex justify-between items-center pt-4 border-t border-gray-200 dark:border-gray-800 text-xs">
-                  <span className="text-gray-400">Your edits are applied when you save changes.</span>
+                  <button type="button" onClick={handleSaveDiscountSettings} disabled={!pricingRulesLoaded || discountSettingsSaving} className="rounded-xl bg-[#4D64E6] px-4 py-2 font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
+                    {discountSettingsSaving ? 'Saving…' : pricingRulesLoaded ? 'Save discount settings' : pricingRulesError ? 'Pricing settings unavailable' : 'Loading saved settings…'}
+                  </button>
                   <button
                     type="button"
                     onClick={() => setSetupTab('portal')}
@@ -4347,17 +4330,8 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                       </div>
                     </div>
 
-                    <div className="p-3.5 bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 rounded-xl text-xs text-indigo-900 dark:text-indigo-200 flex items-center justify-between">
-                      <div className="flex items-center gap-2.5">
-                        <span className="text-base">🖨</span>
-                        <div>
-                          <span className="font-bold">Hardware Spooler: </span>
-                          <span>{selectedDefaultPrinter || 'Canon LBP2900'} (Primary Laser)</span>
-                        </div>
-                      </div>
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                        Spooler Linked
-                      </span>
+                    <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3.5 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+                      Registered queues are shown below. A shop registration or agent heartbeat does not verify physical printer output; hardware certification and dashboard test printing are unavailable in this pilot.
                     </div>
 
                     {/* Service Rows */}
@@ -4365,25 +4339,25 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                       {[
                         {
                           key: 'Black & White',
-                          badge: 'Supported on Canon LBP2900',
-                          badgeColor: 'green',
-                          desc: 'Economical high-speed monochrome laser printing',
+                          badge: 'Not hardware-verified',
+                          badgeColor: 'amber',
+                          desc: 'Monochrome output depends on the registered queue and supported driver configuration.',
                         },
                         {
                           key: 'Color',
-                          badge: 'Multi-pass or Color Printer',
-                          badgeColor: 'blue',
-                          desc: 'Full-color document and vivid photographic reproduction',
+                          badge: 'Capability unverified',
+                          badgeColor: 'amber',
+                          desc: 'Color output must be confirmed against a tested printer and driver.',
                         },
                         {
                           key: 'Single-Sided',
-                          badge: 'Standard Spooling',
-                          badgeColor: 'green',
-                          desc: 'Single printed face per physical sheet',
+                          badge: 'Workflow configured',
+                          badgeColor: 'blue',
+                          desc: 'Physical output is not confirmed by a spooler submission.',
                         },
                         {
                           key: 'Back-to-Back (Auto)',
-                          badge: 'Hardware Duplex Spooler',
+                          badge: 'Capability unverified',
                           badgeColor: 'amber',
                           desc: 'Hardware automatic two-sided page flips',
                         },
@@ -4540,11 +4514,11 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                   <div className="lg:col-span-4 bg-white dark:bg-gray-800 border border-[#E8EAF3] dark:border-gray-800 rounded-3xl p-5 shadow-xs sticky top-6 space-y-4">
                     <div className="flex items-center justify-between">
                       <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                        Live Customer Preview
+                          <span className="w-2 h-2 rounded-full bg-slate-400" />
+                        Customer option preview
                       </span>
                       <span className="text-[10px] bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 font-bold px-2 py-0.5 rounded-full">
-                        Interactive Mockup
+                        Local preview · not a live portal
                       </span>
                     </div>
 

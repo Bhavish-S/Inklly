@@ -65,6 +65,33 @@ describe('Inklly Desktop Edge Print Agent Test Suite', () => {
     assert.equal(pending.serverAcknowledged, true);
   });
 
+  it('atomically claims an acknowledged spool command once across shared queue connections', () => {
+    const queuePath = path.join(os.tmpdir(), `inklly-atomic-claim-${Date.now()}-${Math.random()}.db`);
+    const firstAgentQueue = new LocalOfflineQueue(queuePath);
+    const secondAgentQueue = new LocalOfflineQueue(queuePath);
+    const ticket: PrintCommandTicket = {
+      commandId: 'cmd-atomic-claim', jobId: 'job-atomic-claim', attemptId: 'att-atomic-claim',
+      shopId: 'shop-campus-1', printerId: 'printer-test',
+      documentUrl: 'https://api.inklly.example/api/v1/agent/files/file-atomic-claim', fileName: 'claim.pdf',
+      options: { colorMode: 'bw', duplexMode: 'simplex', paperSize: 'A4', orientation: 'portrait', copies: 1, fitMode: 'fit', pagesPerSheet: 1, collation: true },
+      expiresAt: new Date(Date.now() + 60_000).toISOString(), correlationId: 'corr-atomic-claim',
+    };
+    try {
+      assert.equal(firstAgentQueue.enqueue(ticket), true);
+      assert.equal(firstAgentQueue.markServerAcknowledged(ticket.commandId, ticket.attemptId), true);
+
+      const winningClaim = firstAgentQueue.claimNextPending();
+      const duplicateClaim = secondAgentQueue.claimNextPending();
+      assert.equal(winningClaim?.commandId, ticket.commandId);
+      assert.equal(winningClaim?.status, 'DISPATCHED_TO_SPOOLER');
+      assert.equal(duplicateClaim, null, 'a second process cannot claim a command already entering the spooler');
+    } finally {
+      secondAgentQueue.close();
+      firstAgentQueue.close();
+      fs.rmSync(queuePath, { force: true });
+    }
+  });
+
   it('migrates an existing SQLite queue and leaves old pending work gated until it is re-acknowledged', () => {
     const queuePath = path.join(os.tmpdir(), `inklly-ack-migration-${Date.now()}-${Math.random()}.db`);
     const legacyDb = new DatabaseSync(queuePath);

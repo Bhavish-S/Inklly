@@ -108,6 +108,26 @@ export class LocalOfflineQueue {
     return this.mapRow(row);
   }
 
+  /** Atomically claim the next acknowledged command before starting a spooler call.
+   * This compare-and-set prevents two agent processes sharing the same queue DB
+   * from selecting and physically printing the same pending command.
+   */
+  public claimNextPending(): QueuedCommand | null {
+    const row = this.db.prepare(`
+      UPDATE local_commands
+      SET status = 'DISPATCHED_TO_SPOOLER', error_message = NULL, updated_at = ?
+      WHERE command_id = (
+        SELECT command_id FROM local_commands
+        WHERE status = 'PENDING' AND server_acknowledged = 1
+        ORDER BY created_at ASC LIMIT 1
+      )
+        AND status = 'PENDING'
+        AND server_acknowledged = 1
+      RETURNING *
+    `).get(new Date().toISOString()) as any;
+    return row ? this.mapRow(row) : null;
+  }
+
   public getPendingAcknowledgements(limit: number = 50): Array<{ commandId: string; attemptId: string }> {
     return this.db.prepare(
       `SELECT command_id, attempt_id FROM local_commands
