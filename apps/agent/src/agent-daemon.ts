@@ -150,6 +150,7 @@ export class AgentDaemon {
           })),
           localQueueDepth: this.queue.getQueueDepth(),
           sqliteCacheHealthy: true,
+          physicalPrintingEnabled: process.env.INKLLY_ENABLE_PHYSICAL_PRINTING === 'true',
         }),
       });
     } catch {
@@ -337,6 +338,7 @@ export class AgentDaemon {
           version: '1.0.0',
           isPaired: config.isPaired,
           uptimeSec: Math.floor(process.uptime()),
+          physicalPrintingEnabled: process.env.INKLLY_ENABLE_PHYSICAL_PRINTING === 'true',
         })
       );
       return;

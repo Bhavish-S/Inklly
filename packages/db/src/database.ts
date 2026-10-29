@@ -50,6 +50,7 @@ export class DatabaseService {
       this.ensureSqlitePlatformIncidentMigration();
       this.ensureSqlitePlatformSubscriptionBillingMigration();
       this.ensureSqliteCopyDiscountUniquenessMigration();
+      this.ensureSqliteAgentPrintReadinessMigration();
     }
   }
 
@@ -167,6 +168,36 @@ export class DatabaseService {
     this.ensurePostgresPlatformIncidentMigration();
     this.ensurePostgresPlatformSubscriptionBillingMigration();
     this.ensurePostgresCopyDiscountUniquenessMigration();
+    this.ensurePostgresAgentPrintReadinessMigration();
+  }
+
+  private ensureSqliteAgentPrintReadinessMigration(): void {
+    if (this.db!.prepare(`SELECT version FROM inklly_schema_migrations WHERE version = 24`).get()) return;
+    this.db!.exec('BEGIN');
+    try {
+      const columns = this.db!.prepare(`PRAGMA table_info(agent_registrations)`).all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === 'physical_printing_enabled')) {
+        this.db!.exec(`ALTER TABLE agent_registrations ADD COLUMN physical_printing_enabled INTEGER NOT NULL DEFAULT 0`);
+      }
+      this.db!.prepare(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (24, ?)`).run(new Date().toISOString());
+      this.db!.exec('COMMIT');
+    } catch (error) {
+      try { this.db!.exec('ROLLBACK'); } catch { /* preserve the original error */ }
+      throw new Error(`[Inklly DB] Agent print-readiness migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+
+  private ensurePostgresAgentPrintReadinessMigration(): void {
+    if (this.queryPostgres(`SELECT version FROM inklly_schema_migrations WHERE version = ?`, [24]).length) return;
+    this.queryPostgres('BEGIN');
+    try {
+      this.queryPostgres(`ALTER TABLE agent_registrations ADD COLUMN IF NOT EXISTS physical_printing_enabled INTEGER NOT NULL DEFAULT 0`);
+      this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [24, new Date().toISOString()]);
+      this.queryPostgres('COMMIT');
+    } catch (error) {
+      try { this.queryPostgres('ROLLBACK'); } catch { /* preserve the original error */ }
+      throw new Error(`[Inklly DB] PostgreSQL agent print-readiness migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
   }
 
   private ensureSqliteCopyDiscountUniquenessMigration(): void {

@@ -1126,6 +1126,14 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM printers WHERE agent_id = ?`, [enrollData.agentId]).count), 0,
       'invalid inventory must not partially create printer records');
 
+    const malformedPrintReadiness = await fetch(`${baseUrl}/api/v1/agent/heartbeat`, {
+      method: 'POST', headers: agentHeaders,
+      body: JSON.stringify({ status: 'ONLINE', physicalPrintingEnabled: 'true', activePrintersCount: 0, localQueueDepth: 0 }),
+    });
+    assert.equal(malformedPrintReadiness.status, 400, 'physical-printing readiness must be a JSON boolean');
+    assert.equal(Number(db.queryOne<any>(`SELECT physical_printing_enabled FROM agent_registrations WHERE id = ?`, [enrollData.agentId]).physical_printing_enabled), 0,
+      'invalid readiness must not enable physical dispatch');
+
     const malformedCounters = await fetch(`${baseUrl}/api/v1/agent/heartbeat`, {
       method: 'POST', headers: agentHeaders,
       body: JSON.stringify({ status: 'ONLINE', activePrintersCount: '2', localQueueDepth: 0, sqliteCacheHealthy: true }),
@@ -1147,6 +1155,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       headers: agentHeaders,
       body: JSON.stringify({
         status: 'ONLINE',
+        physicalPrintingEnabled: false,
         activePrintersCount: 2,
         localQueueDepth: 0,
         printers: [{ name: 'API Test Queue', driverName: 'API Test Driver', isOnline: true, isDefault: true }],
@@ -1156,6 +1165,28 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
 
     const livePrinter = db.queryOne<any>(`SELECT id FROM printers WHERE agent_id = ? AND name = ?`, [enrollData.agentId, 'API Test Queue']);
     assert.ok(livePrinter);
+    assert.equal(new AgentRepository(db).isPhysicalPrintingEnabled('shop-campus-1', enrollData.agentId), false);
+    const disabledDispatch = await fetch(`${baseUrl}/api/v1/merchant/orders/${cashOrderId}/print`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+      body: JSON.stringify({ printerId: livePrinter.id }),
+    });
+    assert.equal(disabledDispatch.status, 409);
+    assert.match((await disabledDispatch.json() as any).error, /physical printing is disabled/i);
+    assert.equal(db.queryOne<any>(`SELECT status FROM orders WHERE id = ?`, [cashOrderId]).status, 'AWAITING_REVIEW');
+    const untouchedJob = db.queryOne<any>(`SELECT status, printer_id FROM print_jobs WHERE id = ?`, [targetJob.id]);
+    assert.equal(untouchedJob.status, 'RECEIVED');
+    assert.equal(untouchedJob.printer_id, null);
+    const disabledPoll = await fetch(`${baseUrl}/api/v1/agent/poll-commands`, { headers: agentHeaders });
+    assert.ok(!(await disabledPoll.json() as Array<{ jobId: string }>).some((candidate) => candidate.jobId === targetJob.id));
+
+    const enabledHeartbeat = await fetch(`${baseUrl}/api/v1/agent/heartbeat`, {
+      method: 'POST', headers: agentHeaders,
+      body: JSON.stringify({ status: 'ONLINE', physicalPrintingEnabled: true, activePrintersCount: 2, localQueueDepth: 0,
+        printers: [{ name: 'API Test Queue', driverName: 'API Test Driver', isOnline: true, isDefault: true }] }),
+    });
+    assert.equal(enabledHeartbeat.status, 200);
+    assert.equal(new AgentRepository(db).isPhysicalPrintingEnabled('shop-campus-1', enrollData.agentId), true);
     const dispatchRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${cashOrderId}/print`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },

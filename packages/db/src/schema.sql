@@ -361,6 +361,7 @@ CREATE TABLE IF NOT EXISTS agent_registrations (
     os_platform TEXT,
     os_version TEXT,
     agent_version TEXT,
+    physical_printing_enabled INTEGER NOT NULL DEFAULT 0,
     is_active INTEGER NOT NULL DEFAULT 1,
     last_heartbeat TEXT,
     created_at TEXT NOT NULL,

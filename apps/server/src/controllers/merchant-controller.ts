@@ -336,6 +336,9 @@ export class MerchantController {
     if (!printer || !printer.isOnline) {
       return res.status(409).json({ error: 'Choose an online printer, or set exactly one online default printer before releasing this order. No print job was released.' });
     }
+    if (!printer.agentId || !this.agentRepo.isPhysicalPrintingEnabled(order.shopId, printer.agentId)) {
+      return res.status(409).json({ error: 'Physical printing is disabled or has not been reported by the paired agent. No print job was released.' });
+    }
 
     try {
       // Assignment and order-state changes must commit together so an agent

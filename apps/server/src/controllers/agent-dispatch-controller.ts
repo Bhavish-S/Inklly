@@ -59,6 +59,9 @@ export class AgentDispatchController {
       return res.status(400).json({ error: 'Heartbeat body must be a JSON object.' });
     }
     const { status = 'ONLINE', activePrintersCount = 0, localQueueDepth = 0, sqliteCacheHealthy = true } = body;
+    if (body.physicalPrintingEnabled !== undefined && typeof body.physicalPrintingEnabled !== 'boolean') {
+      return res.status(400).json({ error: 'physicalPrintingEnabled must be a boolean when provided.' });
+    }
     if (!['ONLINE', 'OFFLINE', 'DEGRADED'].includes(status)) {
       return res.status(400).json({ error: 'Heartbeat status must be ONLINE, OFFLINE, or DEGRADED.' });
     }
@@ -97,6 +100,7 @@ export class AgentDispatchController {
       activePrintersCount,
       localQueueDepth,
       sqliteCacheHealthy,
+      physicalPrintingEnabled: body.physicalPrintingEnabled === true,
     });
 
     // Older agents may not report inventory. Only replace it when the field is

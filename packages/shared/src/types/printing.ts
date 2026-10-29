@@ -28,6 +28,8 @@ export interface PaperTray {
 export interface PrinterDevice {
   id: string;
   shopId: string;
+  /** Paired desktop agent that last reported this queue, when connected. */
+  agentId?: string;
   name: string;
   systemDriverName: string;
   isOnline: boolean;

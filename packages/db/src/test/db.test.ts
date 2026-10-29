@@ -73,6 +73,20 @@ describe('Relational Database & Multi-Tenancy Tests', () => {
     (db as any).ensureSqlitePlatformAdminPermissionsMigration();
     assert.equal(db.queryOne<any>(`SELECT version FROM inklly_schema_migrations WHERE version = 16`)?.version, 16,
       'an existing database can install the additive platform permission migration');
+
+    const printReadinessMigration = db.queryOne<any>(`SELECT version FROM inklly_schema_migrations WHERE version = 24`);
+    assert.equal(printReadinessMigration?.version, 24);
+    assert.ok(db.query<any>(`PRAGMA table_info(agent_registrations)`).some((column) => column.name === 'physical_printing_enabled'));
+    db.getRawDb().exec(`ALTER TABLE agent_registrations DROP COLUMN physical_printing_enabled`);
+    db.execute(`DELETE FROM inklly_schema_migrations WHERE version = 24`);
+    (db as any).ensureSqliteAgentPrintReadinessMigration();
+    assert.ok(db.query<any>(`PRAGMA table_info(agent_registrations)`).some((column) => column.name === 'physical_printing_enabled'),
+      'an existing database can install the additive physical-printing readiness migration');
+    const now = new Date().toISOString();
+    db.execute(`INSERT INTO agent_registrations (id, shop_id, secret_key_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+      ['agent-legacy-readiness', 'shop-campus-1', 'test-hash', now, now]);
+    assert.equal(Number(db.queryOne<any>(`SELECT physical_printing_enabled FROM agent_registrations WHERE id = ?`, ['agent-legacy-readiness']).physical_printing_enabled), 0,
+      'legacy agents default to disabled until a new heartbeat reports readiness');
   });
 
   it('enforces append-only ledger entries and permits compensating entries', () => {

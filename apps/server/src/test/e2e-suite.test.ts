@@ -41,7 +41,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
     const headers = { 'Content-Type': 'application/json', 'X-Agent-Id': agent.agentId, Authorization: `Bearer ${agent.agentSecret}` };
     const heartbeat = await fetch(`${baseUrl}/api/v1/agent/heartbeat`, {
       method: 'POST', headers,
-      body: JSON.stringify({ status: 'ONLINE', activePrintersCount: 2, localQueueDepth: 0, printers: [
+      body: JSON.stringify({ status: 'ONLINE', activePrintersCount: 2, localQueueDepth: 0, physicalPrintingEnabled: true, printers: [
         { name: 'HP LaserJet Pro M401dne (B&W High-Speed)', driverName: 'HP LaserJet Pro M401 PCL6', isOnline: true, isDefault: true },
         { name: 'Canon imageRUNNER ADVANCE C3530i (Color/Multi-Format)', driverName: 'Canon Generic Plus PCL6', isOnline: true, isDefault: false },
       ] }),
@@ -1783,7 +1783,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       const agentHeaders = { 'Content-Type': 'application/json', 'X-Agent-Id': agent.agentId, Authorization: `Bearer ${agent.agentSecret}` };
       const heartbeatRes = await fetch(`${baseUrl}/api/v1/agent/heartbeat`, {
         method: 'POST', headers: agentHeaders,
-        body: JSON.stringify({ status: 'ONLINE', activePrintersCount: 1, localQueueDepth: 0, printers: [{ name: 'Canon LBP2900', driverName: 'Canon LBP2900', isOnline: true, isDefault: true }] }),
+        body: JSON.stringify({ status: 'ONLINE', activePrintersCount: 1, localQueueDepth: 0, physicalPrintingEnabled: true, printers: [{ name: 'Canon LBP2900', driverName: 'Canon LBP2900', isOnline: true, isDefault: true }] }),
       });
       assert.equal(heartbeatRes.status, 200);
 

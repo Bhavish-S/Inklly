@@ -18,6 +18,8 @@ export interface AgentHeartbeat {
   activePrintersCount: number;
   localQueueDepth: number;
   sqliteCacheHealthy: boolean;
+  /** True only when this agent process has explicitly enabled physical spooler execution. */
+  physicalPrintingEnabled: boolean;
 }
 
 export interface PrintCommandTicket {

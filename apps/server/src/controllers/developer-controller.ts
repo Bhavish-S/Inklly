@@ -348,6 +348,24 @@ export class DeveloperController {
         '/agent/heartbeat': {
           post: {
             summary: 'Edge agent 15-second heartbeat with queue depth & printer status',
+            description: 'Authenticated agent heartbeat. physicalPrintingEnabled must be a boolean when present; omission is treated as disabled. Physical print tickets are withheld unless the agent explicitly reports true, corresponding to INKLLY_ENABLE_PHYSICAL_PRINTING=true.',
+            requestBody: {
+              required: true,
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      status: { type: 'string', enum: ['ONLINE', 'OFFLINE', 'DEGRADED'] },
+                      activePrintersCount: { type: 'integer', minimum: 0, maximum: 100 },
+                      localQueueDepth: { type: 'integer', minimum: 0, maximum: 100000 },
+                      sqliteCacheHealthy: { type: 'boolean' },
+                      physicalPrintingEnabled: { type: 'boolean', default: false },
+                    },
+                  },
+                },
+              },
+            },
             responses: { 200: { description: 'Heartbeat acknowledged' } },
           },
         },

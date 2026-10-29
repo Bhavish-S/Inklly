@@ -288,7 +288,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
 
   // Real Edge Print Agent Health & Detection State (Port 8765)
   const [agentOnline, setAgentOnline] = useState<boolean>(false);
-  const [agentInfo, setAgentInfo] = useState<{ version?: string; isPaired?: boolean; agentStatus?: string } | null>(null);
+  const [agentInfo, setAgentInfo] = useState<{ version?: string; isPaired?: boolean; agentStatus?: string; physicalPrintingEnabled?: boolean } | null>(null);
   const [systemCheckBusy, setSystemCheckBusy] = useState(false);
   const [systemCheckMessage, setSystemCheckMessage] = useState('');
 
@@ -3863,7 +3863,13 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                           </span>
                         </div>
                         <div className="text-[11px] text-gray-500 mt-0.5">
-                          {agentOnline ? 'Local status endpoint responded and reports a pairing credential. Cloud heartbeat and printer readiness are not confirmed here.' : 'No paired local agent response. A verified production installer is not available yet.'}
+                          {agentOnline
+                            ? agentInfo?.physicalPrintingEnabled === true
+                              ? 'Local agent reports physical printing is enabled. This does not confirm printer readiness or physical output; verify the supported hardware before accepting live jobs.'
+                              : agentInfo?.physicalPrintingEnabled === false
+                                ? 'Local agent is paired, but physical printing is disabled. No print jobs will be released to it.'
+                                : 'Local agent responds, but its physical-printing readiness is not reported. No print jobs should be released.'
+                            : 'No paired local agent response. A verified production installer is not available yet.'}
                         </div>
                         <div className="text-[10px] text-gray-400 font-mono mt-0.5">
                           {agentInfo ? `127.0.0.1:8765 · ${agentInfo.version || 'version unavailable'}` : 'Local agent status not checked'}

@@ -60,6 +60,7 @@ export class PrinterRepository {
       return {
         id: r.id,
         shopId: r.shop_id,
+        agentId: r.agent_id || undefined,
         name: r.name,
         systemDriverName: r.system_driver_name,
         isOnline: Boolean(r.is_online),

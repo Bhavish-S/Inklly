@@ -161,9 +161,17 @@ export class AgentRepository {
   public recordHeartbeat(hb: AgentHeartbeat): void {
     const now = new Date().toISOString();
     this.db.execute(
-      `UPDATE agent_registrations SET last_heartbeat = ?, updated_at = ? WHERE id = ? AND shop_id = ? AND is_active = 1`,
-      [now, now, hb.agentId, hb.shopId]
+      `UPDATE agent_registrations SET last_heartbeat = ?, physical_printing_enabled = ?, updated_at = ? WHERE id = ? AND shop_id = ? AND is_active = 1`,
+      [now, hb.physicalPrintingEnabled ? 1 : 0, now, hb.agentId, hb.shopId]
     );
+  }
+
+  public isPhysicalPrintingEnabled(shopId: string, agentId: string): boolean {
+    const row = this.db.queryOne<{ physical_printing_enabled: number | string }>(
+      `SELECT physical_printing_enabled FROM agent_registrations WHERE id = ? AND shop_id = ? AND is_active = 1`,
+      [agentId, shopId]
+    );
+    return row?.physical_printing_enabled === 1 || row?.physical_printing_enabled === '1';
   }
 
   public getPendingPrintTickets(shopId: string, agentId: string): PrintCommandTicket[] {
@@ -206,6 +214,7 @@ export class AgentRepository {
          WHERE o.shop_id = ?
            AND EXISTS (SELECT 1 FROM shops active_shop WHERE active_shop.id = o.shop_id AND active_shop.is_active = 1)
            AND p.id IS NOT NULL AND p.is_online = 1 AND p.agent_id = ?
+           AND EXISTS (SELECT 1 FROM agent_registrations ar WHERE ar.id = p.agent_id AND ar.shop_id = o.shop_id AND ar.is_active = 1 AND ar.physical_printing_enabled = 1)
            AND o.status IN ('READY_FOR_PRINT', 'IN_PROGRESS')
            AND (o.payment_method <> 'ONLINE_RAZORPAY' OR o.payment_status = 'VERIFIED')
            AND (

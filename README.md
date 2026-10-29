@@ -48,7 +48,7 @@ npm run build
 ```bash
 npm run test
 ```
-*Runs the current tests across `@inklly/shared`, `@inklly/db`, `@inklly/agent`, and `@inklly/server`. See [`BUILD_AND_TEST_RESULTS.md`](./BUILD_AND_TEST_RESULTS.md) for the last verified count and deployment limits.*
+*Runs the current tests across `@inklly/shared`, `@inklly/db`, `@inklly/agent`, `@inklly/server`, and `@inklly/web`. See [`BUILD_AND_TEST_RESULTS.md`](./BUILD_AND_TEST_RESULTS.md) for the last verified count and deployment limits.*
 
 ### 4. Running the Development Services
 
@@ -175,4 +175,4 @@ Delivery history is available at `GET /api/v1/developer/webhooks/{id}/deliveries
 
 ## Current verification
 
-See [`BUILD_AND_TEST_RESULTS.md`](./BUILD_AND_TEST_RESULTS.md) for exact local build/test output and [`REMAINING_ISSUES.md`](./REMAINING_ISSUES.md) for deployment blockers. The current local source builds successfully and passes 254 tests. Vercel serves the latest pushed Developer Portal bundle. Render is still serving older backend code: health omits the revision, its curated OpenAPI document lacks current subscription routes, and an unauthenticated developer-key request returns 200 instead of the current source's 401. These checks do not establish live webhook, payment, PostgreSQL, object-storage, or hardware behavior.
+See [`BUILD_AND_TEST_RESULTS.md`](./BUILD_AND_TEST_RESULTS.md) for exact local build/test output and [`REMAINING_ISSUES.md`](./REMAINING_ISSUES.md) for deployment blockers. The current local source builds successfully and passes 267 tests. Vercel serves the latest merchant UI bundle (its deployed asset hash matches the local build). Render is still serving older backend code: health omits the revision, its curated OpenAPI document lacks current subscription routes, and an unauthenticated developer-key request returns 200 instead of the current source's 401. These checks do not establish live webhook, payment, PostgreSQL, object-storage, or hardware behavior.
