@@ -109,6 +109,9 @@ export function createApp(db?: DatabaseService): express.Express {
     if (err?.type === 'entity.too.large' || err?.status === 413) {
       return res.status(413).json({ error: 'Request body is too large.' });
     }
+    if (err?.type === 'entity.parse.failed') {
+      return res.status(400).json({ error: 'Request body must contain valid JSON.' });
+    }
     const requestId = crypto.randomUUID();
     // Keep provider credentials, database details, and stack traces out of API
     // responses while giving operators a stable correlation handle.

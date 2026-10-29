@@ -222,6 +222,20 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(quote.lineItems[0].subtotalPaise, 2000);
   });
 
+  it('returns validation errors for null or structurally invalid customer request bodies', async () => {
+    const postJson = (path: string, body: unknown) => fetch(`${baseUrl}${path}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    assert.equal((await postJson('/api/v1/portal/quote', null)).status, 400, 'null quote body');
+    assert.equal((await postJson('/api/v1/portal/quote', { shopId: 'shop-campus-1', files: {} })).status, 400, 'non-array quote files');
+    assert.equal((await postJson('/api/v1/portal/upload', null)).status, 400, 'null upload body');
+    assert.equal((await postJson('/api/v1/portal/orders', null)).status, 400, 'null order body');
+    const malformed = await fetch(`${baseUrl}/api/v1/portal/quote`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{',
+    });
+    assert.equal(malformed.status, 400, 'malformed JSON is a client error');
+  });
+
   it('rejects pathological public quote sizes before expanding page selections', async () => {
     const res = await fetch(`${baseUrl}/api/v1/portal/quote`, {
       method: 'POST',
@@ -1772,7 +1786,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       const revokedSession = await fetch(`${baseUrl}/api/v1/merchant/storage/documents`, { headers: staffHeaders });
       assert.equal(revokedSession.status, 401, 'revoked membership invalidates an existing staff session immediately');
       const audit = db.queryOne<any>(
-        `SELECT action, actor_user_id, details FROM audit_events WHERE target_id = ? ORDER BY created_at DESC LIMIT 1`,
+        `SELECT action, actor_user_id, details FROM audit_events WHERE target_id = ? AND action = 'MERCHANT_STAFF_ACCESS_REVOKED' ORDER BY id DESC LIMIT 1`,
         [`membership-${staffId}`]
       );
       assert.equal(audit.action, 'MERCHANT_STAFF_ACCESS_REVOKED');

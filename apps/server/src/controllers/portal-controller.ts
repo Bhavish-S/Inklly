@@ -83,10 +83,13 @@ export class PortalController {
   };
 
   public getQuote = (req: Request, res: Response) => {
-    const body: PriceQuoteRequest = req.body;
-    if (!body.shopId || !body.files || body.files.length === 0) {
-      return res.status(400).json({ error: 'Missing shopId or files array in quote request' });
+    const rawBody = req.body;
+    if (!rawBody || typeof rawBody !== 'object' || Array.isArray(rawBody) ||
+        typeof rawBody.shopId !== 'string' || !rawBody.shopId.trim() ||
+        !Array.isArray(rawBody.files) || rawBody.files.length < 1 || rawBody.files.length > 20) {
+      return res.status(400).json({ error: 'A quote needs a shopId and between 1 and 20 files.' });
     }
+    const body = rawBody as PriceQuoteRequest;
 
     const shop = this.shopRepo.getShopById(body.shopId) || this.shopRepo.getShopByCode(body.shopId);
     if (!shop || !shop.isActive || !this.hasShopAccess(shop.organizationId)) {
@@ -120,6 +123,9 @@ export class PortalController {
   };
 
   public submitOrder = async (req: Request, res: Response) => {
+    if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+      return res.status(400).json({ error: 'Incomplete order submission payload' });
+    }
     const {
       shopId: rawShopId,
       shopCode,
@@ -365,6 +371,9 @@ export class PortalController {
 
   public uploadDocument = async (req: Request, res: Response) => {
     try {
+      if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+        return res.status(400).json({ error: 'fileName and fileData (Base64) are required' });
+      }
       const { fileName, fileData, shopId } = req.body;
       if (typeof fileName !== 'string' || !fileName.trim() || fileName.length > 180 || typeof fileData !== 'string') {
         return res.status(400).json({ error: 'fileName and fileData (Base64) are required' });
