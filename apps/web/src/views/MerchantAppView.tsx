@@ -656,7 +656,8 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       }
       triggerSaveNotification('Business Setup and Rates');
     } catch (err: any) {
-      triggerSaveNotification('Failed to save settings: ' + (err.message || 'Unknown error'));
+      setSaveSuccessToast('Settings were not fully saved: ' + (err.message || 'Unknown error'));
+      setTimeout(() => setSaveSuccessToast(null), 5000);
     }
   };
 

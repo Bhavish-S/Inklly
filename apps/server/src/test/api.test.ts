@@ -771,6 +771,29 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       Authorization: `Bearer ${enrollData.agentSecret}`,
     };
 
+    const enrolledHeartbeat = db.queryOne<any>(`SELECT last_heartbeat FROM agent_registrations WHERE id = ?`, [enrollData.agentId]).last_heartbeat;
+    const malformedInventory = await fetch(`${baseUrl}/api/v1/agent/heartbeat`, {
+      method: 'POST', headers: agentHeaders,
+      body: JSON.stringify({
+        status: 'ONLINE', activePrintersCount: 2, localQueueDepth: 0, sqliteCacheHealthy: true,
+        printers: [
+          { name: 'Valid Queue', driverName: 'Valid Driver', isOnline: true, isDefault: true },
+          { name: 'Malformed Queue', driverName: 'Malformed Driver', isOnline: 'false', isDefault: false },
+        ],
+      }),
+    });
+    assert.equal(malformedInventory.status, 400);
+    assert.equal(db.queryOne<any>(`SELECT last_heartbeat FROM agent_registrations WHERE id = ?`, [enrollData.agentId]).last_heartbeat, enrolledHeartbeat,
+      'invalid inventory must be rejected before heartbeat persistence');
+    assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM printers WHERE agent_id = ?`, [enrollData.agentId]).count), 0,
+      'invalid inventory must not partially create printer records');
+
+    const malformedCounters = await fetch(`${baseUrl}/api/v1/agent/heartbeat`, {
+      method: 'POST', headers: agentHeaders,
+      body: JSON.stringify({ status: 'ONLINE', activePrintersCount: '2', localQueueDepth: 0, sqliteCacheHealthy: true }),
+    });
+    assert.equal(malformedCounters.status, 400, 'numeric strings must not be coerced into heartbeat counters');
+
     const targetJob = db.queryOne<any>(`SELECT id FROM print_jobs WHERE order_id = ? ORDER BY created_at LIMIT 1`, [cashOrderId]);
     assert.ok(targetJob, 'submitted customer order should have a print job record');
 

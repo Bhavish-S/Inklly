@@ -54,32 +54,54 @@ export class AgentDispatchController {
 
   public heartbeat = (req: Request, res: Response) => {
     const identity = (req as any).agent as { agentId: string; shopId: string };
-    const { status, activePrintersCount, localQueueDepth, sqliteCacheHealthy } = req.body;
+    const body = req.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return res.status(400).json({ error: 'Heartbeat body must be a JSON object.' });
+    }
+    const { status = 'ONLINE', activePrintersCount = 0, localQueueDepth = 0, sqliteCacheHealthy = true } = body;
+    if (!['ONLINE', 'OFFLINE', 'DEGRADED'].includes(status)) {
+      return res.status(400).json({ error: 'Heartbeat status must be ONLINE, OFFLINE, or DEGRADED.' });
+    }
+    if (!Number.isInteger(activePrintersCount) || activePrintersCount < 0 || activePrintersCount > 100) {
+      return res.status(400).json({ error: 'activePrintersCount must be an integer from 0 to 100.' });
+    }
+    if (!Number.isInteger(localQueueDepth) || localQueueDepth < 0 || localQueueDepth > 100000) {
+      return res.status(400).json({ error: 'localQueueDepth must be an integer from 0 to 100000.' });
+    }
+    if (typeof sqliteCacheHealthy !== 'boolean') {
+      return res.status(400).json({ error: 'sqliteCacheHealthy must be a boolean.' });
+    }
+
+    let inventory: Array<{ name: string; driverName: string; isOnline: boolean; isDefault: boolean }> | undefined;
+    if (body.printers !== undefined) {
+      if (!Array.isArray(body.printers) || body.printers.length > 100) {
+        return res.status(400).json({ error: 'printers must be an array containing at most 100 printer queues.' });
+      }
+      inventory = [];
+      for (const printer of body.printers) {
+        if (!printer || typeof printer !== 'object' || Array.isArray(printer)
+          || typeof printer.name !== 'string' || !printer.name.trim() || printer.name.trim().length > 256
+          || typeof printer.driverName !== 'string' || !printer.driverName.trim() || printer.driverName.trim().length > 256
+          || typeof printer.isOnline !== 'boolean' || typeof printer.isDefault !== 'boolean') {
+          return res.status(400).json({ error: 'Each printer queue requires bounded name and driverName strings and boolean isOnline/isDefault values.' });
+        }
+        inventory.push({ name: printer.name.trim(), driverName: printer.driverName.trim(), isOnline: printer.isOnline, isDefault: printer.isDefault });
+      }
+    }
 
     this.agentRepo.recordHeartbeat({
       agentId: identity.agentId,
       shopId: identity.shopId,
       timestamp: new Date().toISOString(),
-      status: status || 'ONLINE',
-      activePrintersCount: Number(activePrintersCount || 1),
-      localQueueDepth: Number(localQueueDepth || 0),
-      sqliteCacheHealthy: Boolean(sqliteCacheHealthy ?? true),
+      status,
+      activePrintersCount,
+      localQueueDepth,
+      sqliteCacheHealthy,
     });
 
     // Older agents may not report inventory. Only replace it when the field is
     // present; an explicit empty list means this agent currently sees no queues.
-    if (Array.isArray(req.body?.printers)) {
-      const reportedPrinters = req.body.printers;
-      if (reportedPrinters.length > 100) return res.status(400).json({ error: 'Agent may report at most 100 printer queues.' });
-      const inventory = reportedPrinters.filter((printer: any) =>
-        printer && typeof printer.name === 'string' && typeof printer.driverName === 'string'
-        && typeof printer.isOnline === 'boolean' && typeof printer.isDefault === 'boolean'
-      ).map((printer: any) => ({
-        name: printer.name,
-        driverName: printer.driverName,
-        isOnline: printer.isOnline,
-        isDefault: printer.isDefault,
-      }));
+    if (inventory) {
       this.printerRepo.syncAgentInventory(identity.shopId, identity.agentId, inventory);
     }
 

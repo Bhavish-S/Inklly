@@ -43,6 +43,8 @@ Implemented locally with regression coverage:
 - Accepted customer orders persist an immutable pricing snapshot containing the server-computed quote and the exact applicable rate/discount rules. Rate-rule writes use partial unique indexes and atomic upsert semantics to prevent conflicting duplicates.
 - Merchant order search/filter/sort/pagination is tenant-scoped. Dashboard status counts and recent orders are aggregated without hydrating all shop order history.
 - Printer health uses fresh agent heartbeat evidence; print dispatch requires a shop-owned online printer and does not auto-retry uncertain output.
+- Agent heartbeat payload counters, health fields, and optional printer inventories are strictly type/range checked before heartbeat or inventory persistence; malformed entries cannot be silently discarded or partially applied.
+- Merchant rate API methods surface non-2xx responses, and the business settings form shows failure as a failure rather than a success toast.
 - Staff invitation and platform tenant onboarding use hashed single-use activation links.
 - Razorpay credentials and developer webhook secrets are encrypted at rest; payment signature checks and provider event deduplication exist in source, but live provider verification has not been done.
 - Private customer files use a private-storage abstraction and retention cleanup; production Supabase storage has not been verified against the live bucket.
@@ -50,7 +52,7 @@ Implemented locally with regression coverage:
 - Refund requests reserve the remaining verified payment balance. A merchant can reject a pending request with an audited reason and no money movement; approval remains unavailable until provider refund processing is configured.
 - Agent local status endpoints are read-only and host/origin validated. Physical printing remains disabled by default; the production installer is unavailable.
 
-Latest verified local run on 2026-10-29: `npm run build` and `npm test` passed 206 tests after changes for quote snapshots, unique/upserted rate rules, physical-output usage metering, payment-aware merchant collection, and validated shop settings. Recheck this statement after subsequent edits. `npm audit --audit-level=high` could not reach the npm advisory endpoint on two earlier attempts. Vercel deployment for commit `5677b32` succeeded, but newer local shop-settings work is not deployed yet. Render continues serving the older seven-path API. Live PostgreSQL migrations/triggers, object storage, provider, browser, and hardware behavior remain unverified.
+Latest verified local run on 2026-10-29: `npm run build` and `npm test` passed 206 tests after changes for quote snapshots, unique/upserted rate rules, physical-output usage metering, payment-aware merchant collection, validated shop settings, strict agent heartbeat validation, and surfaced merchant rate errors. Recheck this statement after subsequent edits. `npm audit --audit-level=high` could not reach the npm advisory endpoint on two earlier attempts. Vercel deployment for commit `778171b` succeeded; Render continues serving the older seven-path API. Live PostgreSQL migrations/triggers, object storage, provider, browser, and hardware behavior remain unverified.
 
 ## Known incomplete product areas
 

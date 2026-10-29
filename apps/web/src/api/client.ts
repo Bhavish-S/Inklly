@@ -271,7 +271,9 @@ export const api = {
 
   async getRates() {
     const res = await fetch(`${API_BASE}/merchant/rates`, { headers: getHeaders() });
-    return res.json();
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not load rate rules');
+    return body;
   },
 
   async updateRate(rateData: any) {
@@ -280,7 +282,9 @@ export const api = {
       headers: getHeaders(),
       body: JSON.stringify(rateData),
     });
-    return res.json();
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not save rate rule');
+    return body;
   },
 
   async getPrinters() {
