@@ -569,7 +569,9 @@ export const api = {
 
   async getBotTemplates() {
     const res = await fetch(`${API_BASE}/merchant/bot-templates`, { headers: getHeaders() });
-    return res.json();
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to load saved message templates');
+    return body;
   },
 
   async updateBotTemplate(templateData: any) {
@@ -578,7 +580,9 @@ export const api = {
       headers: getHeaders(),
       body: JSON.stringify(templateData),
     });
-    return res.json();
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to save message template');
+    return body;
   },
 
   // Credits

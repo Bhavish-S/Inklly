@@ -397,22 +397,53 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
 
   // WhatsApp setup
 
-  // Train Bot state
-  const [botTab, setBotTab] = useState<'rules' | 'qa'>('rules');
-  const [testChatMessage, setTestChatMessage] = useState<string>('');
-  const [chatLog, setChatLog] = useState<Array<{ sender: 'bot' | 'user'; text: string; time: string }>>([
-    {
-      sender: 'bot',
-      text: 'Welcome to Printing Shopz. Upload your document here: https://inklly.in/p/campus1 Link expires in 30 minutes.',
-      time: '01:27 pm',
-    },
-  ]);
+  // These templates are saved data only. WhatsApp delivery is not enabled.
+  const [botTemplates, setBotTemplates] = useState<Record<string, string>>({ GREETING: '', ORDER_READY: '' });
+  const [botTemplatesLoading, setBotTemplatesLoading] = useState(false);
+  const [botTemplatesSaving, setBotTemplatesSaving] = useState<string | null>(null);
+  const [botTemplatesError, setBotTemplatesError] = useState('');
 
   // Global save notification
   const [saveSuccessToast, setSaveSuccessToast] = useState<string | null>(null);
   const setGlobalToast = (msg: string) => {
     setSaveSuccessToast(msg);
     setTimeout(() => setSaveSuccessToast(null), 4000);
+  };
+
+  useEffect(() => {
+    if (activeView !== 'train_bot' || !liveShop?.id) return;
+    let active = true;
+    setBotTemplatesLoading(true);
+    setBotTemplatesError('');
+    api.getBotTemplates().then((records: any) => {
+      if (!active) return;
+      const next: Record<string, string> = { GREETING: '', ORDER_READY: '' };
+      if (Array.isArray(records)) {
+        for (const record of records) {
+          if (typeof record?.templateKey === 'string' && Object.hasOwn(next, record.templateKey) && typeof record?.templateText === 'string') next[record.templateKey] = record.templateText;
+        }
+      }
+      setBotTemplates(next);
+    }).catch((error: any) => {
+      if (active) setBotTemplatesError(error?.message || 'Could not load saved message templates.');
+    }).finally(() => { if (active) setBotTemplatesLoading(false); });
+    return () => { active = false; };
+  }, [activeView, liveShop?.id]);
+
+  const saveBotTemplate = async (templateKey: 'GREETING' | 'ORDER_READY') => {
+    const templateText = (botTemplates[templateKey] || '').trim();
+    if (!templateText) return;
+    setBotTemplatesSaving(templateKey);
+    setBotTemplatesError('');
+    try {
+      await api.updateBotTemplate({ templateKey, templateText, isEnabled: true });
+      setBotTemplates((current) => ({ ...current, [templateKey]: templateText }));
+      setGlobalToast(`${templateKey === 'GREETING' ? 'Greeting' : 'Order ready'} template saved.`);
+    } catch (error: any) {
+      setBotTemplatesError(error?.message || 'Could not save this template.');
+    } finally {
+      setBotTemplatesSaving(null);
+    }
   };
 
   // Business Setup: Profile
@@ -440,8 +471,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       if (liveShop.name) setReceiptBusinessName(liveShop.name);
     }
   }, [liveShop, liveUser]);
-  const advancedServicesEnabled = false;
-  const physicalServicesEnabled = false;
   const [portalServices, setPortalServices] = useState<Record<string, boolean>>({
     'Black & White': true,
     'Color': true,
@@ -465,15 +494,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [previewColorMode, setPreviewColorMode] = useState<'bw' | 'color'>('bw');
   const [previewPrintStyle, setPreviewPrintStyle] = useState<'single' | 'duplex_auto' | 'duplex_manual'>('single');
   const [previewPaperSize, setPreviewPaperSize] = useState<string>('A4');
-
-  const toggleServiceOffered = (name: string) => {
-    setServicesOffered((prev) => {
-      const exists = prev.includes(name);
-      const next = exists ? prev.filter((s) => s !== name) : [...prev, name];
-      setGlobalToast(`Service "${name}" ${exists ? 'disabled' : 'enabled'}`);
-      return next;
-    });
-  };
 
   const togglePortalService = (serviceKey: string, enable: boolean) => {
     setPortalServices((prev) => {
@@ -536,20 +556,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     } finally { setPortalSettingsSaving(false); }
   };
 
-  const [servicesOffered, setServicesOffered] = useState<string[]>([
-    'Black & White',
-    'Colour',
-    'Single-sided',
-    'Back-to-Back Auto',
-    'Back-to-Back Manual',
-    'A4 Standard (75 GSM)',
-    'A3 Poster / Large',
-    'Legal / Stamp Paper',
-    'Spiral Binding',
-    'Hardcover Binding',
-    'Lamination',
-    'Corner Stapling',
-  ]);
 
   // Business Setup: Printers
   const [selectedAgentPlatform, setSelectedAgentPlatform] = useState<string>('win-x64');
@@ -1601,28 +1607,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
 
   const totalRevenueNumber = (Number(dashboardMetrics.totalRevenuePaise || 0) / 100).toFixed(2);
 
-  const handleTestChatSend = () => {
-    if (!testChatMessage.trim()) return;
-    const userMsg = testChatMessage;
-    setTestChatMessage('');
-    setChatLog((prev) => [
-      ...prev,
-      { sender: 'user', text: userMsg, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
-    ]);
-
-    setTimeout(() => {
-      let botReply = 'I can help with printing, prices, services, and order status. Please send a print-related question.';
-      if (userMsg.toLowerCase().includes('hi') || userMsg.toLowerCase().includes('hello')) {
-        botReply = '👋 Welcome to Printing Shopz. Upload your document here: https://inklly.in/p/campus1';
-      } else if (userMsg.toLowerCase().includes('price') || userMsg.toLowerCase().includes('rate')) {
-        botReply = `Our A4 B&W is ₹${rateBwSingle}/page (Duplex ₹${rateBwDuplex}/side) and Colour is ₹${rateColorSingle}/page.`;
-      }
-      setChatLog((prev) => [
-        ...prev,
-        { sender: 'bot', text: botReply, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
-      ]);
-    }, 400);
-  };
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: <PackageIcon size={18} /> },
@@ -3388,410 +3372,29 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
             VIEW 10: TRAIN BOT
         ───────────────────────────────────────────────────────────── */}
         {activeView === 'train_bot' && (
-          <div className="p-6 max-w-7xl w-full mx-auto space-y-6 animate-fadeIn">
-            <div className="flex justify-between items-center pb-4 border-b border-gray-200 dark:border-gray-800">
-              <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[#4D64E6] block">
-                  WHATSAPP AUTOMATION
-                </span>
-                <h2 className="text-xl font-extrabold text-[#172031] dark:text-white">Train Bot</h2>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="px-3 py-1 bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-bold text-xs rounded-full border border-blue-200 dark:border-blue-800">
-                  Database + Q&A only
-                </span>
-                <button
-                  type="button"
-                  onClick={() => triggerSaveNotification('Bot cache refreshed')}
-                  className="p-1.5 border border-gray-200 dark:border-gray-700 rounded-lg text-xs hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-500"
-                >
-                  🔄
-                </button>
-              </div>
+          <div className="p-6 max-w-5xl w-full mx-auto space-y-6 animate-fadeIn">
+            <div className="pb-4 border-b border-gray-200 dark:border-gray-800">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-[#4D64E6] block">MESSAGE TEMPLATES</span>
+              <h2 className="text-xl font-extrabold text-[#172031] dark:text-white">Shop message templates</h2>
+              <p className="mt-1 text-sm text-gray-500">Edit and save the two message templates stored for this shop.</p>
             </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-              {/* Left Panel: Store Rules & Configuration */}
-              <div className="lg:col-span-7 space-y-5">
-                {/* Rules Card */}
-                <div className="bg-white dark:bg-gray-800 border border-[#E8EAF3] dark:border-gray-800 rounded-2xl p-6 shadow-xs space-y-5">
-                  <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-700 pb-3">
-                    <div>
-                      <h3 className="font-extrabold text-sm text-[#172031] dark:text-white">Train Bot</h3>
-                      <p className="text-[11px] text-gray-400">Merchant data and FAQ response configuration</p>
-                    </div>
-                  </div>
-
-                  {/* Subtabs */}
-                  <div className="flex gap-2 border-b border-gray-100 dark:border-gray-700 pb-3 text-xs font-bold">
-                    <button
-                      type="button"
-                      onClick={() => setBotTab('rules')}
-                      className={`px-3 py-1.5 rounded-lg transition-all ${
-                        botTab === 'rules'
-                          ? 'bg-[#4D64E6] text-white shadow-xs'
-                          : 'text-gray-500 hover:text-gray-900 dark:hover:text-white bg-gray-50 dark:bg-gray-900'
-                      }`}
-                    >
-                      Store Rules
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setBotTab('qa')}
-                      className={`px-3 py-1.5 rounded-lg transition-all ${
-                        botTab === 'qa'
-                          ? 'bg-[#4D64E6] text-white shadow-xs'
-                          : 'text-gray-500 hover:text-gray-900 dark:hover:text-white bg-gray-50 dark:bg-gray-900'
-                      }`}
-                    >
-                      Instant Q&A Matrix
-                    </button>
-                  </div>
-
-                  {/* Bot Status & Display Name */}
-                  <div className="p-4 rounded-xl border border-gray-100 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/40 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="font-bold text-xs text-[#172031] dark:text-white">Bot Status</div>
-                        <div className="text-[11px] text-gray-400">Bot is live — responding to customer messages</div>
-                      </div>
-                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 flex items-center gap-1">
-                        ✓ Enabled
-                      </span>
-                    </div>
-
-                    <div className="pt-2">
-                      <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">
-                        BOT DISPLAY NAME
-                      </label>
-                      <input
-                        type="text"
-                        defaultValue="Rahul S"
-                        className="w-full px-3 py-2 border rounded-xl text-xs bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 font-medium"
-                      />
-                      <span className="text-[10px] text-gray-400 block mt-1">
-                        Name shown in system prompts and internal analytics. Not visible to customers.
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Auto Greeting & Doc Received */}
-                  <div className="space-y-4 text-xs">
-                    <div>
-                      <div className="flex justify-between items-center mb-1">
-                        <label className="block font-bold text-gray-700 dark:text-gray-300">
-                          AUTO GREETING MESSAGE
-                        </label>
-                        <span className="text-[10px] text-gray-400">13/40 words</span>
-                      </div>
-                      <textarea
-                        rows={2}
-                        defaultValue="Welcome to {shop}. Upload your document here: {link} Link expires in 30 minutes."
-                        className="w-full p-3 border rounded-xl text-xs bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 font-mono text-[11px]"
-                      />
-                      <span className="text-[10px] text-gray-400 block mt-0.5">
-                        Sent with a fresh upload link when the customer says Hi/Hello. Keep &#123;shop&#125; and &#123;link&#125; where needed.
-                      </span>
-                    </div>
-
-                    <div>
-                      <div className="flex justify-between items-center mb-1">
-                        <label className="block font-bold text-gray-700 dark:text-gray-300">
-                          DOCUMENT RECEIVED MESSAGE
-                        </label>
-                        <span className="text-[10px] text-gray-400">14/40 words</span>
-                      </div>
-                      <textarea
-                        rows={2}
-                        defaultValue="We received {file}. Set your print options here: {link} Link expires in 30 minutes."
-                        className="w-full p-3 border rounded-xl text-xs bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 font-mono text-[11px]"
-                      />
-                      <span className="text-[10px] text-gray-400 block mt-0.5">
-                        Sent after a file arrives. Available placeholders: &#123;file&#125;, &#123;shop&#125;, and &#123;link&#125;.
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Meta Cloud API Messages (Light green tint) */}
-                <div className="bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200/80 dark:border-emerald-800/60 rounded-2xl p-6 shadow-xs space-y-4">
-                  <div>
-                    <h3 className="font-extrabold text-sm text-emerald-950 dark:text-emerald-200">
-                      Meta Cloud API Messages
-                    </h3>
-                    <p className="text-[11px] text-emerald-700/80 dark:text-emerald-400">
-                      Used only for merchants connected through Meta. The secure customer/order URL is attached to the button automatically.
-                    </p>
-                  </div>
-
-                  <div className="space-y-4 text-xs">
-                    <div>
-                      <div className="flex justify-between items-center mb-1">
-                        <label className="block font-bold text-gray-700 dark:text-gray-300">
-                          META GREETING MESSAGE
-                        </label>
-                        <span className="text-[10px] text-gray-400">19/40 words</span>
-                      </div>
-                      <textarea
-                        rows={2}
-                        defaultValue="👋 Welcome to *{shop}* Drop your documents directly in this WhatsApp chat, or upload them using the portal below."
-                        className="w-full p-3 border rounded-xl text-xs bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 font-mono text-[11px]"
-                      />
-                      <span className="text-[10px] text-gray-400 block mt-0.5">
-                        Sent when a Meta customer says Hi/Hello. Placeholders: &#123;shop&#125;. WhatsApp bold text uses *single asterisks*.
-                      </span>
-                    </div>
-
-                    <div>
-                      <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">
-                        GREETING BUTTON
-                      </label>
-                      <input
-                        type="text"
-                        defaultValue="Upload Document"
-                        className="w-full px-3 py-2 border rounded-xl text-xs bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700"
-                      />
-                      <span className="text-[10px] text-gray-400 block mt-0.5">
-                        Opens a fresh secure upload portal. Maximum 20 characters.
-                      </span>
-                    </div>
-
-                    <div>
-                      <div className="flex justify-between items-center mb-1">
-                        <label className="block font-bold text-gray-700 dark:text-gray-300">
-                          ONE DOCUMENT RECEIVED
-                        </label>
-                        <span className="text-[10px] text-gray-400">13/40 words</span>
-                      </div>
-                      <textarea
-                        rows={2}
-                        defaultValue="✅ *Document received* We received *{file}*. Choose your print settings to continue."
-                        className="w-full p-3 border rounded-xl text-xs bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 font-mono text-[11px]"
-                      />
-                      <span className="text-[10px] text-gray-400 block mt-0.5">
-                        Sent for one Meta document. Placeholders: &#123;file&#125; and &#123;shop&#125;.
-                      </span>
-                    </div>
-
-                    <div>
-                      <div className="flex justify-between items-center mb-1">
-                        <label className="block font-bold text-gray-700 dark:text-gray-300">
-                          MULTIPLE DOCUMENTS RECEIVED
-                        </label>
-                        <span className="text-[10px] text-gray-400">17/40 words</span>
-                      </div>
-                      <textarea
-                        rows={2}
-                        defaultValue="✅ *Documents received* We received *{count} documents* for your order. Review them and choose your print settings."
-                        className="w-full p-3 border rounded-xl text-xs bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 font-mono text-[11px]"
-                      />
-                      <span className="text-[10px] text-gray-400 block mt-0.5">
-                        Sent once after a group of Meta files arrives. Placeholders: &#123;count&#125; and &#123;shop&#125;.
-                      </span>
-                    </div>
-
-                    <div>
-                      <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">
-                        PRINT SETTINGS BUTTON
-                      </label>
-                      <input
-                        type="text"
-                        defaultValue="Set Your Print"
-                        className="w-full px-3 py-2 border rounded-xl text-xs bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700"
-                      />
-                      <span className="text-[10px] text-gray-400 block mt-0.5">
-                        Opens that customer's grouped order portal. Maximum 20 characters.
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Additional Notification Templates Card */}
-                <div className="bg-white dark:bg-gray-800 border border-[#E8EAF3] dark:border-gray-800 rounded-2xl p-6 shadow-xs space-y-4">
-                  <div className="space-y-4 text-xs">
-                    <div>
-                      <div className="flex justify-between items-center mb-1">
-                        <label className="block font-bold text-gray-700 dark:text-gray-300">
-                          ORDER REJECTION MESSAGE
-                        </label>
-                        <span className="text-[10px] text-gray-400">14/40 words</span>
-                      </div>
-                      <textarea
-                        rows={2}
-                        defaultValue="Your print request was rejected by {shop_name}. Please contact the shop for more details."
-                        className="w-full p-3 border rounded-xl text-xs bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 font-mono text-[11px]"
-                      />
-                      <span className="text-[10px] text-gray-400 block mt-0.5">
-                        Sent when the merchant rejects an order. Placeholders: &#123;shop_name&#125;, &#123;customer_name&#125;, &#123;documents&#125;.
-                      </span>
-                    </div>
-
-                    <div>
-                      <div className="flex justify-between items-center mb-1">
-                        <label className="block font-bold text-gray-700 dark:text-gray-300">
-                          DOCUMENT REMOVAL MESSAGE
-                        </label>
-                        <span className="text-[10px] text-gray-400">17/40 words</span>
-                      </div>
-                      <textarea
-                        rows={2}
-                        defaultValue="Your document {file_name} was removed by {shop_name}. Please upload it again if you still want it printed."
-                        className="w-full p-3 border rounded-xl text-xs bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 font-mono text-[11px]"
-                      />
-                      <span className="text-[10px] text-gray-400 block mt-0.5">
-                        Sent when one document is removed from an order. Placeholders: &#123;shop_name&#125;, &#123;customer_name&#125;, &#123;file_name&#125;.
-                      </span>
-                    </div>
-
-                    <div>
-                      <div className="flex justify-between items-center mb-1">
-                        <label className="block font-bold text-gray-700 dark:text-gray-300">
-                          UNMATCHED MESSAGE RESPONSE
-                        </label>
-                        <span className="text-[10px] text-gray-400">15/40 words</span>
-                      </div>
-                      <textarea
-                        rows={2}
-                        defaultValue="I can help with printing, prices, services, and order status. Please send a print-related question."
-                        className="w-full p-3 border rounded-xl text-xs bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 font-mono text-[11px]"
-                      />
-                      <span className="text-[10px] text-gray-400 block mt-0.5">
-                        Used when no merchant data or Q&A answer matches the customer's message.
-                      </span>
-                    </div>
-
-                    <div>
-                      <div className="flex justify-between items-center mb-1">
-                        <label className="block font-bold text-gray-700 dark:text-gray-300">
-                          PRINT COMPLETED MESSAGE
-                        </label>
-                        <span className="text-[10px] text-gray-400">17/40 words</span>
-                      </div>
-                      <textarea
-                        rows={2}
-                        defaultValue="Your Order has completed. You can collect your print from {shop_name}. Thank You. Any feedback for us?"
-                        className="w-full p-3 border rounded-xl text-xs bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 font-mono text-[11px]"
-                      />
-                      <span className="text-[10px] text-gray-400 block mt-0.5">
-                        Sent after the desktop agent reports the print job completed successfully. Placeholders: &#123;shop_name&#125;, &#123;order_number&#125;, &#123;amount&#125;.
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Bottom Save Bar */}
-                <div className="flex flex-col sm:flex-row justify-between items-center gap-3 pt-2">
-                  <span className="text-xs text-gray-400">
-                    Changes will apply to new conversations immediately
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => triggerSaveNotification('Train Bot templates')}
-                    className="w-full sm:w-auto px-6 py-2.5 bg-[#4D64E6] text-white rounded-xl text-xs font-bold shadow-xs hover:bg-[#3D52D5] transition-all"
-                  >
-                    Save Settings
-                  </button>
-                </div>
+            <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">WhatsApp setup and message delivery are not available yet. Saving a template stores its text only; it does not send messages.</div>
+            {botTemplatesError && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{botTemplatesError}</div>}
+            {botTemplatesLoading ? <div className="rounded-2xl border p-8 text-center text-sm text-gray-500">Loading saved templates…</div> : (
+              <div className="grid gap-4 md:grid-cols-2">
+                {([{ key: 'GREETING', label: 'Greeting', hint: 'Saved text for a greeting message.' }, { key: 'ORDER_READY', label: 'Order ready', hint: 'Saved text for an order ready message.' }] as const).map(({ key, label, hint }) => (
+                  <section key={key} className="rounded-2xl border border-gray-200 bg-white p-5 shadow-xs dark:border-gray-700 dark:bg-gray-800">
+                    <label htmlFor={`bot-template-${key}`} className="block text-sm font-bold text-gray-900 dark:text-white">{label}</label>
+                    <p className="mt-1 text-xs text-gray-500">{hint}</p>
+                    <textarea id={`bot-template-${key}`} rows={5} maxLength={2000} value={botTemplates[key] || ''} onChange={(event) => setBotTemplates((current) => ({ ...current, [key]: event.target.value }))} placeholder="Enter the message text to save" className="mt-3 w-full rounded-xl border border-gray-200 bg-white p-3 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                    <div className="mt-3 flex items-center justify-between gap-3"><span className="text-xs text-gray-500">{(botTemplates[key] || '').length}/2000 characters</span><button type="button" disabled={botTemplatesLoading || botTemplatesSaving !== null || !(botTemplates[key] || '').trim()} onClick={() => { void saveBotTemplate(key); }} className="rounded-xl bg-[#4D64E6] px-4 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">{botTemplatesSaving === key ? 'Saving…' : 'Save template'}</button></div>
+                  </section>
+                ))}
               </div>
-
-              {/* Right Panel: Live Test Preview */}
-              <div className="lg:col-span-5 bg-white dark:bg-gray-800 border border-[#E8EAF3] dark:border-gray-800 rounded-2xl p-6 shadow-xs flex flex-col justify-between h-[680px] sticky top-6">
-                <div>
-                  <div className="flex justify-between items-center pb-3 border-b border-gray-100 dark:border-gray-700 mb-3">
-                    <div>
-                      <h3 className="font-extrabold text-sm text-[#172031] dark:text-white">Live Test Preview</h3>
-                      <p className="text-[10px] text-gray-400">0 Instant Q&A pairs active</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-                        ● Bot Active
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setChatLog([
-                            {
-                              sender: 'bot',
-                              text: 'Welcome to Printing Shopz. Upload your document here: https://inklly.in/p/campus1 Link expires in 30 minutes.',
-                              time: '06:03 pm',
-                            },
-                          ])
-                        }
-                        className="text-gray-400 hover:text-red-500 p-1 text-xs"
-                        title="Clear preview"
-                      >
-                        🗑️
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => triggerSaveNotification('Preview reloaded')}
-                        className="text-gray-400 hover:text-gray-600 p-1 text-xs"
-                        title="Reload preview"
-                      >
-                        🔄
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Chat messages */}
-                  <div className="space-y-3 overflow-y-auto max-h-[500px] pr-1 text-xs">
-                    <div className="text-center my-2">
-                      <span className="px-3 py-1 bg-gray-100 dark:bg-gray-700/60 text-gray-500 dark:text-gray-400 rounded-full text-[10px] font-semibold">
-                        Preview Session
-                      </span>
-                    </div>
-                    {chatLog.map((c, i) => (
-                      <div
-                        key={i}
-                        className={`p-3.5 rounded-2xl max-w-[85%] ${
-                          c.sender === 'user'
-                            ? 'ml-auto bg-[#E7FFDB] text-gray-800'
-                            : 'bg-gray-100 dark:bg-gray-700/60 text-gray-800 dark:text-gray-200'
-                        }`}
-                      >
-                        <p className="leading-relaxed">{c.text}</p>
-                        <span className="text-[9px] text-gray-400 block text-right mt-1 font-mono">
-                          {c.sender === 'bot' ? 'Bot · ' : 'Customer · '}{c.time}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="pt-3 border-t border-gray-100 dark:border-gray-700 space-y-2">
-                  <div className="flex gap-2 items-center">
-                    <span className="text-xs text-gray-400 font-semibold px-2 py-1 bg-gray-50 dark:bg-gray-900 rounded-lg whitespace-nowrap">
-                      👤 Customer
-                    </span>
-                    <input
-                      type="text"
-                      value={testChatMessage}
-                      onChange={(e) => setTestChatMessage(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleTestChatSend()}
-                      placeholder="Type to test your bot..."
-                      className="flex-1 px-3 py-2 border rounded-xl text-xs bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleTestChatSend}
-                      className="p-2 bg-[#4D64E6] text-white rounded-xl text-xs font-bold shadow-xs hover:bg-[#3D52D5]"
-                      title="Send message"
-                    >
-                      <SendIcon size={14} />
-                    </button>
-                  </div>
-                  <span className="text-[10px] text-gray-400 block text-center">
-                    Replies use merchant pricing, services, and configured Q&A only
-                  </span>
-                </div>
-              </div>
-            </div>
+            )}
           </div>
         )}
 
-        {/* ─────────────────────────────────────────────────────────────
-            VIEW 11: BUSINESS SETUP (6 Tabs)
-        ───────────────────────────────────────────────────────────── */}
         {activeView === 'business_setup' && (
           <div className="p-6 max-w-7xl w-full mx-auto space-y-6 animate-fadeIn">
             {/* Top Workspace Header */}
@@ -3889,283 +3492,10 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                       </div>
                     </div>
 
-                    {/* Services you offer */}
-                    <div className="bg-white dark:bg-gray-800 border border-[#E8EAF3] dark:border-gray-800 rounded-2xl p-6 shadow-xs space-y-5">
-                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-2 border-b border-gray-100 dark:border-gray-700">
-                        <div>
-                          <h3 className="font-extrabold text-sm text-[#172031] dark:text-white">Services you offer</h3>
-                          <p className="text-[11px] text-gray-400">Choose the print services your shop offers. Changes reflect on customer portal immediately.</p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const allDefaults = [
-                                'Black & White', 'Colour', 'Single-sided', 'Back-to-Back - Automatic', 'Back-to-Back - Manual',
-                                'A4', 'A3', 'Plain paper', 'Auto orientation', 'Actual size', 'Draft quality', 'High quality'
-                              ];
-                              setServicesOffered(allDefaults);
-                              setGlobalToast('All standard services enabled');
-                            }}
-                            className="text-[11px] font-bold text-[#4F46E5] hover:underline"
-                          >
-                            Enable All Standard
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Color & print sides */}
-                      <div className="space-y-2 text-xs">
-                        <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider block">Color &amp; print sides</span>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          {[
-                            { name: 'Black & White', desc: 'Standard monochrome laser prints' },
-                            { name: 'Colour', desc: 'Vibrant CMYK / Inkjet color prints' },
-                            { name: 'Single-sided', desc: 'Single face printed per sheet' },
-                            { name: 'Back-to-Back - Automatic', desc: 'Hardware duplex printing on both sides' },
-                            { name: 'Back-to-Back - Manual', desc: 'Manual dual-pass printing for simple printers' },
-                          ].map((svc) => {
-                            const isChecked = servicesOffered.includes(svc.name);
-                            return (
-                              <label
-                                key={svc.name}
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  toggleServiceOffered(svc.name);
-                                }}
-                                className={`flex items-start gap-2.5 p-3 rounded-xl border cursor-pointer select-none transition-all ${
-                                  isChecked
-                                    ? 'bg-indigo-50/70 border-indigo-300 text-indigo-950 font-bold dark:bg-indigo-950/40 dark:text-indigo-200 dark:border-indigo-700 shadow-xs'
-                                    : 'bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-700 text-gray-600 hover:border-gray-300'
-                                }`}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={isChecked}
-                                  onChange={() => {}}
-                                  className="mt-0.5 rounded text-[#4D64E6] cursor-pointer"
-                                />
-                                <div className="flex-1">
-                                  <div className="text-xs font-bold leading-none mb-1">{svc.name}</div>
-                                  <div className="text-[10px] font-normal text-gray-500 dark:text-gray-400">{svc.desc}</div>
-                                </div>
-                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${isChecked ? 'bg-indigo-200 text-indigo-900 dark:bg-indigo-900 dark:text-indigo-200' : 'bg-gray-200 text-gray-600 dark:bg-gray-800 dark:text-gray-400'}`}>
-                                  {isChecked ? 'ACTIVE' : 'OFF'}
-                                </span>
-                              </label>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      {/* Paper sizes & types */}
-                      <div className="space-y-2 text-xs">
-                        <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider block">Paper sizes &amp; types</span>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          {[
-                            { name: 'A4', desc: 'Standard 210 x 297 mm document paper' },
-                            { name: 'A3', desc: 'Large 297 x 420 mm engineering drawings & posters' },
-                            { name: '4x6 photo', desc: 'Standard photographic prints' },
-                            { name: '5x7 photo', desc: 'Medium photographic prints' },
-                            { name: 'Glossy paper', desc: 'High-sheen photographic paper' },
-                            { name: 'Plain paper', desc: '75-80 GSM bond copier paper' },
-                          ].map((svc) => {
-                            const isChecked = servicesOffered.includes(svc.name);
-                            return (
-                              <label
-                                key={svc.name}
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  toggleServiceOffered(svc.name);
-                                }}
-                                className={`flex items-start gap-2.5 p-3 rounded-xl border cursor-pointer select-none transition-all ${
-                                  isChecked
-                                    ? 'bg-indigo-50/70 border-indigo-300 text-indigo-950 font-bold dark:bg-indigo-950/40 dark:text-indigo-200 dark:border-indigo-700 shadow-xs'
-                                    : 'bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-700 text-gray-600 hover:border-gray-300'
-                                }`}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={isChecked}
-                                  onChange={() => {}}
-                                  className="mt-0.5 rounded text-[#4D64E6] cursor-pointer"
-                                />
-                                <div className="flex-1">
-                                  <div className="text-xs font-bold leading-none mb-1">{svc.name}</div>
-                                  <div className="text-[10px] font-normal text-gray-500 dark:text-gray-400">{svc.desc}</div>
-                                </div>
-                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${isChecked ? 'bg-indigo-200 text-indigo-900 dark:bg-indigo-900 dark:text-indigo-200' : 'bg-gray-200 text-gray-600 dark:bg-gray-800 dark:text-gray-400'}`}>
-                                  {isChecked ? 'ACTIVE' : 'OFF'}
-                                </span>
-                              </label>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      {/* Layout & finishing */}
-                      <div className="space-y-2 text-xs">
-                        <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider block">Layout &amp; finishing</span>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          {[
-                            { name: 'Auto orientation', desc: 'Auto-detect portrait vs landscape per page' },
-                            { name: 'Portrait', desc: 'Vertical sheet orientation' },
-                            { name: 'Landscape', desc: 'Horizontal sheet orientation' },
-                            { name: 'Multiple copies', desc: 'Collate or uncollate duplicate copies' },
-                            { name: 'Page selection', desc: 'Customer selects page ranges (e.g. 1-5, 8)' },
-                            { name: 'Fit to page', desc: 'Scale oversized sheets down to printable margins' },
-                            { name: 'Actual size', desc: '100% 1:1 scale reproduction' },
-                            { name: 'Collated printing', desc: '1,2,3... 1,2,3 instead of 1,1, 2,2' },
-                            { name: 'Pages per sheet', desc: '2-up or 4-up slides on a single page' },
-                          ].map((svc) => {
-                            const isChecked = servicesOffered.includes(svc.name);
-                            return (
-                              <label
-                                key={svc.name}
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  toggleServiceOffered(svc.name);
-                                }}
-                                className={`flex items-start gap-2.5 p-3 rounded-xl border cursor-pointer select-none transition-all ${
-                                  isChecked
-                                    ? 'bg-indigo-50/70 border-indigo-300 text-indigo-950 font-bold dark:bg-indigo-950/40 dark:text-indigo-200 dark:border-indigo-700 shadow-xs'
-                                    : 'bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-700 text-gray-600 hover:border-gray-300'
-                                }`}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={isChecked}
-                                  onChange={() => {}}
-                                  className="mt-0.5 rounded text-[#4D64E6] cursor-pointer"
-                                />
-                                <div className="flex-1">
-                                  <div className="text-xs font-bold leading-none mb-1">{svc.name}</div>
-                                  <div className="text-[10px] font-normal text-gray-500 dark:text-gray-400">{svc.desc}</div>
-                                </div>
-                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${isChecked ? 'bg-indigo-200 text-indigo-900 dark:bg-indigo-900 dark:text-indigo-200' : 'bg-gray-200 text-gray-600 dark:bg-gray-800 dark:text-gray-400'}`}>
-                                  {isChecked ? 'ACTIVE' : 'OFF'}
-                                </span>
-                              </label>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      {/* Advanced services Toggle Box */}
-                      <div className="p-4 rounded-xl border border-gray-200 dark:border-gray-700 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <div className="font-bold text-xs text-[#172031] dark:text-white">Advanced services</div>
-                            <div className="text-[10px] text-gray-400">Enable only capabilities your shop can fulfill.</div>
-                          </div>
-                          <button
-                            type="button"
-                            disabled
-                            aria-label="Advanced services are unavailable"
-                            title="These options are not supported by the current customer order workflow."
-                            className="relative inline-flex h-5 w-9 shrink-0 cursor-not-allowed rounded-full border-2 border-transparent bg-gray-300 opacity-60 dark:bg-gray-700"
-                          >
-                            <span
-                              className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
-                                advancedServicesEnabled ? 'translate-x-4' : 'translate-x-0'
-                              }`}
-                            />
-                          </button>
-                        </div>
-                        {advancedServicesEnabled && (
-                          <>
-                            <div className="text-[10px] text-gray-400 italic">Advanced services - customer portal will offer these specialized formatting options</div>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                              {[
-                                'Long-edge binding', 'Short-edge binding', 'A5', 'B4', 'B5', 'Letter', 'Legal',
-                                'Draft quality', 'High quality', 'Print detail', 'Reverse order', 'Mirror'
-                              ].map((adv) => {
-                                const isChecked = servicesOffered.includes(adv);
-                                return (
-                                  <label
-                                    key={adv}
-                                    onClick={(e) => {
-                                      e.preventDefault();
-                                      toggleServiceOffered(adv);
-                                    }}
-                                    className={`flex items-center gap-2 p-2 rounded-lg border text-[11px] cursor-pointer transition-colors ${
-                                      isChecked
-                                        ? 'bg-indigo-50/80 border-indigo-200 text-indigo-900 font-bold dark:bg-indigo-950/40 dark:text-indigo-200'
-                                        : 'bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-700 text-gray-600'
-                                    }`}
-                                  >
-                                    <input
-                                      type="checkbox"
-                                      checked={isChecked}
-                                      onChange={() => {}}
-                                      className="rounded text-[#4D64E6] cursor-pointer"
-                                    />
-                                    <span>{adv}</span>
-                                  </label>
-                                );
-                              })}
-                            </div>
-                          </>
-                        )}
-                      </div>
-
-                      {/* Physical services Toggle Box */}
-                      <div className="p-4 rounded-xl border border-gray-200 dark:border-gray-700 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <div className="font-bold text-xs text-[#172031] dark:text-white">Physical services</div>
-                            <div className="text-[10px] text-gray-400">Media loading and post-print finishing performed by shop staff or hardware</div>
-                          </div>
-                          <button
-                            type="button"
-                            disabled
-                            aria-label="Physical services are unavailable"
-                            title="These options are not supported by the current customer order workflow."
-                            className="relative inline-flex h-5 w-9 shrink-0 cursor-not-allowed rounded-full border-2 border-transparent bg-gray-300 opacity-60 dark:bg-gray-700"
-                          >
-                            <span
-                              className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
-                                physicalServicesEnabled ? 'translate-x-4' : 'translate-x-0'
-                              }`}
-                            />
-                          </button>
-                        </div>
-                        {physicalServicesEnabled && (
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-                            {[
-                              'Custom dimensions', 'Matte paper', 'Photo paper',
-                              'Bond paper', 'Cardstock', 'Labels',
-                              'Envelopes', 'Borderless printing', 'Stapling',
-                              'Hole punching', 'Folding', 'Booklet finishing',
-                              'Binding', 'Cutting', 'Output bin selection'
-                            ].map((phy) => {
-                              const isChecked = servicesOffered.includes(phy);
-                              return (
-                                <label
-                                  key={phy}
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    toggleServiceOffered(phy);
-                                  }}
-                                  className={`flex items-center gap-2 p-2 rounded-lg border text-[11px] cursor-pointer transition-colors ${
-                                    isChecked
-                                      ? 'bg-indigo-50/80 border-indigo-200 text-indigo-900 font-bold dark:bg-indigo-950/40 dark:text-indigo-200'
-                                      : 'bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-700 text-gray-600'
-                                  }`}
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={isChecked}
-                                    onChange={() => {}}
-                                    className="rounded text-[#4D64E6] cursor-pointer"
-                                  />
-                                  <span>{phy}</span>
-                                </label>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
+                    <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5 dark:border-blue-900 dark:bg-blue-950/30">
+                      <h3 className="font-extrabold text-sm text-blue-950 dark:text-blue-200">Customer print options</h3>
+                      <p className="mt-1 text-xs text-blue-900/80 dark:text-blue-300">Available print modes and paper sizes are managed in Customer Portal settings. Those settings are saved to the shop and applied to new orders.</p>
+                      <button type="button" onClick={() => setSetupTab('portal')} className="mt-3 rounded-lg border border-blue-300 bg-white px-3 py-2 text-xs font-bold text-blue-800 hover:bg-blue-100 dark:border-blue-800 dark:bg-gray-900 dark:text-blue-200">Open Customer Portal settings</button>
                     </div>
 
                     {/* Owner & Login Details */}

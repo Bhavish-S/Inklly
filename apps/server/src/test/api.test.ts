@@ -675,6 +675,27 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.match((await remove.json() as any).error, /No account was removed/i);
   });
 
+  it('persists merchant message templates while keeping WhatsApp delivery unavailable', async () => {
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` };
+    const initial = await fetch(`${baseUrl}/api/v1/merchant/bot-templates`, { headers });
+    assert.equal(initial.status, 200);
+    const initialRecords = await initial.json() as any[];
+    assert.ok(initialRecords.some((template) => template.templateKey === 'GREETING'));
+
+    const updatedText = `Test greeting ${crypto.randomUUID()}`;
+    const update = await fetch(`${baseUrl}/api/v1/merchant/bot-templates`, {
+      method: 'PUT', headers, body: JSON.stringify({ templateKey: 'GREETING', templateText: updatedText, isEnabled: true }),
+    });
+    assert.equal(update.status, 200);
+    assert.ok((await update.json() as any).templates.some((template: any) => template.templateKey === 'GREETING' && template.templateText === updatedText));
+
+    const reload = await fetch(`${baseUrl}/api/v1/merchant/bot-templates`, { headers });
+    const reloadedRecords = await reload.json() as any[];
+    assert.ok(reloadedRecords.some((template) => template.templateKey === 'GREETING' && template.templateText === updatedText));
+    const unavailable = await fetch(`${baseUrl}/api/v1/merchant/whatsapp/setup`, { headers });
+    assert.equal((await unavailable.json() as any).available, false);
+  });
+
   it('persists merchant storage categories in the tenant-scoped database', async () => {
     const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` };
     const create = await fetch(`${baseUrl}/api/v1/merchant/storage/categories`, {

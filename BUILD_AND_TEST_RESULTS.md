@@ -5,7 +5,7 @@
 ## Current local verification
 
 - `npm run build` — passed for database, shared, desktop agent, server, and web workspaces using Vite 6.4.5. The initial JavaScript bundle is 218.07 kB minified (61.39 kB gzip); PDF rendering is isolated in a 484.31 kB lazy-loaded chunk. Vite reports no oversized JavaScript chunk.
-- `NODE_ENV=test npm test` — 254 passed, 0 failed: database 15, shared 15, agent 14, server 204, web 6. New coverage includes cash-collection rejection before print output is ready, concurrent idempotent collection without duplicate payment/ledger/webhook records, customer PDF transformation plus retry-safe private upload handling, and merchant order/file privacy across tenants.
+- `NODE_ENV=test npm test` — 255 passed, 0 failed: database 15, shared 15, agent 14, server 205, web 6. New coverage includes cash-collection rejection before print output is ready, concurrent idempotent collection without duplicate payment/ledger/webhook records, customer PDF transformation plus retry-safe private upload handling, merchant order/file privacy across tenants, and saved merchant message templates.
 - `npm audit --audit-level=high` — attempted twice; both requests to the npm advisory endpoint timed out, so no current audit result is available.
 - `npm run lint` — no root lint script is currently configured.
 
@@ -41,7 +41,7 @@ Platform merchant onboarding now transactionally provisions an inactive owner, o
 
 Developer API keys are bound to the issuing user and shop, require `ENABLE_EXTERNAL_API_ACCESS=true`, and are checked for environment, expiry, revocation, active membership, and least-privilege scopes. Key verifier hashes are omitted from creation and listing responses. Developer webhook secrets use purpose-bound AES-256-GCM encryption at rest; legacy plaintext rows are transactionally migrated and creation fails closed if the stable encryption key is unavailable. Registration requires HTTPS, rejects literal IPs and local hostnames, and validates the currently supported order-created, order-status, and payment-success events. Each event and delivery is persisted transactionally; the worker signs the exact JSON envelope with timestamped HMAC-SHA256, resolves and pins only public IP results, requires HTTPS, does not follow redirects, and records bounded retries and per-attempt history. The webhook explorer's simulator remains clearly labeled as an unsigned preview. External API access remains disabled by default. Live DNS/HTTPS delivery, delivery replay, and additional event types remain open; local UI and API support one-time secret creation/rotation and revocation.
 
-WhatsApp Cloud API onboarding and message delivery are unavailable. The merchant screen contains no simulated QR or connected-account state; setup writes and pairing requests return HTTP 503 until secure Meta onboarding, credential storage, and delivery are implemented.
+WhatsApp Cloud API onboarding and message delivery are unavailable. Merchant GREETING and ORDER_READY templates can be loaded and saved through the authenticated API; the UI says saving does not send messages. The profile links to persisted Customer Portal settings for supported print modes and sizes. Setup writes and pairing requests return HTTP 503 until secure Meta onboarding, credential storage, and delivery are implemented.
 
 ## Deployment and integration limits
 
