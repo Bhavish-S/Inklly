@@ -450,20 +450,30 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [shopName, setShopName] = useState<string>(() => liveShop?.name || 'Printing Shopz');
   const [shopTagline, setShopTagline] = useState<string>(() => liveShop?.tagline || 'High Speed Xerox, Document Printing & Lamination');
   const [shopPhone, setShopPhone] = useState<string>(() => liveShop?.phone || '+91 98765 43210');
-  const [shopEmail, setShopEmail] = useState<string>(() => liveShop?.email || liveUser?.email || 'support@printingshopz.in');
   const [shopAddress, setShopAddress] = useState<string>(() => liveShop?.address || 'Shop 4, Ground Floor, Academic Complex');
-  const [shopLocality, setShopLocality] = useState<string>('Near Central Library, University Campus');
   const [shopCity, setShopCity] = useState<string>(() => liveShop?.city || 'Pune');
   const [shopState, setShopState] = useState<string>(() => liveShop?.state || 'Maharashtra');
   const [shopPincode, setShopPincode] = useState<string>(() => liveShop?.pinCode || '411007');
-  const [shopGstin, setShopGstin] = useState<string>('27AABCU9603R1ZM');
+  const [accountFullName, setAccountFullName] = useState<string>(() => liveUser?.fullName || '');
+  const [accountPhone, setAccountPhone] = useState<string>(() => liveUser?.phone || '');
+  const [accountProfileSaving, setAccountProfileSaving] = useState(false);
+  const [accountProfileError, setAccountProfileError] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
+
+  useEffect(() => {
+    setAccountFullName(liveUser?.fullName || '');
+    setAccountPhone(liveUser?.phone || '');
+  }, [liveUser?.fullName, liveUser?.phone]);
 
   useEffect(() => {
     if (liveShop) {
       if (liveShop.name) setShopName(liveShop.name);
       if (liveShop.tagline) setShopTagline(liveShop.tagline);
       if (liveShop.phone) setShopPhone(liveShop.phone);
-      if (liveShop.email || liveUser?.email) setShopEmail(liveShop.email || liveUser?.email);
       if (liveShop.address) setShopAddress(liveShop.address);
       if (liveShop.city) setShopCity(liveShop.city);
       if (liveShop.state) setShopState(liveShop.state);
@@ -748,6 +758,42 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     } catch (err: any) {
       setSaveSuccessToast('Settings were not fully saved: ' + (err.message || 'Unknown error'));
       setTimeout(() => setSaveSuccessToast(null), 5000);
+    }
+  };
+
+  const handleSaveAccountProfile = async () => {
+    setAccountProfileSaving(true);
+    setAccountProfileError('');
+    try {
+      const result = await api.updateMe({ fullName: accountFullName.trim(), phone: accountPhone.trim() || null });
+      setLiveUser(result.user);
+      localStorage.setItem('inklly_user', JSON.stringify(result.user));
+      setGlobalToast('Account profile saved.');
+    } catch (error: any) {
+      setAccountProfileError(error?.message || 'Could not save account profile.');
+    } finally {
+      setAccountProfileSaving(false);
+    }
+  };
+
+  const handleChangePassword = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setPasswordError('');
+    if (newPassword !== confirmNewPassword) {
+      setPasswordError('The new password and confirmation do not match.');
+      return;
+    }
+    setPasswordSaving(true);
+    try {
+      await api.changePassword({ currentPassword, newPassword });
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmNewPassword('');
+      setGlobalToast('Password changed. Other active sessions were signed out.');
+    } catch (error: any) {
+      setPasswordError(error?.message || 'Could not change the password.');
+    } finally {
+      setPasswordSaving(false);
     }
   };
 
@@ -3498,73 +3544,51 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                       <button type="button" onClick={() => setSetupTab('portal')} className="mt-3 rounded-lg border border-blue-300 bg-white px-3 py-2 text-xs font-bold text-blue-800 hover:bg-blue-100 dark:border-blue-800 dark:bg-gray-900 dark:text-blue-200">Open Customer Portal settings</button>
                     </div>
 
-                    {/* Owner & Login Details */}
-                    <div className="bg-white dark:bg-gray-800 border border-[#E8EAF3] dark:border-gray-800 rounded-2xl p-6 shadow-xs space-y-4">
-                      <div className="flex items-center gap-2 pb-2 border-b border-gray-100 dark:border-gray-700">
-                        <span className="text-base">🔐</span>
-                        <div>
-                          <h3 className="font-extrabold text-sm text-[#172031] dark:text-white">Owner & Login Details</h3>
-                          <p className="text-[10px] text-gray-400">Edit the information entered during registration</p>
-                        </div>
+                    <section className="rounded-2xl border border-[#E8EAF3] bg-white p-6 shadow-xs dark:border-gray-800 dark:bg-gray-800 space-y-5">
+                      <div className="border-b border-gray-100 pb-3 dark:border-gray-700">
+                        <h3 className="font-extrabold text-sm text-[#172031] dark:text-white">Account profile</h3>
+                        <p className="mt-1 text-[11px] text-gray-500">Update the personal name and phone number on your signed-in account.</p>
                       </div>
-
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-                        <div>
-                          <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">Owner Name</label>
-                          <input type="text" defaultValue="Rahul S" className="w-full px-3 py-2 border rounded-xl bg-gray-50 dark:bg-gray-900" />
-                        </div>
-                        <div>
-                          <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">Shop Name</label>
-                          <input type="text" defaultValue="Printing Shopz" className="w-full px-3 py-2 border rounded-xl bg-gray-50 dark:bg-gray-900" />
-                        </div>
-                        <div>
-                          <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">Login Email</label>
-                          <input type="email" defaultValue="amh24cg017@gmail.com" className="w-full px-3 py-2 border rounded-xl bg-gray-50 dark:bg-gray-900" />
-                        </div>
-                        <div>
-                          <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">Login / Business Phone</label>
-                          <input type="text" defaultValue="+917349095267" className="w-full px-3 py-2 border rounded-xl bg-gray-50 dark:bg-gray-900" />
-                        </div>
-                        <div className="sm:col-span-2">
-                          <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">Business Address</label>
-                          <input type="text" defaultValue="Setup pending" className="w-full px-3 py-2 border rounded-xl bg-gray-50 dark:bg-gray-900" />
-                        </div>
-                        <div>
-                          <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">City</label>
-                          <input type="text" defaultValue="Pending" className="w-full px-3 py-2 border rounded-xl bg-gray-50 dark:bg-gray-900" />
-                        </div>
-                        <div>
-                          <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">State</label>
-                          <input type="text" defaultValue="Pending" className="w-full px-3 py-2 border rounded-xl bg-gray-50 dark:bg-gray-900" />
-                        </div>
-                        <div>
-                          <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">PIN Code</label>
-                          <input type="text" defaultValue="000000" className="w-full px-3 py-2 border rounded-xl bg-gray-50 dark:bg-gray-900" />
-                        </div>
-                        <div>
-                          <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">GSTIN (optional)</label>
-                          <input type="text" placeholder="GSTIN" className="w-full px-3 py-2 border rounded-xl bg-gray-50 dark:bg-gray-900" />
-                        </div>
-                        <div>
-                          <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">Current Password (required for login changes)</label>
-                          <input type="password" defaultValue="password123456" className="w-full px-3 py-2 border rounded-xl bg-gray-50 dark:bg-gray-900" />
-                        </div>
-                        <div>
-                          <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">New Password (leave blank to keep)</label>
-                          <input type="password" placeholder="••••••••" className="w-full px-3 py-2 border rounded-xl bg-gray-50 dark:bg-gray-900" />
-                        </div>
+                        <label className="font-bold text-gray-700 dark:text-gray-300">Full name
+                          <input type="text" maxLength={120} value={accountFullName} onChange={(event) => setAccountFullName(event.target.value)} autoComplete="name" className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 font-normal dark:border-gray-700 dark:bg-gray-900" />
+                        </label>
+                        <label className="font-bold text-gray-700 dark:text-gray-300">Phone number <span className="font-normal text-gray-400">(optional)</span>
+                          <input type="tel" maxLength={24} value={accountPhone} onChange={(event) => setAccountPhone(event.target.value)} autoComplete="tel" placeholder="+919876543210" className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 font-normal dark:border-gray-700 dark:bg-gray-900" />
+                        </label>
+                        <label className="font-bold text-gray-700 dark:text-gray-300">Login email
+                          <input type="email" readOnly value={liveUser?.email || ''} className="mt-1 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 font-normal text-gray-500 dark:border-gray-700 dark:bg-gray-900" />
+                        </label>
+                        <div className="flex items-end text-[11px] text-gray-500">Email changes require verification and are not available from this screen.</div>
                       </div>
+                      {accountProfileError && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">{accountProfileError}</div>}
+                      <div className="flex justify-end">
+                        <button type="button" disabled={accountProfileSaving} onClick={() => { void handleSaveAccountProfile(); }} className="rounded-xl bg-[#4F46E5] px-5 py-2.5 text-xs font-bold text-white disabled:opacity-50">{accountProfileSaving ? 'Saving…' : 'Save account profile'}</button>
+                      </div>
+                    </section>
 
-                      <div className="flex justify-end pt-2">
-                        <button
-                          type="button"
-                          onClick={() => triggerSaveNotification('Account details')}
-                          className="px-5 py-2.5 bg-[#4F46E5] text-white rounded-xl text-xs font-bold shadow-xs hover:bg-[#4338CA]"
-                        >
-                          Update account details
-                        </button>
+                    <section className="rounded-2xl border border-[#E8EAF3] bg-white p-6 shadow-xs dark:border-gray-800 dark:bg-gray-800 space-y-4">
+                      <div>
+                        <h3 className="font-extrabold text-sm text-[#172031] dark:text-white">Change password</h3>
+                        <p className="mt-1 text-[11px] text-gray-500">Use your current password to set a new one. Other active sessions will be signed out.</p>
                       </div>
-                    </div>
+                      <form onSubmit={handleChangePassword} className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                        <label className="font-bold text-gray-700 dark:text-gray-300 sm:col-span-2">Current password
+                          <input type="password" required maxLength={1024} autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 font-normal dark:border-gray-700 dark:bg-gray-900" />
+                        </label>
+                        <label className="font-bold text-gray-700 dark:text-gray-300">New password
+                          <input type="password" required minLength={12} maxLength={1024} autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 font-normal dark:border-gray-700 dark:bg-gray-900" />
+                        </label>
+                        <label className="font-bold text-gray-700 dark:text-gray-300">Confirm new password
+                          <input type="password" required minLength={12} maxLength={1024} autoComplete="new-password" value={confirmNewPassword} onChange={(event) => setConfirmNewPassword(event.target.value)} className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 font-normal dark:border-gray-700 dark:bg-gray-900" />
+                        </label>
+                        <p className="text-[11px] text-gray-500 sm:col-span-2">At least 12 characters, including uppercase and lowercase letters, a number, and a symbol.</p>
+                        {passwordError && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800 sm:col-span-2">{passwordError}</div>}
+                        <div className="flex justify-end sm:col-span-2">
+                          <button type="submit" disabled={passwordSaving} className="rounded-xl border border-gray-300 px-5 py-2.5 text-xs font-bold text-gray-800 disabled:opacity-50 dark:border-gray-600 dark:text-gray-100">{passwordSaving ? 'Updating…' : 'Change password'}</button>
+                        </div>
+                      </form>
+                    </section>
                   </div>
 
                   {/* Right Column: Setup checklist */}
@@ -3644,7 +3668,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
 
                 {/* Footer Navigation */}
                 <div className="flex justify-between items-center pt-4 border-t border-gray-200 dark:border-gray-800 text-xs">
-                  <span className="text-gray-400">Save shop settings above. Owner and login changes use Update account details.</span>
+                  <span className="text-gray-400">Save shop settings above. Account profile and password controls are in the Account profile section.</span>
                   <button
                     type="button"
                     onClick={() => setSetupTab('printers')}

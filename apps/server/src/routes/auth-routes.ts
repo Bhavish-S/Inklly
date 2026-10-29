@@ -16,6 +16,8 @@ export function createAuthRoutes(db: DatabaseService): Router {
   router.post('/invitations/accept', controller.acceptPlatformInvitation);
   const requireAuthentication = authenticate(db);
   router.get('/me', requireAuthentication, controller.getMe);
+  router.put('/me', requireAuthentication, controller.updateMe);
+  router.put('/password', requireAuthentication, controller.changePassword);
 
   // Appearance & Account settings
   router.get('/preferences', requireAuthentication, controller.getPreferences);

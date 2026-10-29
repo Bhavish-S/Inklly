@@ -1524,6 +1524,25 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       const token = (await login.json() as any).token;
       const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
 
+      // A platform grant must not turn the merchant API's shopId selector into
+      // a cross-tenant support context. Platform support uses the owner role.
+      const ownerId = db.queryOne<any>(`SELECT id FROM users WHERE role = 'PLATFORM_OWNER' AND is_active = 1 ORDER BY created_at LIMIT 1`)?.id;
+      const initialShop = db.queryOne<any>(`SELECT tagline FROM shops WHERE id = 'shop-campus-1'`);
+      assert.ok(ownerId && initialShop);
+      const grantAt = new Date().toISOString();
+      db.execute(
+        `INSERT INTO platform_admin_permissions (user_id, permission, granted_by_user_id, granted_at) VALUES (?, ?, ?, ?), (?, ?, ?, ?)`,
+        [userId, 'settings:view', ownerId, grantAt, userId, 'settings:manage', ownerId, grantAt]
+      );
+      const merchantSettings = await fetch(`${baseUrl}/api/v1/merchant/settings?shopId=shop-campus-1`, { headers });
+      assert.equal(merchantSettings.status, 403, 'platform admin grants do not authorize merchant route access');
+      const merchantSettingsUpdate = await fetch(`${baseUrl}/api/v1/merchant/settings?shopId=shop-campus-1`, {
+        method: 'PUT', headers, body: JSON.stringify({ tagline: 'Unauthorized platform-admin update' }),
+      });
+      assert.equal(merchantSettingsUpdate.status, 403);
+      assert.equal(db.queryOne<any>(`SELECT tagline FROM shops WHERE id = 'shop-campus-1'`).tagline, initialShop.tagline,
+        'cross-tenant shop settings remain unchanged');
+
       const initiallyDenied = await fetch(`${baseUrl}/api/v1/platform/overview`, { headers });
       assert.equal(initiallyDenied.status, 403, 'platform admin begins with no permission grants');
 
@@ -2063,6 +2082,8 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.ok(spec.paths['/merchant/settings']?.put.description.includes('settings:manage'));
     assert.ok(!spec.paths['/subscriptions/usage']?.get.description.includes('active subscription'));
     assert.ok(spec.paths['/developer/webhooks/{id}/deliveries']?.get.description.includes('HMAC SHA-256'));
+    assert.ok(spec.paths['/auth/me']?.put.description.includes('Email changes require a separate verification flow'));
+    assert.ok(spec.paths['/auth/password']?.put.description.includes('All other active sessions are revoked'));
 
     const requiredMerchantOperations: Record<string, string[]> = {
       '/merchant/dashboard': ['get'],
@@ -2504,6 +2525,73 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(body.user.email, 'owner@campusprint.in');
     assert.equal(body.shop.id, 'shop-campus-1');
     assert.equal(body.organization.id, 'org-campus-network');
+  });
+
+  it('updates only the authenticated account name and phone and audits the profile edit', async () => {
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` };
+    const original = db.queryOne<any>(`SELECT full_name, phone FROM users WHERE id = 'user-owner-1'`);
+    assert.ok(original);
+    try {
+      const updated = await fetch(`${baseUrl}/api/v1/auth/me`, {
+        method: 'PUT', headers, body: JSON.stringify({ fullName: 'Campus Shop Owner', phone: '+919876543210' }),
+      });
+      assert.equal(updated.status, 200, await updated.clone().text());
+      const body = await updated.json() as any;
+      assert.equal(body.user.fullName, 'Campus Shop Owner');
+      assert.equal(body.user.phone, '+919876543210');
+      assert.equal('passwordHash' in body.user, false);
+      assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM audit_events WHERE actor_user_id = 'user-owner-1' AND action = 'ACCOUNT_PROFILE_UPDATED'`).count), 1);
+
+      const attemptedEmailChange = await fetch(`${baseUrl}/api/v1/auth/me`, {
+        method: 'PUT', headers, body: JSON.stringify({ fullName: 'Changed Name', phone: null, email: 'attacker@example.invalid', role: 'PLATFORM_OWNER' }),
+      });
+      assert.equal(attemptedEmailChange.status, 400);
+      assert.equal(db.queryOne<any>(`SELECT email FROM users WHERE id = 'user-owner-1'`).email, 'owner@campusprint.in');
+    } finally {
+      db.execute(`UPDATE users SET full_name = ?, phone = ? WHERE id = 'user-owner-1'`, [original.full_name, original.phone]);
+    }
+  });
+
+  it('changes passwords only after current-password verification and revokes other sessions', async () => {
+    const userId = 'user-owner-1';
+    const originalHash = db.queryOne<any>(`SELECT password_hash FROM users WHERE id = ?`, [userId]).password_hash;
+    const otherSessionId = crypto.randomUUID();
+    const otherToken = createSessionToken({
+      sessionId: otherSessionId, userId, email: 'owner@campusprint.in', role: 'MERCHANT_OWNER',
+      shopId: 'shop-campus-1', organizationId: 'org-campus-network', permissions: ['*'],
+    });
+    const now = new Date().toISOString();
+    db.execute(
+      `INSERT INTO user_sessions (id, user_id, token_hash, created_at, last_used_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      [otherSessionId, userId, hashSessionToken(otherToken), now, now, new Date(Date.now() + 60_000).toISOString()]
+    );
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` };
+    try {
+      const wrongPassword = await fetch(`${baseUrl}/api/v1/auth/password`, {
+        method: 'PUT', headers, body: JSON.stringify({ currentPassword: 'wrong password', newPassword: 'BetterPassword123!' }),
+      });
+      assert.equal(wrongPassword.status, 401, await wrongPassword.clone().text());
+      assert.equal(db.queryOne<any>(`SELECT password_hash FROM users WHERE id = ?`, [userId]).password_hash, originalHash);
+
+      const weakPassword = await fetch(`${baseUrl}/api/v1/auth/password`, {
+        method: 'PUT', headers, body: JSON.stringify({ currentPassword: 'DemoOwnerPassword123!', newPassword: 'weak' }),
+      });
+      assert.equal(weakPassword.status, 400);
+
+      const changed = await fetch(`${baseUrl}/api/v1/auth/password`, {
+        method: 'PUT', headers, body: JSON.stringify({ currentPassword: 'DemoOwnerPassword123!', newPassword: 'ReplacementPassword456!' }),
+      });
+      assert.equal(changed.status, 200);
+      assert.equal((await changed.json() as any).otherSessionsRevoked, true);
+      assert.notEqual(db.queryOne<any>(`SELECT password_hash FROM users WHERE id = ?`, [userId]).password_hash, originalHash);
+      assert.equal((await fetch(`${baseUrl}/api/v1/auth/me`, { headers })).status, 200, 'the current session remains active');
+      assert.equal((await fetch(`${baseUrl}/api/v1/auth/me`, { headers: { Authorization: `Bearer ${otherToken}` } })).status, 401,
+        'other sessions are revoked after a password change');
+      assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM audit_events WHERE actor_user_id = ? AND action = 'ACCOUNT_PASSWORD_CHANGED'`, [userId]).count), 1);
+    } finally {
+      db.execute(`UPDATE users SET password_hash = ? WHERE id = ?`, [originalHash, userId]);
+      db.execute(`UPDATE user_sessions SET revoked_at = ? WHERE id = ?`, [new Date().toISOString(), otherSessionId]);
+    }
   });
 
   it('Rejects protected endpoints when token is missing, malformed, or expired with HTTP 401', async () => {

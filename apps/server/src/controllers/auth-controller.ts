@@ -416,6 +416,70 @@ export class AuthController {
     });
   };
 
+  public updateMe = (req: Request, res: Response) => {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' });
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+    if (Object.keys(body).some((key) => !['fullName', 'phone'].includes(key))) {
+      return res.status(400).json({ error: 'Only fullName and phone can be updated here. Email changes require verification.' });
+    }
+    const fullName = typeof body.fullName === 'string' ? body.fullName.trim() : '';
+    const rawPhone = body.phone;
+    const phone = typeof rawPhone === 'string' ? rawPhone.trim() : rawPhone === null ? '' : undefined;
+    if (!fullName || fullName.length > 120) return res.status(400).json({ error: 'Name must be between 1 and 120 characters.' });
+    if (phone === undefined || (phone && (phone.length > 24 || !/^\+?[0-9][0-9 ()-]{5,22}$/.test(phone)))) {
+      return res.status(400).json({ error: 'Enter a valid phone number or leave it blank.' });
+    }
+    if (!this.userRepo.getUserById(userId)) return res.status(404).json({ error: 'Account not found.' });
+    const now = new Date().toISOString();
+    try {
+      this.db.transaction(() => {
+        this.userRepo.updateUserProfile(userId, fullName, phone || null);
+        this.userRepo.logAuditEvent({
+          id: crypto.randomUUID(), actorUserId: userId, actorRole: req.user?.role,
+          organizationId: req.user?.organizationId, shopId: req.user?.shopId,
+          action: 'ACCOUNT_PROFILE_UPDATED', targetType: 'USER', targetId: userId,
+          outcome: 'SUCCESS', ipAddress: req.ip, details: { fields: ['fullName', 'phone'] }, createdAt: now,
+        });
+      });
+    } catch {
+      return res.status(503).json({ error: 'Account profile could not be saved. Please retry.' });
+    }
+    return res.json({ success: true, user: this.userRepo.getUserById(userId) });
+  };
+
+  public changePassword = (req: Request, res: Response) => {
+    const userId = req.user?.userId;
+    const sessionId = req.user?.sessionId;
+    if (!userId || !sessionId) return res.status(401).json({ error: 'Unauthenticated' });
+    const { currentPassword, newPassword } = req.body || {};
+    if (typeof currentPassword !== 'string' || !currentPassword || currentPassword.length > 1024 ||
+        typeof newPassword !== 'string' || newPassword.length < 12 || newPassword.length > 1024 ||
+        !/[a-z]/.test(newPassword) || !/[A-Z]/.test(newPassword) || !/[0-9]/.test(newPassword) || !/[^A-Za-z0-9]/.test(newPassword)) {
+      return res.status(400).json({ error: 'Enter your current password and choose a password of at least 12 characters with upper and lower case letters, a number, and a symbol.' });
+    }
+    const user = this.userRepo.getUserByIdWithPassword(userId);
+    if (!user || !user.isActive || !verifyPassword(currentPassword, user.passwordHash).valid) {
+      return res.status(401).json({ error: 'Current password is incorrect.' });
+    }
+    const now = new Date().toISOString();
+    try {
+      this.db.transaction(() => {
+        this.userRepo.setUserPasswordHash(userId, hashPassword(newPassword));
+        this.userRepo.revokeOtherUserSessions(userId, sessionId);
+        this.userRepo.logAuditEvent({
+          id: crypto.randomUUID(), actorUserId: userId, actorRole: req.user?.role,
+          organizationId: req.user?.organizationId, shopId: req.user?.shopId,
+          action: 'ACCOUNT_PASSWORD_CHANGED', targetType: 'USER', targetId: userId,
+          outcome: 'SUCCESS', ipAddress: req.ip, createdAt: now,
+        });
+      });
+    } catch {
+      return res.status(503).json({ error: 'Password could not be changed. Please retry.' });
+    }
+    return res.json({ success: true, otherSessionsRevoked: true });
+  };
+
   public getPreferences = (req: Request, res: Response) => {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' });

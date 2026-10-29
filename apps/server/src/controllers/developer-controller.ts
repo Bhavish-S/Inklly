@@ -178,6 +178,25 @@ export class DeveloperController {
       },
       servers,
       paths: {
+        '/auth/me': {
+          get: { summary: 'Read the authenticated account profile', security: [{ bearerAuth: [] }], responses: { 200: { description: 'User, active tenant, and subscription details; password hashes are never returned.' }, 401: { description: 'Authentication required.' } } },
+          put: {
+            summary: 'Update the authenticated account name and phone number',
+            description: 'Email changes require a separate verification flow and cannot be made through this operation. Profile changes are audited.',
+            security: [{ bearerAuth: [] }],
+            requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: false, required: ['fullName', 'phone'], properties: { fullName: { type: 'string', minLength: 1, maxLength: 120 }, phone: { type: 'string', nullable: true, maxLength: 24 } } } } } },
+            responses: { 200: { description: 'Updated profile, excluding secret fields.' }, 400: { description: 'Invalid fields or values.' }, 401: { description: 'Authentication required.' } },
+          },
+        },
+        '/auth/password': {
+          put: {
+            summary: 'Change the authenticated account password',
+            description: 'Requires the current password. The new password must be at least 12 characters with upper and lower case letters, a number, and a symbol. All other active sessions are revoked; the current session remains active.',
+            security: [{ bearerAuth: [] }],
+            requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: false, required: ['currentPassword', 'newPassword'], properties: { currentPassword: { type: 'string', minLength: 1, maxLength: 1024 }, newPassword: { type: 'string', minLength: 12, maxLength: 1024 } } } } } },
+            responses: { 200: { description: 'Password updated and other active sessions revoked.' }, 400: { description: 'Password policy not met.' }, 401: { description: 'Current password is incorrect or session is invalid.' } },
+          },
+        },
         '/developer/webhooks': {
           get: { summary: 'List active organization webhook subscriptions', security: [{ bearerAuth: [] }], responses: { 200: { description: 'Tenant-scoped subscriptions; secrets are omitted.' } } },
           post: { summary: 'Create a signed webhook subscription', security: [{ bearerAuth: [] }], responses: { 201: { description: 'Subscription and one-time webhook secret.' }, 400: { description: 'Invalid HTTPS destination or event type.' } } },

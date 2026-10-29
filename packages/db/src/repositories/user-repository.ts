@@ -91,6 +91,29 @@ export class UserRepository {
     };
   }
 
+  public updateUserProfile(userId: string, fullName: string, phone: string | null): void {
+    this.db.execute(
+      `UPDATE users SET full_name = ?, phone = ?, updated_at = ? WHERE id = ?`,
+      [fullName, phone, new Date().toISOString(), userId]
+    );
+  }
+
+  public getUserByIdWithPassword(id: string): (User & { passwordHash: string }) | null {
+    const row = this.db.queryOne<any>(`SELECT * FROM users WHERE id = ?`, [id]);
+    if (!row) return null;
+    return {
+      id: row.id,
+      email: row.email,
+      phone: row.phone || undefined,
+      fullName: row.full_name,
+      role: row.role as UserRole,
+      isActive: Boolean(row.is_active),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      passwordHash: row.password_hash,
+    };
+  }
+
   public setUserActive(id: string, isActive: boolean): void {
     this.db.execute('UPDATE users SET is_active = ?, updated_at = ? WHERE id = ?', [
       isActive ? 1 : 0,
@@ -393,5 +416,13 @@ export class UserRepository {
       `UPDATE user_sessions SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL RETURNING id`,
       [new Date().toISOString(), sessionId, userId]
     ));
+  }
+
+  public revokeOtherUserSessions(userId: string, currentSessionId: string): number {
+    const rows = this.db.query<any>(
+      `UPDATE user_sessions SET revoked_at = ? WHERE user_id = ? AND id <> ? AND revoked_at IS NULL RETURNING id`,
+      [new Date().toISOString(), userId, currentSessionId]
+    );
+    return rows.length;
   }
 }

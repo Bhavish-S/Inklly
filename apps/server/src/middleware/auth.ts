@@ -218,9 +218,13 @@ export function enforceTenantIsolation(req: Request, res: Response, next: NextFu
   if (!req.user) {
     return res.status(401).json({ error: 'Authentication required' });
   }
-  // Platform owners can access any tenant
-  if (req.user.role === 'PLATFORM_OWNER' || req.user.role === 'PLATFORM_ADMIN') {
+  // Platform owners can use the merchant API for support. Platform admins have
+  // separate platform grants and must not select a shop through this router.
+  if (req.user.role === 'PLATFORM_OWNER') {
     return next();
+  }
+  if (req.user.role === 'PLATFORM_ADMIN') {
+    return res.status(403).json({ error: 'Platform administrators cannot access merchant routes. Use the authorized platform console.' });
   }
 
   if (!req.user.shopId) {

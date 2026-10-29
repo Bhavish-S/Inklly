@@ -117,6 +117,24 @@ export const api = {
     return res.json();
   },
 
+  async updateMe(profile: { fullName: string; phone: string | null }) {
+    const res = await fetch(`${API_BASE}/auth/me`, {
+      method: 'PUT', headers: getHeaders(), body: JSON.stringify(profile),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to update account profile');
+    return body;
+  },
+
+  async changePassword(passwords: { currentPassword: string; newPassword: string }) {
+    const res = await fetch(`${API_BASE}/auth/password`, {
+      method: 'PUT', headers: getHeaders(), body: JSON.stringify(passwords),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to change password');
+    return body;
+  },
+
   // Appearance & Account settings
   async getPreferences() {
     const res = await fetch(`${API_BASE}/auth/preferences`, { headers: getHeaders() });
