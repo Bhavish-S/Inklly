@@ -39,6 +39,7 @@ The reference Merchant API page supplied with the product was not accessible dur
 Implemented locally with regression coverage:
 
 - Signed, revocable merchant sessions; account activity and current membership role/permissions are checked on requests.
+- Merchant session authentication also joins the current shop record and denies inactive shops; shop-bound developer API keys already required an active shop. Regression tests cover inactive-shop denial across dashboard and printer routes.
 - Customer upload and server-side quote/order paths use stored document metadata, integer Paise, and retry idempotency when clients provide a stable key.
 - Accepted customer orders persist an immutable pricing snapshot containing the server-computed quote and the exact applicable rate/discount rules. Rate-rule writes use partial unique indexes and atomic upsert semantics to prevent conflicting duplicates.
 - Merchant order search/filter/sort/pagination is tenant-scoped. Dashboard status counts and recent orders are aggregated without hydrating all shop order history.
@@ -53,7 +54,7 @@ Implemented locally with regression coverage:
 - Refund requests reserve the remaining verified payment balance. A merchant can reject a pending request with an audited reason and no money movement; approval remains unavailable until provider refund processing is configured.
 - Agent local status endpoints are read-only and host/origin validated. Physical printing remains disabled by default; the production installer is unavailable.
 
-Latest verified local run on 2026-10-29: `npm run build` passed and `npm test` passed 211 tests after changes for quote snapshots, unique/upserted rate rules, physical-output usage metering, payment-aware merchant collection, validated shop settings, strict agent heartbeat validation, surfaced merchant rate errors, and webhook outbox delivery. Recheck this statement after subsequent edits. `npm audit --audit-level=high` could not reach the npm advisory endpoint on two earlier attempts. Commit `e135daf` is pushed, and Vercel serves its matching web bundle. Render continues serving the older seven-path API. Live PostgreSQL migrations/triggers, object storage, provider, webhook destinations, browser, and hardware behavior remain unverified.
+Latest verified local run on 2026-10-29: `npm run build` passed and `npm test` passed 212 tests after the inactive-shop authorization regression was added. `npm audit --audit-level=high` could not reach the npm advisory endpoint on two earlier attempts. Commit `e135daf` is pushed, and Vercel serves its matching web bundle. Render continues serving the older API. Live PostgreSQL migrations/triggers, object storage, provider, webhook destinations, browser, and hardware behavior remain unverified.
 
 ## Known incomplete product areas
 

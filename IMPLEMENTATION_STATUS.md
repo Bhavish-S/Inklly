@@ -8,7 +8,7 @@ Use `BUILD_AND_TEST_RESULTS.md` for the latest executed checks and `REMAINING_IS
 
 - **Customer ordering:** shop lookup, private upload path, server-side file inspection, quote generation in integer Paise, stale quote confirmation, order persistence, and idempotent retry when the client supplies a stable key.
 - **Accepted pricing and rate integrity:** order rows persist the calculated quote plus the exact rate and discount rules accepted at submission. Rate-rule updates use database uniqueness keys and atomic upserts so concurrent writes cannot create ambiguous prices. Existing duplicate pricing keys fail migration for manual reconciliation.
-- **Merchant API:** signed persisted sessions, active-user and current-membership checks, route permissions, tenant-scoped order search/filter/sort/pagination, private order-file authorization, rate-rule printer ownership, and order status/dispatch rules.
+- **Merchant API:** signed persisted sessions, active-user/current-membership/current-shop checks (inactive shops are denied), route permissions, tenant-scoped order search/filter/sort/pagination, private order-file authorization, rate-rule printer ownership, and order status/dispatch rules.
 - **Shop settings:** profile and operational settings now validate exact supported fields/types/enums and persist through the merchant settings route used by the UI; malformed truthy strings and unknown keys are rejected.
 - **Merchant dashboard:** status counts and recent orders come from tenant-scoped database queries; it no longer hydrates the complete order history to render its overview. Revenue is read from the payment ledger, not inferred from order state.
 - **Staff and onboarding:** owner-created shop staff and platform-created tenant owners receive hashed single-use activation tokens; staff remain inactive until password setup.
@@ -26,7 +26,7 @@ Use `BUILD_AND_TEST_RESULTS.md` for the latest executed checks and `REMAINING_IS
 
 ## Incomplete or unverified
 
-- Commit `e135daf` is pushed and its matching bundle is live on Vercel. Render still serves the older seven-path OpenAPI document, omits `revision`, and does not expose the new webhook delivery or recent storage, print-reconciliation, and subscription usage routes.
+- The local working tree now includes inactive-shop authorization with regression coverage. Commit `e135daf` is pushed and its matching bundle is live on Vercel; this follow-up fix is not pushed. Render still serves an older API: live health omits `revision`, and its OpenAPI document predates webhook delivery, storage, print reconciliation, and subscription usage routes.
 - PostgreSQL migration/startup against the live production project and Supabase private bucket behavior remain unverified.
 - Razorpay sandbox checkout and webhook round trip, refunds/reconciliation against provider statements, subscription checkout, configurable hybrid tariff collection, and quota enforcement are not verified or fully implemented. Usage counting alone is not billing.
 - Database migrations now install append-only ledger triggers and a unique provider-transaction index; local SQLite tests cover immutability, compensating entries, and duplicate rejection. Live Supabase migration, pre-existing duplicate review, role/owner bypass protection, and complete reconciliation remain open.

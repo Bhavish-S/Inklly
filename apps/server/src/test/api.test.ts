@@ -1893,6 +1893,24 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(cashRes.status, 403);
   });
 
+  it('blocks merchant sessions after their shop is deactivated', async () => {
+    db.execute(`UPDATE shops SET is_active = 0 WHERE id = ?`, ['shop-campus-1']);
+    try {
+      const dashboard = await fetch(`${baseUrl}/api/v1/merchant/dashboard`, {
+        headers: { Authorization: `Bearer ${merchantToken}` },
+      });
+      assert.equal(dashboard.status, 403);
+      assert.match((await dashboard.json() as any).error, /shop is inactive/i);
+
+      const printers = await fetch(`${baseUrl}/api/v1/merchant/printers`, {
+        headers: { Authorization: `Bearer ${merchantToken}` },
+      });
+      assert.equal(printers.status, 403);
+    } finally {
+      db.execute(`UPDATE shops SET is_active = 1 WHERE id = ?`, ['shop-campus-1']);
+    }
+  });
+
   it('Allows Platform Owner to access tenant data without isolation error', async () => {
     const adminRes = await fetch(`${baseUrl}/api/v1/merchant/dashboard?shopId=shop-campus-1`, {
       headers: {

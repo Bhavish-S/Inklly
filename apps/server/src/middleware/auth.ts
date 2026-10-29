@@ -128,11 +128,18 @@ export function authenticate(db: DatabaseService) {
     // Tenant scope, role, and permissions are refreshed from the current membership
     // on every request. A signed but stale JWT is not a durable authorization grant.
     const membership = db.queryOne<any>(
-      `SELECT role, permissions FROM memberships WHERE user_id = ? AND organization_id = ? AND shop_id = ?`,
+      `SELECT m.role, m.permissions, s.is_active AS shop_active
+       FROM memberships m
+       LEFT JOIN shops s ON s.id = m.shop_id AND s.organization_id = m.organization_id
+       WHERE m.user_id = ? AND m.organization_id = ? AND m.shop_id = ?`,
       [session.userId, session.organizationId || '', session.shopId || '']
     );
     if (!membership) {
       res.status(401).json({ error: 'Shop membership is no longer active. Please sign in again.' });
+      return;
+    }
+    if (session.shopId && !membership.shop_active) {
+      res.status(403).json({ error: 'This shop is inactive. Contact your platform administrator.' });
       return;
     }
     let permissions: string[];
