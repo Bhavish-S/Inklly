@@ -14,6 +14,7 @@ interface PdfPageRendererProps {
   currentPage?: number;
   onPageCountDetected?: (pages: number) => void;
   rotation?: number;
+  cropBox?: { x: number; y: number; width: number; height: number };
 }
 
 export const PdfPageRenderer: React.FC<PdfPageRendererProps> = ({
@@ -21,6 +22,7 @@ export const PdfPageRenderer: React.FC<PdfPageRendererProps> = ({
   currentPage = 1,
   onPageCountDetected,
   rotation = 0,
+  cropBox,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -50,7 +52,8 @@ export const PdfPageRenderer: React.FC<PdfPageRendererProps> = ({
         const canvas = canvasRef.current;
         if (!canvas) return;
 
-        const viewport = page.getViewport({ scale: 1.2, rotation });
+        const effectiveRotation = ((page.rotate + rotation) % 360 + 360) % 360;
+        const viewport = page.getViewport({ scale: 1.2, rotation: effectiveRotation });
         const context = canvas.getContext('2d');
         if (!context) return;
 
@@ -64,6 +67,20 @@ export const PdfPageRenderer: React.FC<PdfPageRendererProps> = ({
         };
 
         await page.render(renderContext).promise;
+        if (cropBox) {
+          const x = canvas.width * cropBox.x / 100;
+          const y = canvas.height * cropBox.y / 100;
+          const width = canvas.width * cropBox.width / 100;
+          const height = canvas.height * cropBox.height / 100;
+          context.fillStyle = 'rgba(0, 0, 0, 0.45)';
+          context.fillRect(0, 0, canvas.width, y);
+          context.fillRect(0, y + height, canvas.width, canvas.height - y - height);
+          context.fillRect(0, y, x, height);
+          context.fillRect(x + width, y, canvas.width - x - width, height);
+          context.strokeStyle = '#10B981';
+          context.lineWidth = Math.max(2, viewport.scale * 2);
+          context.strokeRect(x, y, width, height);
+        }
         if (!isCancelled) {
           setLoading(false);
         }
@@ -81,7 +98,7 @@ export const PdfPageRenderer: React.FC<PdfPageRendererProps> = ({
     return () => {
       isCancelled = true;
     };
-  }, [fileUrl, currentPage, rotation, onPageCountDetected]);
+  }, [fileUrl, currentPage, rotation, onPageCountDetected, cropBox]);
 
   if (error) {
     return (

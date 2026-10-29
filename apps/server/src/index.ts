@@ -59,7 +59,9 @@ export function createApp(db?: DatabaseService): express.Express {
   app.use(express.json({
     limit: '1mb',
     verify: (req, _res, buffer) => {
-      if (req.url?.startsWith('/api/v1/payments/webhook/')) (req as any).rawBody = Buffer.from(buffer);
+      if (req.url?.startsWith('/api/v1/payments/webhook/') || req.url?.startsWith('/api/v1/subscriptions/webhook/razorpay')) {
+        (req as any).rawBody = Buffer.from(buffer);
+      }
     },
   }));
 

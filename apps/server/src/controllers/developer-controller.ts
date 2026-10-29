@@ -94,18 +94,37 @@ function buildSubscriptionOpenApiPaths(): Record<string, Record<string, unknown>
     '/subscriptions/checkout': {
       post: {
         summary: 'Create a subscription checkout',
-        description: 'Requires an authenticated MERCHANT_OWNER session. Not available during the pilot; no charge or subscription change is created.',
+        description: 'Requires an authenticated MERCHANT_OWNER session and Idempotency-Key. Amount and organization come from the effective organization tariff and session; Razorpay orders are created with platform credentials. Subscription activation happens only after Razorpay confirms capture.',
+        parameters: [{ name: 'Idempotency-Key', in: 'header', required: true, schema: { type: 'string', minLength: 16, maxLength: 128 } }],
         security: [{ bearerAuth: [] }],
-        responses: { 503: { description: 'Subscription checkout is unavailable.' } },
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['planId'], properties: { planId: { type: 'string', enum: ['plan-starter', 'plan-growth', 'plan-pro', 'plan-scale'] } } } } } },
+        responses: { 201: { description: 'Razorpay subscription order and durable pending attempt created.' }, 200: { description: 'Existing order returned for idempotent retry.' }, 400: { description: 'Invalid plan or idempotency key.' }, 409: { description: 'An active subscription or unresolved billing attempt prevents another checkout.' }, 503: { description: 'Platform billing is not configured or order creation outcome is uncertain.' } },
       },
     },
     '/subscriptions/verify': {
       post: {
         summary: 'Verify a subscription payment',
-        description: 'Requires an authenticated MERCHANT_OWNER session. Not available during the pilot.',
+        description: 'Requires an authenticated MERCHANT_OWNER session. Validates the Razorpay checkout HMAC and fetches payment status from Razorpay; activates the subscription only for a matching captured payment.',
         security: [{ bearerAuth: [] }],
-        responses: { 503: { description: 'Subscription payment verification is unavailable.' } },
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['razorpay_order_id', 'razorpay_payment_id', 'razorpay_signature'], properties: { razorpay_order_id: { type: 'string' }, razorpay_payment_id: { type: 'string' }, razorpay_signature: { type: 'string' } } } } } },
+        responses: { 200: { description: 'Captured payment applied or idempotent confirmation returned.' }, 401: { description: 'Checkout signature is invalid.' }, 409: { description: 'Payment is not captured or does not match the order.' }, 503: { description: 'Razorpay could not be queried safely.' } },
       },
+    },
+    '/subscriptions/billing/readiness': {
+      get: { summary: 'Read tenant-scoped billing readiness', description: 'Merchant-owner only. Reports platform Razorpay configuration readiness and this organization tariff; does not expose credentials.', security: [{ bearerAuth: [] }], responses: { 200: { description: 'Readiness, tariff, subscription state, and manual usage statement status.' }, 403: { description: 'Merchant owner membership required.' } } },
+    },
+    '/subscriptions/billing/attempts': {
+      get: { summary: 'List this organization subscription payment attempts', description: 'Merchant-owner only; organization scope is derived from the session.', security: [{ bearerAuth: [] }], responses: { 200: { description: 'Recent attempts without secrets or raw webhook payloads.' } } },
+    },
+    '/subscriptions/webhook/razorpay': {
+      post: { summary: 'Receive platform Razorpay webhook events', description: 'Public Razorpay endpoint. Verifies X-Razorpay-Signature against the exact raw request body and deduplicates X-Razorpay-Event-Id. Handles payment.captured and order.paid; only captured payments matching an Inklly order can activate a subscription.', parameters: [{ name: 'X-Razorpay-Signature', in: 'header', required: true, schema: { type: 'string' } }, { name: 'X-Razorpay-Event-Id', in: 'header', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'Event accepted, ignored, or identified as duplicate.' }, 400: { description: 'Malformed body or missing event id.' }, 401: { description: 'Invalid webhook signature.' }, 503: { description: 'Platform webhook secret is not configured.' } } },
+    },
+    '/platform/billing/attempts': {
+      get: { summary: 'List platform subscription payment attempts', description: 'Requires billing:view. Optional organizationId filters results.', security: [{ bearerAuth: [] }], parameters: [{ name: 'organizationId', in: 'query', schema: { type: 'string' } }], responses: { 200: { description: 'Recent attempts; no credentials or raw payloads are returned.' }, 403: { description: 'Platform billing:view permission required.' } } },
+    },
+    '/platform/billing/attempts/{id}/reconcile': {
+      parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+      post: { summary: 'Reconcile an uncertain platform checkout', description: 'Requires billing:manage. For CREATE_UNCERTAIN, provide the order ID and the server confirms its receipt, amount, and currency directly with Razorpay before associating it. Optionally provide a payment ID; the server fetches it and applies only a matching captured payment. Pending or uncertain payments never activate a subscription.', security: [{ bearerAuth: [] }], requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', properties: { providerOrderId: { type: 'string' }, providerPaymentId: { type: 'string' } } } } } }, responses: { 200: { description: 'Attempt remains pending capture or a captured payment was safely applied.' }, 400: { description: 'Required provider order ID is missing.' }, 409: { description: 'Provider records do not match this attempt.' }, 503: { description: 'Razorpay is unavailable or platform credentials are missing.' } } },
     },
   };
 }

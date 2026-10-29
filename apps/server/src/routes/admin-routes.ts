@@ -3,6 +3,7 @@ import { AdminController } from '../controllers/admin-controller';
 import { DatabaseService, EnquiryRepository, LedgerRepository, UserRepository } from '@inklly/db';
 import { authenticate, requireRole, requirePermission } from '../middleware/auth';
 import { PrivateFileStorage } from '../services/private-file-storage';
+import { SubscriptionController } from '../controllers/subscription-controller';
 
 export function createAdminRoutes(db: DatabaseService, fileStorage: PrivateFileStorage): Router {
   const router = Router();
@@ -11,6 +12,7 @@ export function createAdminRoutes(db: DatabaseService, fileStorage: PrivateFileS
 
   const enquiryRepo = new EnquiryRepository(db);
   const controller = new AdminController(db, ledgerRepo, userRepo, enquiryRepo, fileStorage);
+  const subscriptionController = new SubscriptionController(db);
 
   router.use(authenticate(db));
   router.use(requireRole('PLATFORM_OWNER', 'PLATFORM_ADMIN'));
@@ -47,6 +49,8 @@ export function createAdminRoutes(db: DatabaseService, fileStorage: PrivateFileS
   router.post('/billing/organizations/:organizationId/tariffs', requirePermission('billing:manage'), controller.addBillingTariff);
   router.get('/billing/invoices', requirePermission('billing:view'), controller.listBillingInvoices);
   router.post('/billing/invoices', requirePermission('billing:manage'), controller.issueBillingInvoice);
+  router.get('/billing/attempts', requirePermission('billing:view'), subscriptionController.platformBillingAttempts);
+  router.post('/billing/attempts/:id/reconcile', requirePermission('billing:manage'), subscriptionController.reconcilePlatformBillingAttempt);
 
   return router;
 }

@@ -105,17 +105,21 @@ export class PilotBillingService {
       const includedSides = Number(tariff.included_sides);
       const billableSides = Math.max(0, confirmedSides - includedSides);
       const usageFeePaise = billableSides * Number(tariff.per_side_paise);
-      const totalPaise = Number(tariff.monthly_base_paise) + usageFeePaise;
+      const baseCoveredBySubscription = Boolean(this.db.queryOne<any>(`SELECT id FROM platform_subscription_payment_attempts
+        WHERE organization_id = ? AND status = 'VERIFIED' AND period_start < ? AND period_end > ? LIMIT 1`,
+      [organizationId, periodEnd, periodStart]));
+      const monthlyBaseDuePaise = baseCoveredBySubscription ? 0 : Number(tariff.monthly_base_paise);
+      const totalPaise = monthlyBaseDuePaise + usageFeePaise;
       if (!Number.isSafeInteger(usageFeePaise) || !Number.isSafeInteger(totalPaise)) {
         throw new PilotBillingError(409, 'Calculated invoice exceeds the supported integer Paise range.');
       }
       const lines = [
-        { type: 'MONTHLY_BASE', description: 'Monthly platform subscription', quantity: 1, unitAmountPaise: Number(tariff.monthly_base_paise), amountPaise: Number(tariff.monthly_base_paise) },
+        { type: baseCoveredBySubscription ? 'MONTHLY_BASE_COVERED' : 'MONTHLY_BASE', description: baseCoveredBySubscription ? 'Monthly base covered by a confirmed subscription payment' : 'Monthly platform subscription', quantity: 1, unitAmountPaise: Number(tariff.monthly_base_paise), amountPaise: monthlyBaseDuePaise },
         { type: 'PRINTED_SIDE_USAGE', description: 'Operator-confirmed printed sides above included allowance', quantity: billableSides, unitAmountPaise: Number(tariff.per_side_paise), amountPaise: usageFeePaise },
       ];
       const invoice = {
         id: crypto.randomUUID(), organization_id: organizationId, period_start: periodStart, period_end: periodEnd,
-        tariff_id: tariff.id, currency: 'INR', monthly_base_paise: Number(tariff.monthly_base_paise),
+        tariff_id: tariff.id, currency: 'INR', monthly_base_paise: monthlyBaseDuePaise,
         included_sides: includedSides, confirmed_sides: confirmedSides, billable_sides: billableSides,
         per_side_paise: Number(tariff.per_side_paise), usage_fee_paise: usageFeePaise, total_paise: totalPaise,
         line_items_json: JSON.stringify(lines), issued_by: issuedBy, issued_at: new Date().toISOString(),

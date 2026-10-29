@@ -33,6 +33,29 @@ import {
   IndianRupeeIcon,
 } from '../components/icons';
 
+declare global {
+  interface Window { Razorpay?: new (options: any) => any; }
+}
+
+function loadRazorpayCheckout(): Promise<void> {
+  if (window.Razorpay) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>('script[data-razorpay-checkout]');
+    if (existing) {
+      existing.addEventListener('load', () => resolve(), { once: true });
+      existing.addEventListener('error', () => reject(new Error('Razorpay Checkout could not be loaded.')), { once: true });
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.async = true;
+    script.dataset.razorpayCheckout = 'true';
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Razorpay Checkout could not be loaded.'));
+    document.head.appendChild(script);
+  });
+}
+
 const STAFF_ACCESS_OPTIONS = [
   { value: 'orders:view', label: 'View orders' },
   { value: 'orders:process', label: 'Process orders' },
@@ -770,6 +793,12 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [subscriptionUsageLoading, setSubscriptionUsageLoading] = useState(false);
   const [subscriptionInvoices, setSubscriptionInvoices] = useState<any[]>([]);
   const [subscriptionInvoiceError, setSubscriptionInvoiceError] = useState('');
+  const [subscriptionBillingReadiness, setSubscriptionBillingReadiness] = useState<any>(null);
+  const [subscriptionBillingAttempts, setSubscriptionBillingAttempts] = useState<any[]>([]);
+  const [subscriptionBillingError, setSubscriptionBillingError] = useState('');
+  const [subscriptionCheckoutBusy, setSubscriptionCheckoutBusy] = useState(false);
+  const [subscriptionPlanId, setSubscriptionPlanId] = useState('plan-starter');
+  const subscriptionCheckoutIdempotencyKey = useRef<string | null>(null);
   const [collectingOrder, setCollectingOrder] = useState(false);
   const [creditPurchaseToast, setCreditPurchaseToast] = useState<string | null>(null);
 
@@ -1122,17 +1151,86 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     setSubscriptionUsageLoading(true);
     setSubscriptionUsageError('');
     setSubscriptionInvoiceError('');
-    Promise.allSettled([api.getSubscriptionUsage(), api.getSubscriptionInvoices()]).then(([usageResult, invoiceResult]) => {
+    Promise.allSettled([
+      api.getSubscriptionUsage(), api.getSubscriptionInvoices(),
+      api.getSubscriptionBillingReadiness(), api.getSubscriptionBillingAttempts(),
+    ]).then(([usageResult, invoiceResult, readinessResult, attemptsResult]) => {
       if (cancelled) return;
       if (usageResult.status === 'fulfilled') setSubscriptionUsage(usageResult.value);
       else setSubscriptionUsageError(usageResult.reason instanceof Error ? usageResult.reason.message : 'Could not load usage.');
       if (invoiceResult.status === 'fulfilled') setSubscriptionInvoices(invoiceResult.value);
       else setSubscriptionInvoiceError(invoiceResult.reason instanceof Error ? invoiceResult.reason.message : 'Could not load billing statements.');
+      if (readinessResult.status === 'fulfilled') setSubscriptionBillingReadiness(readinessResult.value);
+      else setSubscriptionBillingError(readinessResult.reason instanceof Error ? readinessResult.reason.message : 'Could not load subscription checkout status.');
+      if (attemptsResult.status === 'fulfilled') setSubscriptionBillingAttempts(attemptsResult.value);
+      else setSubscriptionBillingError(attemptsResult.reason instanceof Error ? attemptsResult.reason.message : 'Could not load subscription payment history.');
     }).finally(() => {
       if (!cancelled) setSubscriptionUsageLoading(false);
     });
     return () => { cancelled = true; };
   }, [activeView, liveUser?.role]);
+
+  const refreshSubscriptionBilling = async () => {
+    const [readiness, attempts, invoices] = await Promise.all([
+      api.getSubscriptionBillingReadiness(), api.getSubscriptionBillingAttempts(), api.getSubscriptionInvoices(),
+    ]);
+    setSubscriptionBillingReadiness(readiness);
+    setSubscriptionBillingAttempts(attempts);
+    setSubscriptionInvoices(invoices);
+  };
+
+  const startSubscriptionCheckout = async (resumeAttempt?: any) => {
+    if (subscriptionCheckoutBusy) return;
+    setSubscriptionCheckoutBusy(true);
+    setSubscriptionBillingError('');
+    try {
+      const checkout = resumeAttempt
+        ? {
+            razorpayOrderId: resumeAttempt.providerOrderId,
+            keyId: subscriptionBillingReadiness?.keyId,
+            amount: resumeAttempt.amountPaise,
+            currency: resumeAttempt.currency,
+            attempt: resumeAttempt,
+          }
+        : await api.createSubscriptionCheckout(
+            subscriptionPlanId,
+            subscriptionCheckoutIdempotencyKey.current || (subscriptionCheckoutIdempotencyKey.current = crypto.randomUUID()),
+          );
+      if (!checkout.razorpayOrderId || !checkout.keyId || !Number.isSafeInteger(checkout.amount)) {
+        throw new Error('The billing service did not return a complete, safe checkout order. Refresh billing status and retry.');
+      }
+      await loadRazorpayCheckout();
+      if (!window.Razorpay) throw new Error('Razorpay Checkout could not be loaded.');
+      await new Promise<void>((resolve, reject) => {
+        const instance = new window.Razorpay!({
+          key: checkout.keyId,
+          amount: checkout.amount,
+          currency: checkout.currency,
+          name: 'Inklly',
+          description: `Monthly ${resumeAttempt?.planTier || 'print shop'} subscription`,
+          order_id: checkout.razorpayOrderId,
+          prefill: { name: liveUser?.fullName || '', email: liveUser?.email || '' },
+          handler: async (payment: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) => {
+            try {
+              await api.verifySubscriptionCheckout(payment);
+              resolve();
+            } catch (error) { reject(error); }
+          },
+          modal: { ondismiss: () => reject(new Error('Checkout was closed. The pending order is saved; resume it below to retry payment.')) },
+          theme: { color: '#4D64E6' },
+        });
+        instance.on('payment.failed', () => reject(new Error('Payment did not complete. The order is saved; retry payment on the same checkout.')));
+        instance.open();
+      });
+      subscriptionCheckoutIdempotencyKey.current = null;
+      await refreshSubscriptionBilling();
+    } catch (error) {
+      setSubscriptionBillingError(error instanceof Error ? error.message : 'Subscription checkout could not be completed.');
+      try { await refreshSubscriptionBilling(); } catch { /* keep the original checkout error visible */ }
+    } finally {
+      setSubscriptionCheckoutBusy(false);
+    }
+  };
 
   // Synchronize orders with Customer Portal via LocalStorage
   const updateOrderInStorage = (orderId: string, updates: any) => {
@@ -3253,6 +3351,43 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
         <p className="text-xs text-slate-500 sm:col-span-2">Period: {new Date(subscriptionUsage.periodStart).toLocaleDateString('en-IN')} – {new Date(subscriptionUsage.periodEnd).toLocaleDateString('en-IN')}. Side totals use server-stored page ranges and copies, confirmed by shop staff.</p>
       </div>
     ) : null}
+    {liveUser?.role === 'MERCHANT_OWNER' && (
+      <div className="mt-6 rounded-2xl border border-indigo-100 bg-indigo-50/70 p-5 dark:border-indigo-900 dark:bg-indigo-950/30">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">Monthly Inklly subscription</h3>
+            <p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">The monthly base is charged to Inklly’s Razorpay account. Confirmed print-side usage is shown on separate pilot statements; collection for those statements remains manual.</p>
+          </div>
+          {subscriptionBillingReadiness?.mode && <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${subscriptionBillingReadiness.mode === 'TEST' ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200' : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200'}`}>{subscriptionBillingReadiness.mode} MODE</span>}
+        </div>
+        {subscriptionBillingError && <p role="alert" className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-200">{subscriptionBillingError}</p>}
+        {subscriptionBillingReadiness ? (
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <div className="rounded-xl border border-indigo-100 bg-white p-3 dark:border-slate-700 dark:bg-slate-900"><div className="text-[11px] text-slate-500">Monthly base</div><div className="mt-1 font-extrabold text-slate-900 dark:text-white">{subscriptionBillingReadiness.monthlyBasePaise == null ? 'Not configured' : new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(subscriptionBillingReadiness.monthlyBasePaise / 100)}</div></div>
+            <div className="rounded-xl border border-indigo-100 bg-white p-3 dark:border-slate-700 dark:bg-slate-900"><div className="text-[11px] text-slate-500">Per confirmed side</div><div className="mt-1 font-extrabold text-slate-900 dark:text-white">{subscriptionBillingReadiness.perSidePaise == null ? 'Not configured' : `${new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(subscriptionBillingReadiness.perSidePaise / 100)}${subscriptionBillingReadiness.includedSides ? ` after ${subscriptionBillingReadiness.includedSides.toLocaleString()} included` : ''}`}</div></div>
+            <div className="rounded-xl border border-indigo-100 bg-white p-3 dark:border-slate-700 dark:bg-slate-900"><div className="text-[11px] text-slate-500">Provider setup</div><div className="mt-1 font-extrabold text-slate-900 dark:text-white">{subscriptionBillingReadiness.checkoutReady ? 'Ready' : 'Not configured'}</div></div>
+          </div>
+        ) : <p className="mt-3 text-xs text-slate-500">Loading billing configuration…</p>}
+        {subscriptionBillingReadiness?.activeSubscriptionEndsAt && <p className="mt-3 text-xs text-emerald-700 dark:text-emerald-300">Paid period active through {new Date(subscriptionBillingReadiness.activeSubscriptionEndsAt).toLocaleDateString('en-IN')}.</p>}
+        {subscriptionBillingReadiness?.checkoutAvailable && !subscriptionBillingAttempts.some((attempt) => ['CREATING', 'PENDING', 'CREATE_UNCERTAIN', 'RECONCILIATION_REQUIRED'].includes(attempt.status)) && (
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <label className="sr-only" htmlFor="inklly-subscription-plan">Subscription tier</label>
+            <select id="inklly-subscription-plan" value={subscriptionPlanId} onChange={(event) => setSubscriptionPlanId(event.target.value)} disabled={subscriptionCheckoutBusy} className="min-h-11 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-white">
+              <option value="plan-starter">Starter</option><option value="plan-growth">Growth</option><option value="plan-pro">Pro</option><option value="plan-scale">Scale</option>
+            </select>
+            <button type="button" onClick={() => void startSubscriptionCheckout()} disabled={subscriptionCheckoutBusy} className="min-h-11 rounded-xl bg-indigo-600 px-5 text-sm font-bold text-white hover:bg-indigo-700 disabled:cursor-wait disabled:opacity-50">{subscriptionCheckoutBusy ? 'Opening secure checkout…' : 'Pay monthly base'}</button>
+            <span className="text-[11px] text-slate-500">Manual renewal; tax is not configured.</span>
+          </div>
+        )}
+        {subscriptionBillingAttempts.filter((attempt) => ['CREATING', 'PENDING', 'CREATE_UNCERTAIN', 'RECONCILIATION_REQUIRED'].includes(attempt.status)).map((attempt) => (
+          <div key={attempt.id} className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-white p-3 dark:border-amber-900 dark:bg-slate-900">
+            <div><div className="text-xs font-bold text-slate-900 dark:text-white">Checkout {attempt.status.toLowerCase().replace(/_/g, ' ')}</div><div className="mt-1 text-[11px] text-slate-500">{new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(attempt.amountPaise / 100)} · {new Date(attempt.createdAt).toLocaleString('en-IN')}</div></div>
+            {attempt.status === 'PENDING' && attempt.providerOrderId && subscriptionBillingReadiness?.keyId ? <button type="button" onClick={() => void startSubscriptionCheckout(attempt)} disabled={subscriptionCheckoutBusy} className="min-h-10 rounded-lg bg-indigo-600 px-4 text-xs font-bold text-white disabled:opacity-50">Resume checkout</button> : <span className="text-[11px] text-amber-800 dark:text-amber-200">Support reconciliation is required before another payment attempt.</span>}
+          </div>
+        ))}
+        {subscriptionBillingAttempts.slice(0, 5).length > 0 && <ul className="mt-4 space-y-1 border-t border-indigo-100 pt-3 text-[11px] text-slate-500 dark:border-slate-800">{subscriptionBillingAttempts.slice(0, 5).map((attempt) => <li key={`history-${attempt.id}`}>{new Date(attempt.createdAt).toLocaleDateString('en-IN')} · {attempt.status.replace(/_/g, ' ')} · {new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(attempt.amountPaise / 100)}</li>)}</ul>}
+      </div>
+    )}
     <div className="mt-7 border-t border-slate-200 pt-5 dark:border-slate-700">
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">Pilot billing statements</h3>

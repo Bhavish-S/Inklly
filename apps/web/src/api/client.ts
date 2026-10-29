@@ -236,6 +236,42 @@ export const api = {
     return body as { periodStart: string; periodEnd: string; confirmedOrders: number; confirmedSides: number; meter: string; billingStatus: 'METERING_ONLY'; chargeCreated: false };
   },
 
+  async getSubscriptionBillingReadiness() {
+    const res = await fetch(`${API_BASE}/subscriptions/billing/readiness`, { headers: getHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not load subscription billing status');
+    return body as {
+      provider: 'RAZORPAY'; mode: 'TEST' | 'LIVE' | null; credentialsConfigured: boolean;
+      keyId: string | null; webhookConfigured: boolean; checkoutReady: boolean; tariffConfigured: boolean;
+      monthlyBasePaise: number | null; perSidePaise: number | null; includedSides: number | null;
+      activeSubscriptionEndsAt: string | null; checkoutAvailable: boolean; usageStatementsRemainManual: boolean;
+    };
+  },
+
+  async getSubscriptionBillingAttempts() {
+    const res = await fetch(`${API_BASE}/subscriptions/billing/attempts`, { headers: getHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not load subscription payment history');
+    return body as Array<{ id: string; status: string; amountPaise: number; currency: string; providerOrderId: string | null; periodStart: string; periodEnd: string; failureCode: string | null; createdAt: string; capturedAt: string | null }>;
+  },
+
+  async createSubscriptionCheckout(planId: string, idempotencyKey: string) {
+    const res = await fetch(`${API_BASE}/subscriptions/checkout`, {
+      method: 'POST', headers: getHeaders({ 'Idempotency-Key': idempotencyKey }),
+      body: JSON.stringify({ planId }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not start subscription checkout');
+    return body as { success: boolean; duplicate?: boolean; razorpayOrderId: string; keyId: string; amount: number; currency: string; attempt: { id: string; status: string } };
+  },
+
+  async verifySubscriptionCheckout(payment: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) {
+    const res = await fetch(`${API_BASE}/subscriptions/verify`, { method: 'POST', headers: getHeaders(), body: JSON.stringify(payment) });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Subscription payment is still being confirmed');
+    return body;
+  },
+
   // Refunds
   async createRefund(orderId: string, amountPaise: number, reason: string) {
     const res = await fetch(`${API_BASE}/payments/orders/${orderId}/refunds`, {

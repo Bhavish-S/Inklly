@@ -48,6 +48,7 @@ export class DatabaseService {
       this.ensureSqliteMembershipLifecycleMigration();
       this.ensureSqlitePublicUploadRateLimitMigration();
       this.ensureSqlitePlatformIncidentMigration();
+      this.ensureSqlitePlatformSubscriptionBillingMigration();
     }
   }
 
@@ -163,6 +164,122 @@ export class DatabaseService {
     this.ensurePostgresMembershipLifecycleMigration();
     this.ensurePostgresPublicUploadRateLimitMigration();
     this.ensurePostgresPlatformIncidentMigration();
+    this.ensurePostgresPlatformSubscriptionBillingMigration();
+  }
+
+  private ensureSqlitePlatformSubscriptionBillingMigration(): void {
+    if (this.db!.prepare(`SELECT version FROM inklly_schema_migrations WHERE version = 22`).get()) return;
+    this.db!.exec('BEGIN');
+    try {
+      this.db!.exec(`CREATE TABLE IF NOT EXISTS platform_subscription_payment_attempts (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
+        created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+        idempotency_key TEXT NOT NULL,
+        request_fingerprint TEXT NOT NULL,
+        plan_id TEXT NOT NULL,
+        plan_tier TEXT NOT NULL,
+        tariff_id TEXT NOT NULL REFERENCES subscription_billing_tariffs(id) ON DELETE RESTRICT,
+        amount_paise INTEGER NOT NULL CHECK (amount_paise > 0),
+        currency TEXT NOT NULL DEFAULT 'INR' CHECK (currency = 'INR'),
+        period_start TEXT NOT NULL,
+        period_end TEXT NOT NULL,
+        provider TEXT NOT NULL DEFAULT 'RAZORPAY' CHECK (provider = 'RAZORPAY'),
+        provider_order_id TEXT UNIQUE,
+        provider_payment_id TEXT UNIQUE,
+        status TEXT NOT NULL CHECK (status IN ('CREATING', 'PENDING', 'VERIFIED', 'FAILED', 'CREATE_UNCERTAIN', 'RECONCILIATION_REQUIRED')),
+        failure_code TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        captured_at TEXT,
+        UNIQUE (organization_id, idempotency_key),
+        CHECK (period_end > period_start)
+      )`);
+      this.db!.exec(`CREATE INDEX IF NOT EXISTS idx_platform_subscription_attempt_org ON platform_subscription_payment_attempts(organization_id, created_at DESC)`);
+      this.db!.exec(`CREATE INDEX IF NOT EXISTS idx_platform_subscription_attempt_status ON platform_subscription_payment_attempts(status, updated_at)`);
+      this.db!.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_platform_billing_one_open_attempt_per_org
+        ON platform_subscription_payment_attempts(organization_id)
+        WHERE status IN ('CREATING', 'PENDING', 'CREATE_UNCERTAIN', 'RECONCILIATION_REQUIRED')`);
+      this.db!.exec(`CREATE TABLE IF NOT EXISTS platform_subscription_payment_events (
+        id TEXT PRIMARY KEY,
+        provider_event_id TEXT NOT NULL UNIQUE,
+        billing_attempt_id TEXT REFERENCES platform_subscription_payment_attempts(id) ON DELETE RESTRICT,
+        event_type TEXT NOT NULL,
+        outcome TEXT NOT NULL CHECK (outcome IN ('APPLIED', 'DUPLICATE_PAYMENT', 'IGNORED', 'REJECTED')),
+        provider_order_id TEXT,
+        provider_payment_id TEXT,
+        amount_paise INTEGER,
+        currency TEXT,
+        payload_sha256 TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      )`);
+      this.db!.exec(`CREATE INDEX IF NOT EXISTS idx_platform_subscription_events_attempt ON platform_subscription_payment_events(billing_attempt_id, created_at)`);
+      this.db!.exec(`CREATE TRIGGER IF NOT EXISTS platform_subscription_payment_events_prevent_update BEFORE UPDATE ON platform_subscription_payment_events BEGIN SELECT RAISE(ABORT, 'platform_subscription_payment_events are append-only'); END`);
+      this.db!.exec(`CREATE TRIGGER IF NOT EXISTS platform_subscription_payment_events_prevent_delete BEFORE DELETE ON platform_subscription_payment_events BEGIN SELECT RAISE(ABORT, 'platform_subscription_payment_events are append-only'); END`);
+      this.db!.prepare(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (22, ?)`).run(new Date().toISOString());
+      this.db!.exec('COMMIT');
+    } catch (error) {
+      try { this.db!.exec('ROLLBACK'); } catch { /* preserve the original error */ }
+      throw new Error(`[Inklly DB] Platform subscription billing migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+
+  private ensurePostgresPlatformSubscriptionBillingMigration(): void {
+    if (this.queryPostgres(`SELECT version FROM inklly_schema_migrations WHERE version = ?`, [22]).length) return;
+    this.queryPostgres('BEGIN');
+    try {
+      this.queryPostgres(`CREATE TABLE IF NOT EXISTS platform_subscription_payment_attempts (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
+        created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+        idempotency_key TEXT NOT NULL,
+        request_fingerprint TEXT NOT NULL,
+        plan_id TEXT NOT NULL,
+        plan_tier TEXT NOT NULL,
+        tariff_id TEXT NOT NULL REFERENCES subscription_billing_tariffs(id) ON DELETE RESTRICT,
+        amount_paise BIGINT NOT NULL CHECK (amount_paise > 0),
+        currency TEXT NOT NULL DEFAULT 'INR' CHECK (currency = 'INR'),
+        period_start TEXT NOT NULL,
+        period_end TEXT NOT NULL,
+        provider TEXT NOT NULL DEFAULT 'RAZORPAY' CHECK (provider = 'RAZORPAY'),
+        provider_order_id TEXT UNIQUE,
+        provider_payment_id TEXT UNIQUE,
+        status TEXT NOT NULL CHECK (status IN ('CREATING', 'PENDING', 'VERIFIED', 'FAILED', 'CREATE_UNCERTAIN', 'RECONCILIATION_REQUIRED')),
+        failure_code TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        captured_at TEXT,
+        UNIQUE (organization_id, idempotency_key),
+        CHECK (period_end > period_start)
+      )`);
+      this.queryPostgres(`CREATE INDEX IF NOT EXISTS idx_platform_subscription_attempt_org ON platform_subscription_payment_attempts(organization_id, created_at DESC)`);
+      this.queryPostgres(`CREATE INDEX IF NOT EXISTS idx_platform_subscription_attempt_status ON platform_subscription_payment_attempts(status, updated_at)`);
+      this.queryPostgres(`CREATE UNIQUE INDEX IF NOT EXISTS idx_platform_billing_one_open_attempt_per_org
+        ON platform_subscription_payment_attempts(organization_id)
+        WHERE status IN ('CREATING', 'PENDING', 'CREATE_UNCERTAIN', 'RECONCILIATION_REQUIRED')`);
+      this.queryPostgres(`CREATE TABLE IF NOT EXISTS platform_subscription_payment_events (
+        id TEXT PRIMARY KEY,
+        provider_event_id TEXT NOT NULL UNIQUE,
+        billing_attempt_id TEXT REFERENCES platform_subscription_payment_attempts(id) ON DELETE RESTRICT,
+        event_type TEXT NOT NULL,
+        outcome TEXT NOT NULL CHECK (outcome IN ('APPLIED', 'DUPLICATE_PAYMENT', 'IGNORED', 'REJECTED')),
+        provider_order_id TEXT,
+        provider_payment_id TEXT,
+        amount_paise BIGINT,
+        currency TEXT,
+        payload_sha256 TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      )`);
+      this.queryPostgres(`CREATE INDEX IF NOT EXISTS idx_platform_subscription_events_attempt ON platform_subscription_payment_events(billing_attempt_id, created_at)`);
+      this.queryPostgres(`CREATE OR REPLACE FUNCTION prevent_platform_subscription_payment_event_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'platform_subscription_payment_events are append-only'; END; $$`);
+      this.queryPostgres(`DROP TRIGGER IF EXISTS platform_subscription_payment_events_immutable ON platform_subscription_payment_events`);
+      this.queryPostgres(`CREATE TRIGGER platform_subscription_payment_events_immutable BEFORE UPDATE OR DELETE ON platform_subscription_payment_events FOR EACH ROW EXECUTE FUNCTION prevent_platform_subscription_payment_event_mutation()`);
+      this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [22, new Date().toISOString()]);
+      this.queryPostgres('COMMIT');
+    } catch (error) {
+      try { this.queryPostgres('ROLLBACK'); } catch { /* preserve the original error */ }
+      throw new Error(`[Inklly DB] PostgreSQL platform subscription billing migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
   }
 
   private ensureSqlitePlatformIncidentMigration(): void {

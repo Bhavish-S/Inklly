@@ -724,3 +724,50 @@ CREATE TABLE IF NOT EXISTS platform_incidents (
 CREATE INDEX IF NOT EXISTS idx_platform_incidents_created ON platform_incidents(created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_platform_incidents_status ON platform_incidents(status, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_platform_incidents_org ON platform_incidents(organization_id, created_at DESC, id DESC);
+
+-- Platform-scoped subscription payments are separate from shop-owned customer
+-- Razorpay credentials and from manual-pending print-side invoices.
+CREATE TABLE IF NOT EXISTS platform_subscription_payment_attempts (
+    id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
+    created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    idempotency_key TEXT NOT NULL,
+    request_fingerprint TEXT NOT NULL,
+    plan_id TEXT NOT NULL,
+    plan_tier TEXT NOT NULL,
+    tariff_id TEXT NOT NULL REFERENCES subscription_billing_tariffs(id) ON DELETE RESTRICT,
+    amount_paise INTEGER NOT NULL CHECK (amount_paise > 0),
+    currency TEXT NOT NULL DEFAULT 'INR' CHECK (currency = 'INR'),
+    period_start TEXT NOT NULL,
+    period_end TEXT NOT NULL,
+    provider TEXT NOT NULL DEFAULT 'RAZORPAY' CHECK (provider = 'RAZORPAY'),
+    provider_order_id TEXT UNIQUE,
+    provider_payment_id TEXT UNIQUE,
+    status TEXT NOT NULL CHECK (status IN ('CREATING', 'PENDING', 'VERIFIED', 'FAILED', 'CREATE_UNCERTAIN', 'RECONCILIATION_REQUIRED')),
+    failure_code TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    captured_at TEXT,
+    UNIQUE (organization_id, idempotency_key),
+    CHECK (period_end > period_start)
+);
+CREATE INDEX IF NOT EXISTS idx_platform_subscription_attempt_org ON platform_subscription_payment_attempts(organization_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_platform_subscription_attempt_status ON platform_subscription_payment_attempts(status, updated_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_platform_billing_one_open_attempt_per_org
+    ON platform_subscription_payment_attempts(organization_id)
+    WHERE status IN ('CREATING', 'PENDING', 'CREATE_UNCERTAIN', 'RECONCILIATION_REQUIRED');
+
+CREATE TABLE IF NOT EXISTS platform_subscription_payment_events (
+    id TEXT PRIMARY KEY,
+    provider_event_id TEXT NOT NULL UNIQUE,
+    billing_attempt_id TEXT REFERENCES platform_subscription_payment_attempts(id) ON DELETE RESTRICT,
+    event_type TEXT NOT NULL,
+    outcome TEXT NOT NULL CHECK (outcome IN ('APPLIED', 'DUPLICATE_PAYMENT', 'IGNORED', 'REJECTED')),
+    provider_order_id TEXT,
+    provider_payment_id TEXT,
+    amount_paise INTEGER,
+    currency TEXT,
+    payload_sha256 TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_platform_subscription_events_attempt ON platform_subscription_payment_events(billing_attempt_id, created_at);

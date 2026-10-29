@@ -1,6 +1,7 @@
 import React, { lazy, Suspense, useState, useEffect, useRef } from 'react';
 import { api } from '../api/client';
 import { DocumentViewer } from '../components/DocumentViewer';
+import { hasDocumentEdits, transformAndConfirmUpload, type DocumentEdits } from '../document-transform.js';
 import {
   InkllyMark,
   Logo,
@@ -108,10 +109,12 @@ const drawCoveredImage = (context: CanvasRenderingContext2D, image: HTMLImageEle
 interface DocumentItem {
   id: string;
   file?: File;
+  originalFile?: File;
   fileName: string;
   fileSizeText: string;
   pageCount: number;
   previewUrl: string;
+  sourcePreviewUrl?: string;
   storageKey?: string;
   fileUrl?: string;
   rotation: number;
@@ -119,6 +122,7 @@ interface DocumentItem {
   brightness: number;
   contrast: number;
   cropBox: { x: number; y: number; width: number; height: number };
+  appliedEdits?: DocumentEdits;
   note?: string;
   options: {
     colorMode: 'bw' | 'color' | 'mixed';
@@ -129,6 +133,17 @@ interface DocumentItem {
     copies: number;
     pageRange: string;
   };
+}
+
+function documentObjectUrls(document: DocumentItem | undefined): string[] {
+  if (!document) return [];
+  return [...new Set([document.previewUrl, document.sourcePreviewUrl, document.fileUrl].filter((url): url is string => typeof url === 'string' && url.startsWith('blob:')))];
+}
+
+function revokeDocumentUrls(document: DocumentItem | undefined, retained: Set<string> = new Set()): string[] {
+  const revoked = documentObjectUrls(document).filter((url) => !retained.has(url));
+  window.setTimeout(() => revoked.forEach((url) => URL.revokeObjectURL(url)), 0);
+  return revoked;
 }
 
 interface CustomerPortalOrderViewProps {
@@ -180,6 +195,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
 
   // State - Initialized empty for real customer uploads
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
+  const documentsRef = useRef<DocumentItem[]>([]);
   const [serverQuote, setServerQuote] = useState<any>(null);
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [quoteError, setQuoteError] = useState<string | null>(null);
@@ -198,6 +214,8 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
   const [paymentMethod, setPaymentMethod] = useState<'CASH_ON_COLLECTION' | 'ONLINE_RAZORPAY'>('CASH_ON_COLLECTION');
   const [pendingOnlineOrder, setPendingOnlineOrder] = useState<{ orderId: string; orderNumber: string; totalAmountPaise: number } | null>(null);
   const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [isSavingEdits, setIsSavingEdits] = useState<boolean>(false);
+  const [editorError, setEditorError] = useState<string | null>(null);
   const [reviewModalOpen, setReviewModalOpen] = useState<boolean>(false);
   const [copiedToken, setCopiedToken] = useState<boolean>(false);
   const [orderResult, setOrderResult] = useState<{
@@ -208,18 +226,19 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
     paymentMode: 'CASH' | 'ONLINE';
   } | null>(null);
 
+  useEffect(() => { documentsRef.current = documents; }, [documents]);
+  useEffect(() => () => {
+    const uniqueUrls = new Set(documentsRef.current.flatMap(documentObjectUrls));
+    uniqueUrls.forEach((url) => URL.revokeObjectURL(url));
+  }, []);
+
   // Editor Modal State
   const [editorOpen, setEditorOpen] = useState<boolean>(false);
   const [editorRotation, setEditorRotation] = useState<number>(0);
   const [editorFilter, setEditorFilter] = useState<'natural' | 'bw_doc' | 'enhanced' | 'grayscale'>('natural');
   const [editorBrightness, setEditorBrightness] = useState<number>(100);
   const [editorContrast, setEditorContrast] = useState<number>(100);
-  const [editorCrop, setEditorCrop] = useState<{ x: number; y: number; width: number; height: number }>({
-    x: 5,
-    y: 5,
-    width: 90,
-    height: 90,
-  });
+  const [editorCrop, setEditorCrop] = useState<{ x: number; y: number; width: number; height: number }>({ x: 0, y: 0, width: 100, height: 100 });
   const [editorNote, setEditorNote] = useState<string>('');
 
   // 4 Dedicated Intake Modes inspired by real Indian print workflows
@@ -287,17 +306,19 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
         return {
           id: `doc-${Date.now()}-${index}`,
           file,
+          originalFile: file,
           fileName: file.name,
           fileSizeText: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
           pageCount: Number.isInteger(upload.pageCount) && upload.pageCount > 0 ? upload.pageCount : detectedPages,
           previewUrl: localBlobUrl,
+          sourcePreviewUrl: localBlobUrl,
           storageKey: upload.storageKey,
           fileUrl: localBlobUrl,
           rotation: 0,
           filter: 'natural',
           brightness: 100,
           contrast: 100,
-          cropBox: { x: 5, y: 5, width: 90, height: 90 },
+          cropBox: { x: 0, y: 0, width: 100, height: 100 },
           options: {
             colorMode: 'bw',
             duplexMode: 'simplex',
@@ -324,14 +345,30 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
 
   const removeDocument = (index: number, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (documents.length <= 1) {
+    const currentDocuments = documentsRef.current;
+    if (currentDocuments.length <= 1) {
       return;
     }
-    const updated = documents.filter((_, i) => i !== index);
+    const removed = currentDocuments[index];
+    const updated = currentDocuments.filter((_, i) => i !== index);
+    const retainedUrls = new Set(updated.flatMap(documentObjectUrls));
+    revokeDocumentUrls(removed, retainedUrls);
     setDocuments(updated);
     if (activeDocIndex >= updated.length) {
       setActiveDocIndex(Math.max(0, updated.length - 1));
     }
+  };
+
+  const replaceDocument = (updated: DocumentItem) => {
+    const currentDocuments = documentsRef.current;
+    const previous = currentDocuments.find((document) => document.id === updated.id);
+    const retainedUrls = new Set([
+      ...currentDocuments.filter((document) => document.id !== updated.id).flatMap(documentObjectUrls),
+      ...documentObjectUrls(updated),
+    ]);
+    const obsoleteUrls = documentObjectUrls(previous).filter((url) => !retainedUrls.has(url));
+    setDocuments((current) => current.map((document) => document.id === updated.id ? updated : document));
+    window.setTimeout(() => obsoleteUrls.forEach((url) => URL.revokeObjectURL(url)), 0);
   };
 
   const updateActiveOptions = (updates: Partial<DocumentItem['options']>) => {
@@ -378,12 +415,71 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
     return list.length > 0 ? list.length : Math.max(1, maxPages);
   };
 
-  const updateActiveRotation = () => {
-    setDocuments((prev) =>
-      prev.map((doc, idx) =>
-        idx === activeDocIndex ? { ...doc, rotation: ((doc.rotation || 0) + 90) % 360 } : doc
-      )
-    );
+  const fileToDataUrl = (file: File): Promise<string> => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`Could not read edited file ${file.name}.`));
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.readAsDataURL(file);
+  });
+
+  const persistDocumentEdits = async (document: DocumentItem, edits: DocumentEdits, note: string): Promise<DocumentItem> => {
+    const previous = document.appliedEdits;
+    const sameAsApplied = previous && JSON.stringify(previous) === JSON.stringify(edits);
+    if (sameAsApplied || (!previous && !hasDocumentEdits(edits))) {
+      return { ...document, rotation: edits.rotation, filter: edits.filter, brightness: edits.brightness, contrast: edits.contrast, cropBox: edits.cropBox, note };
+    }
+
+    const sourceFile = document.originalFile || document.file;
+    if (!sourceFile) throw new Error('The original file is no longer available. Remove it and upload it again.');
+    const { file: transformed, upload: uploaded } = await transformAndConfirmUpload(sourceFile, edits, async (file) => {
+      if (file.size > 25 * 1024 * 1024) throw new Error('The edited file exceeds the 25 MB upload limit. Choose a smaller crop or use the original file.');
+      return api.uploadDocument({
+        fileName: file.name,
+        fileData: await fileToDataUrl(file),
+        mimeType: file.type,
+        shopId: shop.id,
+      });
+    });
+    const previewUrl = URL.createObjectURL(transformed);
+    return {
+      ...document,
+      file: transformed,
+      originalFile: sourceFile,
+      fileName: transformed.name,
+      fileSizeText: `${(uploaded.fileSizeBytes / (1024 * 1024)).toFixed(1)} MB`,
+      pageCount: uploaded.pageCount,
+      storageKey: uploaded.storageKey,
+      previewUrl,
+      fileUrl: previewUrl,
+      rotation: edits.rotation,
+      filter: edits.filter,
+      brightness: edits.brightness,
+      contrast: edits.contrast,
+      cropBox: edits.cropBox,
+      appliedEdits: edits,
+      note,
+    };
+  };
+
+  const updateActiveRotation = async () => {
+    if (!activeDoc || isSavingEdits) return;
+    setIsSavingEdits(true);
+    setUploadError(null);
+    try {
+      const edits: DocumentEdits = {
+        rotation: ((activeDoc.rotation || 0) + 90) % 360,
+        filter: activeDoc.filter || 'natural',
+        brightness: activeDoc.brightness || 100,
+        contrast: activeDoc.contrast || 100,
+        cropBox: activeDoc.cropBox || { x: 0, y: 0, width: 100, height: 100 },
+      };
+      const updated = await persistDocumentEdits(activeDoc, edits, activeDoc.note || '');
+      replaceDocument(updated);
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'Could not apply this rotation to the print file.');
+    } finally {
+      setIsSavingEdits(false);
+    }
   };
 
   const totalPagesCount = documents.reduce((acc, d) => acc + parsePageRangeCount(d.options.pageRange || 'All', d.pageCount) * (d.options.copies || 1), 0) * globalCopies;
@@ -606,33 +702,40 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
   const openEditorForActiveDoc = () => {
     if (!activeDoc) return;
     setEditorRotation(activeDoc.rotation || 0);
-    setEditorFilter(activeDoc.filter || 'natural');
-    setEditorBrightness(activeDoc.brightness || 100);
-    setEditorContrast(activeDoc.contrast || 100);
-    setEditorCrop(activeDoc.cropBox || { x: 5, y: 5, width: 90, height: 90 });
+    setEditorFilter(activeDocIsImage ? (activeDoc.filter || 'natural') : 'natural');
+    setEditorBrightness(activeDocIsImage ? (activeDoc.brightness || 100) : 100);
+    setEditorContrast(activeDocIsImage ? (activeDoc.contrast || 100) : 100);
+    setEditorCrop(activeDoc.cropBox || { x: 0, y: 0, width: 100, height: 100 });
     setEditorNote(activeDoc.note || '');
+    setEditorError(null);
     setEditorOpen(true);
   };
 
-  // Save changes from Editor
-  const handleSaveEditor = () => {
-    setDocuments((prev) =>
-      prev.map((doc, idx) => {
-        if (idx === activeDocIndex) {
-          return {
-            ...doc,
-            rotation: editorRotation,
-            filter: editorFilter,
-            brightness: editorBrightness,
-            contrast: editorContrast,
-            cropBox: editorCrop,
-            note: editorNote,
-          };
-        }
-        return doc;
-      })
-    );
-    setEditorOpen(false);
+  // Save the editor output through the same inspected private upload path used for originals.
+  const handleSaveEditor = async () => {
+    if (!activeDoc || isSavingEdits) return;
+    if (editorNote.length > 500) {
+      setEditorError('Special instructions must be 500 characters or fewer.');
+      return;
+    }
+    setIsSavingEdits(true);
+    setEditorError(null);
+    try {
+      const edits: DocumentEdits = {
+        rotation: editorRotation,
+        filter: activeDocIsImage ? editorFilter : 'natural',
+        brightness: activeDocIsImage ? editorBrightness : 100,
+        contrast: activeDocIsImage ? editorContrast : 100,
+        cropBox: editorCrop,
+      };
+      const updated = await persistDocumentEdits(activeDoc, edits, editorNote.trim());
+      replaceDocument(updated);
+      setEditorOpen(false);
+    } catch (error) {
+      setEditorError(error instanceof Error ? error.message : 'Could not save the edited print file.');
+    } finally {
+      setIsSavingEdits(false);
+    }
   };
 
   // Render canvas inside editor
@@ -650,11 +753,11 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
     if (editorFilter === 'bw_doc') filterString += ' grayscale(100%) contrast(220%) brightness(110%)';
     if (editorFilter === 'enhanced') filterString += ' contrast(130%) brightness(105%)';
 
-    const drawCropOverlay = () => {
-      const cropX = (editorCrop.x / 100) * canvas.width;
-      const cropY = (editorCrop.y / 100) * canvas.height;
-      const cropW = (editorCrop.width / 100) * canvas.width;
-      const cropH = (editorCrop.height / 100) * canvas.height;
+    const drawCropOverlay = (contentRect = { x: 0, y: 0, width: canvas.width, height: canvas.height }) => {
+      const cropX = contentRect.x + (editorCrop.x / 100) * contentRect.width;
+      const cropY = contentRect.y + (editorCrop.y / 100) * contentRect.height;
+      const cropW = (editorCrop.width / 100) * contentRect.width;
+      const cropH = (editorCrop.height / 100) * contentRect.height;
 
       // Semi-transparent shroud outside crop box
       ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
@@ -689,7 +792,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
       });
     };
 
-    if (activeDocIsImage && (activeDoc?.previewUrl || activeDoc?.fileUrl)) {
+    if (activeDocIsImage && (activeDoc?.sourcePreviewUrl || activeDoc?.previewUrl || activeDoc?.fileUrl)) {
       const img = new Image();
       img.onload = () => {
         if (!canvasRef.current) return;
@@ -697,26 +800,28 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
         ctx.fillStyle = '#1E293B';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+        const maxW = canvas.width - 32;
+        const maxH = canvas.height - 32;
+        const swapsDimensions = editorRotation % 180 !== 0;
+        const orientedWidth = swapsDimensions ? img.naturalHeight : img.naturalWidth;
+        const orientedHeight = swapsDimensions ? img.naturalWidth : img.naturalHeight;
+        const scale = Math.min(maxW / (orientedWidth || 1), maxH / (orientedHeight || 1));
+        const contentWidth = orientedWidth * scale;
+        const contentHeight = orientedHeight * scale;
+        const x = (canvas.width - contentWidth) / 2;
+        const y = (canvas.height - contentHeight) / 2;
+        const drawWidth = img.naturalWidth * scale;
+        const drawHeight = img.naturalHeight * scale;
+
         ctx.save();
         ctx.translate(canvas.width / 2, canvas.height / 2);
         ctx.rotate((editorRotation * Math.PI) / 180);
-        ctx.translate(-canvas.width / 2, -canvas.height / 2);
         ctx.filter = filterString;
-
-        const maxW = canvas.width - 32;
-        const maxH = canvas.height - 32;
-        const scale = Math.min(maxW / (img.naturalWidth || 1), maxH / (img.naturalHeight || 1));
-        const w = (img.naturalWidth || 300) * scale;
-        const h = (img.naturalHeight || 400) * scale;
-        const x = (canvas.width - w) / 2;
-        const y = (canvas.height - h) / 2;
-
-        ctx.drawImage(img, x, y, w, h);
+        ctx.drawImage(img, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
         ctx.restore();
-
-        drawCropOverlay();
+        drawCropOverlay({ x, y, width: contentWidth, height: contentHeight });
       };
-      img.src = activeDoc?.previewUrl || activeDoc?.fileUrl || '';
+      img.src = activeDoc?.sourcePreviewUrl || activeDoc?.previewUrl || activeDoc?.fileUrl || '';
       return;
     }
 
@@ -1569,7 +1674,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                 fileName={activeDoc.fileName}
                 fileUrl={activeDoc.fileUrl || activeDoc.previewUrl}
                 pageCount={activeDoc.pageCount}
-                rotation={activeDoc.rotation}
+                rotation={activeDoc.appliedEdits ? 0 : activeDoc.rotation}
                 options={activeDoc.options}
                 onRotate={updateActiveRotation}
                 onOpenEditor={openEditorForActiveDoc}
@@ -2201,15 +2306,16 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                 {activeDocIsImage ? (
                   <canvas ref={canvasRef} className="rounded shadow max-h-[460px] max-w-full object-contain cursor-crosshair" />
                 ) : activeDoc?.previewUrl || activeDoc?.fileUrl ? (
-                  <div className="h-[460px] w-[340px] max-w-full"><Suspense fallback={<div className="p-8 text-center text-sm text-slate-300" role="status">Loading PDF preview…</div>}><PdfPageRenderer fileUrl={activeDoc.previewUrl || activeDoc.fileUrl!} currentPage={1} rotation={editorRotation} /></Suspense></div>
+                  <div className="h-[460px] w-[340px] max-w-full"><Suspense fallback={<div className="p-8 text-center text-sm text-slate-300" role="status">Loading PDF preview…</div>}><PdfPageRenderer fileUrl={activeDoc.sourcePreviewUrl || activeDoc.previewUrl || activeDoc.fileUrl!} currentPage={1} rotation={editorRotation} cropBox={editorCrop} /></Suspense></div>
                 ) : <p className="p-8 text-center text-sm text-slate-300">A local preview is unavailable for this file.</p>}
               </div>
 
               {/* Right: Controls Panel */}
               <div className="w-full md:w-80 bg-slate-900 border border-slate-800 rounded-xl p-4 text-xs space-y-4">
-                <p className="rounded-lg border border-amber-700/60 bg-amber-950/50 p-3 text-[11px] leading-relaxed text-amber-100">
-                  Preview only: rotation, crop, filters, brightness, and contrast are not applied to the file sent to the shop. Use Print Settings for options that affect the order.
+                <p className="rounded-lg border border-emerald-700/60 bg-emerald-950/50 p-3 text-[11px] leading-relaxed text-emerald-100">
+                  Save uploads the edited file for printing. PDF rotation and crop preserve vector content; image filters apply to image files only. Your special instructions are sent with this file.
                 </p>
+                {editorError && <p className="rounded-lg border border-red-800 bg-red-950/50 p-3 text-[11px] leading-relaxed text-red-200" role="alert">{editorError}</p>}
                 {/* Crop & Orientation */}
                 <div>
                   <div className="text-slate-400 font-semibold uppercase tracking-wider text-[10px] mb-2">
@@ -2253,8 +2359,9 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                   <div className="grid grid-cols-2 gap-1.5 mb-3">
                     <button
                       type="button"
+                      disabled={!activeDocIsImage || isSavingEdits}
                       onClick={() => setEditorFilter('natural')}
-                      className={`p-1.5 rounded-lg text-center font-medium ${
+                      className={`p-1.5 rounded-lg text-center font-medium disabled:opacity-40 disabled:cursor-not-allowed ${
                         editorFilter === 'natural'
                           ? 'bg-indigo-600 text-white'
                           : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
@@ -2264,8 +2371,9 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                     </button>
                     <button
                       type="button"
+                      disabled={!activeDocIsImage || isSavingEdits}
                       onClick={() => setEditorFilter('bw_doc')}
-                      className={`p-1.5 rounded-lg text-center font-medium ${
+                      className={`p-1.5 rounded-lg text-center font-medium disabled:opacity-40 disabled:cursor-not-allowed ${
                         editorFilter === 'bw_doc'
                           ? 'bg-indigo-600 text-white'
                           : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
@@ -2275,8 +2383,9 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                     </button>
                     <button
                       type="button"
+                      disabled={!activeDocIsImage || isSavingEdits}
                       onClick={() => setEditorFilter('enhanced')}
-                      className={`p-1.5 rounded-lg text-center font-medium ${
+                      className={`p-1.5 rounded-lg text-center font-medium disabled:opacity-40 disabled:cursor-not-allowed ${
                         editorFilter === 'enhanced'
                           ? 'bg-indigo-600 text-white'
                           : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
@@ -2286,8 +2395,9 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                     </button>
                     <button
                       type="button"
+                      disabled={!activeDocIsImage || isSavingEdits}
                       onClick={() => setEditorFilter('grayscale')}
-                      className={`p-1.5 rounded-lg text-center font-medium ${
+                      className={`p-1.5 rounded-lg text-center font-medium disabled:opacity-40 disabled:cursor-not-allowed ${
                         editorFilter === 'grayscale'
                           ? 'bg-indigo-600 text-white'
                           : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
@@ -2305,6 +2415,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                     </div>
                     <input
                       type="range"
+                      disabled={!activeDocIsImage || isSavingEdits}
                       min="50"
                       max="150"
                       value={editorBrightness}
@@ -2318,6 +2429,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                     </div>
                     <input
                       type="range"
+                      disabled={!activeDocIsImage || isSavingEdits}
                       min="50"
                       max="150"
                       value={editorContrast}
@@ -2335,6 +2447,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                   <textarea
                     rows={2}
                     value={editorNote}
+                    maxLength={500}
                     onChange={(e) => setEditorNote(e.target.value)}
                     placeholder="e.g. Staple top-left corner, punch 2 holes..."
                     className="w-full p-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-200 placeholder-slate-500 text-xs focus:outline-none focus:border-indigo-500"
@@ -2347,8 +2460,9 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
             <div className="px-5 py-3 border-t border-slate-800 bg-slate-950 flex items-center justify-between">
               <button
                 type="button"
+                disabled={isSavingEdits}
                 onClick={() => setEditorOpen(false)}
-                className="px-4 py-2 text-slate-400 hover:text-white text-xs font-semibold"
+                className="px-4 py-2 text-slate-400 hover:text-white text-xs font-semibold disabled:opacity-40"
               >
                 Cancel
               </button>
@@ -2369,10 +2483,11 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                 <button
                   type="button"
                   onClick={handleSaveEditor}
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg shadow-md flex items-center gap-1.5"
+                  disabled={isSavingEdits}
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg shadow-md flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-wait"
                 >
                   <CheckIcon size={14} />
-                  Save preview settings
+                  {isSavingEdits ? 'Processing and uploading…' : 'Save edits and upload'}
                 </button>
               </div>
             </div>
