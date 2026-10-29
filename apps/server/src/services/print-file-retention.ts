@@ -44,11 +44,29 @@ async function performPurge(db: DatabaseService, storage: PrivateFileStorage): P
     [retentionDate]
   );
 
+  const processedStorageKeys = new Set<string>();
   for (const row of completed) {
+    if (processedStorageKeys.has(row.storage_key)) continue;
+    processedStorageKeys.add(row.storage_key);
     summary.expiredFilesScanned++;
+    // A customer upload key can be referenced by more than one order in legacy
+    // data or by a vault document. Do not delete the underlying object while any
+    // order still needs it or a retained vault record points to it.
+    const retainedReference = db.queryOne<any>(
+      `SELECT of.id FROM order_files of
+       JOIN orders o ON o.id = of.order_id
+       WHERE of.storage_key = ?
+         AND (o.status NOT IN ('COLLECTED', 'CANCELLED')
+           OR COALESCE(o.collected_at, o.updated_at) > ?)
+       UNION ALL
+       SELECT id FROM storage_documents WHERE storage_key = ?
+       LIMIT 1`,
+      [row.storage_key, retentionDate, row.storage_key]
+    );
+    if (retainedReference) continue;
     try {
       if (await storage.remove(row.storage_key)) {
-        db.execute(`UPDATE order_files SET storage_key = ? WHERE id = ? AND storage_key = ?`, [`expired:${row.id}`, row.id, row.storage_key]);
+        db.execute(`UPDATE order_files SET storage_key = ? || id WHERE storage_key = ?`, ['expired:', row.storage_key]);
         summary.expiredFilesDeleted++;
       } else {
         summary.expiredFilesFailed++;
