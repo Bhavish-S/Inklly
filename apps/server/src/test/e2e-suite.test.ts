@@ -217,12 +217,14 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       assert.ok(shop.enabledPaperFormats.includes('A4'));
       assert.deepEqual(shop.portalSettings.requiredFields, { name: true, phone: true });
       assert.deepEqual(shop.portalSettings.allowedOptions.colorModes, ['bw', 'color', 'mixed']);
+      assert.deepEqual(shop.portalSettings.services, { idCardPrinting: false, photoPrinting: false });
     });
 
     it('persists portal settings and rejects customer quotes that use disabled options', async () => {
       const portalSettings = {
         requiredFields: { name: false, phone: true },
         allowedOptions: { colorModes: ['bw'], duplexModes: ['simplex'], paperSizes: ['A4'], pageSelection: false },
+        services: { idCardPrinting: true, photoPrinting: true },
       };
       const save = await fetch(`${baseUrl}/api/v1/merchant/settings`, {
         method: 'PUT',
@@ -250,6 +252,9 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
         body: JSON.stringify({ portalSettings: { requiredFields: { name: true, phone: true }, allowedOptions: { colorModes: ['bw', 'color', 'mixed'], duplexModes: ['simplex', 'duplex_auto'], paperSizes: ['A4', 'A3', 'PHOTO_4X6', 'PHOTO_5X7'], pageSelection: true } } }),
       });
       assert.equal(restore.status, 200);
+      const restoredShopRes = await fetch(`${baseUrl}/api/v1/portal/shop/campus1`);
+      const restoredShop = await restoredShopRes.json() as any;
+      assert.deepEqual(restoredShop.portalSettings.services, { idCardPrinting: true, photoPrinting: true }, 'legacy portal-setting writes preserve persisted service flags');
     });
 
     it('enforces persisted customer fields for public orders without a client version marker', async () => {

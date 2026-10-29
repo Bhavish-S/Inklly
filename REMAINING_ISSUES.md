@@ -37,6 +37,7 @@
 - Per-file instructions persist to merchant-visible print options with 500-character server validation. Supported PDF and image edits produce transformed output that replaces the original only after private upload succeeds; transformation behavior has unit coverage but still needs browser/device verification.
 - Platform-admin permissions use owner-only management, separate persisted grants, per-request refresh, and audit events. Migration v16 and local tests cover grant/revoke behavior; provisioning of new platform-admin accounts and live PostgreSQL migration/runtime checks remain release follow-up.
 - The admin fleet action reloads persisted server telemetry instead of fabricating a heartbeat poll result. Printer counts are treated as currently online only with a fresh owning-agent heartbeat; stale counts remain visible as last-reported diagnostics. It cannot actively poll desktops; agents push heartbeats to the API.
+- ID-card and passport-photo studio availability is now shop-configurable, persisted with portal settings, and defaults off. The customer portal hides each studio mode unless that shop enabled it. Browser/device-level usability and output checks remain outstanding.
 - Ledger entries are append-only under SQLite and PostgreSQL startup migrations, and a unique provider-transaction index prevents duplicate ledger postings. Migration v10 checks for existing duplicate provider transaction IDs and fails closed for operator reconciliation; production Supabase has not been inspected or migrated.
 
 ## Release blockers and follow-up

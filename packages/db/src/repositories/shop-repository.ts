@@ -4,11 +4,13 @@ import { Organization, Shop } from '@inklly/shared';
 export interface ShopPortalSettings {
   requiredFields: { name: boolean; phone: boolean };
   allowedOptions: { colorModes: Array<'bw' | 'color' | 'mixed'>; duplexModes: Array<'simplex' | 'duplex_auto'>; paperSizes: Array<'A4' | 'A3' | 'PHOTO_4X6' | 'PHOTO_5X7'>; pageSelection: boolean };
+  services: { idCardPrinting: boolean; photoPrinting: boolean };
 }
 
 export const DEFAULT_SHOP_PORTAL_SETTINGS: ShopPortalSettings = {
   requiredFields: { name: true, phone: true },
   allowedOptions: { colorModes: ['bw', 'color', 'mixed'], duplexModes: ['simplex', 'duplex_auto'], paperSizes: ['A4', 'A3', 'PHOTO_4X6', 'PHOTO_5X7'], pageSelection: true },
+  services: { idCardPrinting: false, photoPrinting: false },
 };
 
 export class ShopRepository {
@@ -109,6 +111,10 @@ export class ShopRepository {
           paperSizes: (['A4', 'A3', 'PHOTO_4X6', 'PHOTO_5X7'] as const).filter((key) => value.allowedOptions?.paperSizes?.includes(key)),
           pageSelection: value.allowedOptions?.pageSelection !== false,
         },
+        services: {
+          idCardPrinting: value.services?.idCardPrinting === true,
+          photoPrinting: value.services?.photoPrinting === true,
+        },
       };
     } catch { return structuredClone(DEFAULT_SHOP_PORTAL_SETTINGS); }
   }
@@ -136,7 +142,16 @@ export class ShopRepository {
         paperSizes: enumList(options.paperSizes, ['A4', 'A3', 'PHOTO_4X6', 'PHOTO_5X7'] as const, 'Paper sizes'),
         pageSelection: options.pageSelection,
       },
+      services: value.services === undefined
+        ? this.getPortalSettings(shopId).services
+        : {
+          idCardPrinting: value.services?.idCardPrinting,
+          photoPrinting: value.services?.photoPrinting,
+        },
     };
+    if (typeof settings.services.idCardPrinting !== 'boolean' || typeof settings.services.photoPrinting !== 'boolean') {
+      throw new Error('Portal service settings must specify boolean ID card and photo availability.');
+    }
     if (settings.allowedOptions.colorModes.includes('mixed') &&
         (!settings.allowedOptions.colorModes.includes('bw') || !settings.allowedOptions.colorModes.includes('color'))) {
       throw new Error('Mixed color mode requires both Black & White and Color to be enabled.');

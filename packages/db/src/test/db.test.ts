@@ -40,17 +40,21 @@ describe('Relational Database & Multi-Tenancy Tests', () => {
     const defaultSettings = shopRepo.getPortalSettings('shop-campus-1');
     assert.equal(defaultSettings.requiredFields.name, true);
     assert.deepEqual(defaultSettings.allowedOptions.colorModes, ['bw', 'color', 'mixed']);
+    assert.deepEqual(defaultSettings.services, { idCardPrinting: false, photoPrinting: false });
     const saved = shopRepo.updatePortalSettings('shop-campus-1', {
       requiredFields: { name: false, phone: true },
       allowedOptions: { colorModes: ['bw'], duplexModes: ['simplex'], paperSizes: ['A4'], pageSelection: false },
+      services: { idCardPrinting: true, photoPrinting: true },
     });
     assert.equal(saved.requiredFields.name, false);
+    assert.deepEqual(saved.services, { idCardPrinting: true, photoPrinting: true });
     assert.deepEqual(shopRepo.getPortalSettings('shop-campus-1'), saved);
     assert.throws(() => shopRepo.updatePortalSettings('shop-campus-1', {
       requiredFields: { name: true, phone: true },
       allowedOptions: { colorModes: [], duplexModes: ['simplex'], paperSizes: ['A4'], pageSelection: true },
     }), /at least one color modes/i);
     assert.equal(shopRepo.getPortalSettings('shop-campus-1').requiredFields.name, false, 'invalid updates do not overwrite persisted settings');
+    assert.equal(shopRepo.getPortalSettings('shop-campus-1').services.photoPrinting, true, 'legacy payloads preserve service availability');
   });
 
   it('applies the merchant vault schema migration', () => {

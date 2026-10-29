@@ -487,6 +487,8 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
   const portalRequiredFields = shop?.portalSettings?.requiredFields || { name: true, phone: true };
   const onlinePaymentBelowMinimum = grandTotalPaise !== null && grandTotalPaise < 100;
   const formatPaise = (paise: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(paise / 100);
+  const idCardServiceEnabled = shop?.portalSettings?.services?.idCardPrinting === true;
+  const photoServiceEnabled = shop?.portalSettings?.services?.photoPrinting === true;
   const availablePaperSizes = (['A4', 'A3', 'PHOTO_4X6', 'PHOTO_5X7'] as const).filter((paperSize) => {
     const allowedPaperSizes = shop?.portalSettings?.allowedOptions?.paperSizes;
     if (Array.isArray(allowedPaperSizes) && !allowedPaperSizes.includes(paperSize)) return false;
@@ -1163,7 +1165,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
         )}
 
         {/* INTAKE MODE SELECTOR BAR (Indian Print Shop Workflow Parity) */}
-        <div className="grid grid-cols-4 gap-1 p-1.5 bg-slate-200/90 rounded-2xl text-center text-xs font-bold shadow-inner">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 p-1.5 bg-slate-200/90 rounded-2xl text-center text-xs font-bold shadow-inner">
           <button
             type="button"
             onClick={() => setIntakeMode('documents')}
@@ -1176,7 +1178,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
             <FileTextIcon size={16} />
             <span className="text-[11px]">Files</span>
           </button>
-          <button
+          {idCardServiceEnabled && <button
             type="button"
             onClick={() => setIntakeMode('id_card')}
             className={`min-h-[44px] py-2 px-1 rounded-xl transition-all flex flex-col items-center justify-center gap-1 cursor-pointer ${
@@ -1187,8 +1189,8 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
           >
             <IdCardIcon size={16} />
             <span className="text-[11px]">ID Card 2-in-1</span>
-          </button>
-          <button
+          </button>}
+          {photoServiceEnabled && <button
             type="button"
             onClick={() => setIntakeMode('passport_photo')}
             className={`min-h-[44px] py-2 px-1 rounded-xl transition-all flex flex-col items-center justify-center gap-1 cursor-pointer ${
@@ -1199,7 +1201,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
           >
             <CameraIcon size={16} />
             <span className="text-[11px]">Passport (8x)</span>
-          </button>
+          </button>}
           <button
             type="button"
             onClick={() => setIntakeMode('whatsapp_lookup')}

@@ -496,8 +496,8 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     'A4 Plain Paper': true,
     'Scaling': true,
     'Photo Collage': true,
-    'ID Card': true,
-    'Passport Photo': true,
+    'ID Card': false,
+    'Passport Photo': false,
     'PDF Page Selection': true,
     'Stapling Requests': false,
   });
@@ -545,7 +545,10 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
         'A4 Plain Paper': papers.includes('A4'), 'A3 Poster Sheet': papers.includes('A3'),
         'Photo Glossy (4x6)': papers.includes('PHOTO_4X6'), 'Photo 5x7': papers.includes('PHOTO_5X7'),
         'PDF Page Selection': settings.allowedOptions.pageSelection,
-        Scaling: false, 'Photo Collage': false, 'ID Card': false, 'Passport Photo': false, 'Stapling Requests': false,
+        Scaling: false, 'Photo Collage': false,
+        'ID Card': settings.services?.idCardPrinting === true,
+        'Passport Photo': settings.services?.photoPrinting === true,
+        'Stapling Requests': false,
       }));
     }).catch((error: any) => {
       if (active) { setPortalSettingsCanSave(false); setPortalSettingsError(error?.message || 'Could not load portal settings.'); }
@@ -564,6 +567,10 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
           duplexModes: [ ...(portalServices['Single-Sided'] ? ['simplex'] : []), ...(portalServices['Back-to-Back (Auto)'] ? ['duplex_auto'] : []) ],
           paperSizes: [ ...(portalServices['A4 Plain Paper'] ? ['A4'] : []), ...(portalServices['A3 Poster Sheet'] ? ['A3'] : []), ...(portalServices['Photo Glossy (4x6)'] ? ['PHOTO_4X6'] : []), ...(portalServices['Photo 5x7'] ? ['PHOTO_5X7'] : []) ],
           pageSelection: Boolean(portalServices['PDF Page Selection']),
+        },
+        services: {
+          idCardPrinting: Boolean(portalServices['ID Card']),
+          photoPrinting: Boolean(portalServices['Passport Photo']),
         },
       } });
       setGlobalToast('Customer portal settings saved. New orders will use these options.');
@@ -3875,24 +3882,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                     <p className="text-[11px] text-gray-400">Add a printer or change its print settings</p>
                   </div>
 
-                  {/* Customer portal services - shop-wide */}
-                  <div className="p-4 border rounded-2xl space-y-2">
-                    <div className="font-bold text-xs text-[#172031] dark:text-white">Customer portal services - shop-wide</div>
-                    <div className="flex items-center gap-6 text-xs pt-1">
-                      <label className="flex items-center gap-2 cursor-pointer font-bold">
-                        <input type="checkbox" defaultChecked className="rounded text-[#4D64E6]" />
-                        <span>ID Card Printing</span>
-                      </label>
-                      <label className="flex items-center gap-2 cursor-pointer font-bold">
-                        <input type="checkbox" defaultChecked className="rounded text-[#4D64E6]" />
-                        <span>Photo Printing</span>
-                      </label>
-                    </div>
-                    <p className="text-[10px] text-gray-400 leading-relaxed pt-1">
-                      Off by default. Photo Printing opens passport-photo layouts; ID Card is separate. Use Save Changes above, then reopen the customer link. Printing requires compatible paper settings and pricing.
-                    </p>
-                  </div>
-
                   {/* Agent connection details */}
                   <div className="p-4 bg-gray-50 dark:bg-gray-900/50 rounded-2xl border border-gray-100 dark:border-gray-700 space-y-3">
                     <div className="flex justify-between items-center text-xs">
@@ -4534,19 +4523,25 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                           className="rounded text-[#4D64E6] cursor-not-allowed"
                         />
                       </div>
-                      <div className="flex justify-between items-center border-t border-gray-100 dark:border-gray-700 pt-2">
-                        <div>
-                          <span className="font-bold text-gray-900 dark:text-white block">Photo Collage &amp; Passport Grid</span>
-                          <span className="text-[10px] text-gray-400">Automatic 4x6 / 8-photo passport grid generation</span>
+                      {[
+                        { key: 'Passport Photo', title: 'Passport Photo Studio', description: 'Show the customer flow that lays eight passport-size photos onto a printable sheet.' },
+                        { key: 'ID Card', title: 'ID Card 2-in-1 Studio', description: 'Show the customer flow that combines the front and back of an ID on an A4 sheet.' },
+                      ].map((service) => (
+                        <div key={service.key} className="flex justify-between items-center border-t border-gray-100 dark:border-gray-700 pt-2">
+                          <div>
+                            <span className="font-bold text-gray-900 dark:text-white block">{service.title}</span>
+                            <span className="text-[10px] text-gray-400">{service.description}</span>
+                          </div>
+                          <input
+                            type="checkbox"
+                            checked={Boolean(portalServices[service.key])}
+                            onChange={(event) => togglePortalService(service.key, event.target.checked)}
+                            disabled={!portalSettingsLoaded || !portalSettingsCanSave || portalSettingsSaving}
+                            aria-label={`Offer ${service.title} in the customer portal`}
+                            className="rounded text-[#4D64E6]"
+                          />
                         </div>
-                        <input
-                          type="checkbox"
-                          checked={portalServices['Photo Collage'] ?? true}
-                          disabled
-                          onChange={() => {}}
-                          className="rounded text-[#4D64E6] cursor-not-allowed"
-                        />
-                      </div>
+                      ))}
                       <div className="flex justify-between items-center border-t border-gray-100 dark:border-gray-700 pt-2">
                         <div>
                           <span className="font-bold text-gray-900 dark:text-white block">PDF Custom Page Selection</span>
