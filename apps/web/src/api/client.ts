@@ -581,6 +581,22 @@ export const api = {
     return res.json();
   },
 
+  async getPlatformAdmins() {
+    const res = await fetch(`${API_BASE}/platform/admins`, { headers: getHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not load platform admin access');
+    return body;
+  },
+
+  async updatePlatformAdminPermissions(adminId: string, permissions: string[]) {
+    const res = await fetch(`${API_BASE}/platform/admins/${encodeURIComponent(adminId)}/permissions`, {
+      method: 'PUT', headers: getHeaders(), body: JSON.stringify({ permissions }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not update platform admin permissions');
+    return body;
+  },
+
   async getPlatformAgents() {
     const res = await fetch(`${API_BASE}/platform/agents`, { headers: getHeaders() });
     if (!res.ok) throw new Error('Failed to load registered agent fleet');

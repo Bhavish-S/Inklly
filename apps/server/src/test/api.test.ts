@@ -1150,6 +1150,69 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.ok(audit.some((entry) => entry.action === 'VIEW_PUBLIC_ENQUIRIES'));
   });
 
+  it('stores platform-admin permissions separately and applies revocation without re-login', async () => {
+    const userId = `platform-admin-${crypto.randomUUID()}`;
+    const email = `${userId}@inklly.test`;
+    const password = 'PlatformAdminPassword123!';
+    const now = new Date().toISOString();
+    db.execute(
+      `INSERT INTO users (id, email, password_hash, full_name, role, is_active, created_at, updated_at)
+       VALUES (?, ?, ?, 'Scoped Platform Admin', 'PLATFORM_ADMIN', 1, ?, ?)`,
+      [userId, email, `hash_${password}`, now, now]
+    );
+    try {
+      const login = await fetch(`${baseUrl}/api/v1/auth/login`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      assert.equal(login.status, 200);
+      const token = (await login.json() as any).token;
+      const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+
+      const initiallyDenied = await fetch(`${baseUrl}/api/v1/platform/overview`, { headers });
+      assert.equal(initiallyDenied.status, 403, 'platform admin begins with no permission grants');
+
+      const adminCannotGrant = await fetch(`${baseUrl}/api/v1/platform/admins/${userId}/permissions`, {
+        method: 'PUT', headers, body: JSON.stringify({ permissions: ['platform:view'] }),
+      });
+      assert.equal(adminCannotGrant.status, 403, 'only a platform owner can change platform grants');
+
+      const invalidGrant = await fetch(`${baseUrl}/api/v1/platform/admins/${userId}/permissions`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({ permissions: ['shop:owner'] }),
+      });
+      assert.equal(invalidGrant.status, 400);
+
+      const grant = await fetch(`${baseUrl}/api/v1/platform/admins/${userId}/permissions`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({ permissions: ['platform:view'] }),
+      });
+      assert.equal(grant.status, 200);
+      assert.deepEqual((await grant.json() as any).permissions, ['platform:view']);
+      const allowed = await fetch(`${baseUrl}/api/v1/platform/overview`, { headers });
+      assert.equal(allowed.status, 200, 'new persisted permission applies to an existing session');
+
+      const secondLogin = await fetch(`${baseUrl}/api/v1/auth/login`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }),
+      });
+      assert.equal(secondLogin.status, 200);
+      const grantedToken = (await secondLogin.json() as any).token;
+      const previouslyGrantedHeaders = { Authorization: `Bearer ${grantedToken}` };
+      assert.equal((await fetch(`${baseUrl}/api/v1/platform/overview`, { headers: previouslyGrantedHeaders })).status, 200);
+
+      const revoke = await fetch(`${baseUrl}/api/v1/platform/admins/${userId}/permissions`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({ permissions: [] }),
+      });
+      assert.equal(revoke.status, 200);
+      const immediatelyDenied = await fetch(`${baseUrl}/api/v1/platform/overview`, { headers: previouslyGrantedHeaders });
+      assert.equal(immediatelyDenied.status, 403, 'revocation applies without re-login');
+      assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM audit_events WHERE target_id = ? AND action = 'PLATFORM_ADMIN_PERMISSIONS_UPDATED'`, [userId]).count), 2);
+    } finally {
+      db.execute(`DELETE FROM users WHERE id = ?`, [userId]);
+    }
+  });
+
   it('validates tenant status changes and records the update atomically in the audit log', async () => {
     const organizationId = `org-status-${crypto.randomUUID()}`;
     const now = new Date().toISOString();
@@ -1413,6 +1476,8 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.ok(spec.paths['/subscriptions/usage']?.get.description.includes('does not create a charge'));
     assert.ok(spec.paths['/subscriptions/invoices']?.get.description.includes('never records payment'));
     assert.ok(spec.paths['/platform/billing/invoices']?.post.description.includes('Does not charge'));
+    assert.ok(spec.paths['/platform/admins']?.get.description.includes('Platform-owner only'));
+    assert.ok(spec.paths['/platform/admins/{id}/permissions']?.put.description.includes('take effect on the next request'));
     assert.ok(!spec.paths['/subscriptions/usage']?.get.description.includes('active subscription'));
     assert.ok(spec.paths['/developer/webhooks/{id}/deliveries']?.get.description.includes('HMAC SHA-256'));
 

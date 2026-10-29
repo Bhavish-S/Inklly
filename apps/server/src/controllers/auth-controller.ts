@@ -94,7 +94,10 @@ export class AuthController {
       { id: userWithHash.id, email: userWithHash.email, role: userWithHash.role },
       primary?.organizationId,
       primary?.shopId,
-      primary?.permissions || (userWithHash.role === 'PLATFORM_OWNER' ? ['*'] : []),
+      userWithHash.role === 'PLATFORM_OWNER' ? ['*']
+        : userWithHash.role === 'PLATFORM_ADMIN'
+          ? this.db.query<{ permission: string }>(`SELECT permission FROM platform_admin_permissions WHERE user_id = ? ORDER BY permission`, [userWithHash.id]).map((row) => row.permission)
+          : primary?.permissions || [],
       req
     );
 

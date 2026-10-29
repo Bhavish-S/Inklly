@@ -47,6 +47,15 @@ describe('Relational Database & Multi-Tenancy Tests', () => {
       `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('storage_categories', 'storage_documents')`
     );
     assert.deepEqual(tables.map((table) => table.name).sort(), ['storage_categories', 'storage_documents']);
+    const platformPermissionMigration = db.queryOne<any>(`SELECT version FROM inklly_schema_migrations WHERE version = 16`);
+    assert.equal(platformPermissionMigration?.version, 16);
+    const platformPermissionTable = db.queryOne<any>(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'platform_admin_permissions'`);
+    assert.equal(platformPermissionTable?.name, 'platform_admin_permissions');
+    db.execute(`DROP TABLE platform_admin_permissions`);
+    db.execute(`DELETE FROM inklly_schema_migrations WHERE version = 16`);
+    (db as any).ensureSqlitePlatformAdminPermissionsMigration();
+    assert.equal(db.queryOne<any>(`SELECT version FROM inklly_schema_migrations WHERE version = 16`)?.version, 16,
+      'an existing database can install the additive platform permission migration');
   });
 
   it('enforces append-only ledger entries and permits compensating entries', () => {

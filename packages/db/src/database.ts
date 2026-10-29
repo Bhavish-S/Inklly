@@ -42,6 +42,7 @@ export class DatabaseService {
       this.ensureSqliteOrderPricingSnapshotMigration();
       this.ensureSqliteWebhookOutboxMigration();
       this.ensureSqlitePilotBillingMigration();
+      this.ensureSqlitePlatformAdminPermissionsMigration();
     }
   }
 
@@ -151,6 +152,7 @@ export class DatabaseService {
     this.ensurePostgresOrderPricingSnapshotMigration();
     this.ensurePostgresWebhookOutboxMigration();
     this.ensurePostgresPilotBillingMigration();
+    this.ensurePostgresPlatformAdminPermissionsMigration();
   }
 
   private ensureSqliteSubscriptionUsageMigration(): void {
@@ -424,6 +426,45 @@ export class DatabaseService {
     } catch (error) {
       try { this.queryPostgres('ROLLBACK'); } catch { /* preserve original error */ }
       throw new Error(`[Inklly DB] Pilot billing migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+
+  private ensureSqlitePlatformAdminPermissionsMigration(): void {
+    if (this.db!.prepare(`SELECT version FROM inklly_schema_migrations WHERE version = 16`).get()) return;
+    this.db!.exec('BEGIN');
+    try {
+      this.db!.exec(`CREATE TABLE IF NOT EXISTS platform_admin_permissions (
+        user_id TEXT NOT NULL, permission TEXT NOT NULL, granted_by_user_id TEXT NOT NULL, granted_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, permission),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (granted_by_user_id) REFERENCES users(id) ON DELETE RESTRICT
+      )`);
+      this.db!.exec(`CREATE INDEX IF NOT EXISTS idx_platform_admin_permissions_user ON platform_admin_permissions(user_id)`);
+      this.db!.prepare(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (16, ?)`).run(new Date().toISOString());
+      this.db!.exec('COMMIT');
+    } catch (error) {
+      try { this.db!.exec('ROLLBACK'); } catch { /* preserve original error */ }
+      throw error;
+    }
+  }
+
+  private ensurePostgresPlatformAdminPermissionsMigration(): void {
+    if (this.queryPostgres(`SELECT version FROM inklly_schema_migrations WHERE version = ?`, [16]).length) return;
+    this.queryPostgres('BEGIN');
+    try {
+      this.queryPostgres(`CREATE TABLE IF NOT EXISTS platform_admin_permissions (
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        permission TEXT NOT NULL,
+        granted_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+        granted_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, permission)
+      )`);
+      this.queryPostgres(`CREATE INDEX IF NOT EXISTS idx_platform_admin_permissions_user ON platform_admin_permissions(user_id)`);
+      this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [16, new Date().toISOString()]);
+      this.queryPostgres('COMMIT');
+    } catch (error) {
+      try { this.queryPostgres('ROLLBACK'); } catch { /* preserve original error */ }
+      throw new Error(`[Inklly DB] Platform permission migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
     }
   }
 

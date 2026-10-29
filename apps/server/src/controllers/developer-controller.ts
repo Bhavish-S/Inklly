@@ -226,6 +226,13 @@ export class DeveloperController {
           get: { summary: 'List pilot invoices', security: [{ bearerAuth: [] }], responses: { 200: { description: 'Issued immutable invoice snapshots; no payment data is implied.' } } },
           post: { summary: 'Issue an idempotent monthly pilot invoice from confirmed print-side usage', description: 'Requires an active organization and completed calendar month. Uses the effective tariff and append-only operator-confirmed usage. Does not charge the merchant or write a customer-payment ledger entry.', security: [{ bearerAuth: [] }], requestBody: { required: true }, responses: { 201: { description: 'Invoice issued.' }, 200: { description: 'Existing invoice returned for an idempotent replay.' }, 409: { description: 'The organization, tariff schedule, or period is not invoiceable.' } } },
         },
+        '/platform/admins': {
+          get: { summary: 'List platform admin accounts and their current permissions', description: 'Platform-owner only. Does not return credentials or session data.', security: [{ bearerAuth: [] }], responses: { 200: { description: 'Platform admin accounts.' }, 403: { description: 'Platform owner role required.' } } },
+        },
+        '/platform/admins/{id}/permissions': {
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          put: { summary: 'Replace a platform admin permission grant list', description: 'Platform-owner only. Permission changes take effect on the next request and are audited.', security: [{ bearerAuth: [] }], requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['permissions'], properties: { permissions: { type: 'array', uniqueItems: true, items: { type: 'string', enum: ['platform:view', 'platform:manage', 'support:view', 'finance:view', 'security:audit', 'billing:view', 'billing:manage'] } } } } } } }, responses: { 200: { description: 'Current platform permissions.' }, 400: { description: 'Unknown or duplicate permission.' }, 403: { description: 'Platform owner role required.' }, 404: { description: 'Platform admin not found.' } } },
+        },
         '/agent/enroll': {
           post: {
             summary: 'Pair Desktop Print Agent with Shop ID and secret key',

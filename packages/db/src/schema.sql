@@ -68,6 +68,19 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 
+-- Platform administration grants are separate from shop membership permissions.
+CREATE TABLE IF NOT EXISTS platform_admin_permissions (
+    user_id TEXT NOT NULL,
+    permission TEXT NOT NULL,
+    granted_by_user_id TEXT NOT NULL,
+    granted_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, permission),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (granted_by_user_id) REFERENCES users(id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_platform_admin_permissions_user ON platform_admin_permissions(user_id);
+
 CREATE TABLE IF NOT EXISTS public_enquiries (
     id TEXT PRIMARY KEY,
     idempotency_key TEXT UNIQUE,

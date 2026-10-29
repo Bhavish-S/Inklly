@@ -118,8 +118,12 @@ export function authenticate(db: DatabaseService) {
       res.status(401).json({ error: 'Account permissions changed. Please sign in again.' });
       return;
     }
+    const platformPermissions = currentUser.role === 'PLATFORM_OWNER'
+      ? ['*']
+      : db.query<{ permission: string }>(`SELECT permission FROM platform_admin_permissions WHERE user_id = ? ORDER BY permission`, [currentUser.id])
+          .map((row) => row.permission);
     currentClaims = { ...session, email: currentUser.email, role: currentUser.role, shopId: undefined, organizationId: undefined,
-      permissions: currentUser.role === 'PLATFORM_OWNER' ? ['*'] : session.permissions };
+      permissions: platformPermissions };
   } else if (currentUser.role === 'DEVELOPER' && !session.organizationId && !session.shopId) {
     // Unaffiliated developer accounts may use identity-only routes, but have no
     // tenant scope or tenant permissions until an organization membership exists.

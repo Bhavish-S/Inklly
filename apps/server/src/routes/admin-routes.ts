@@ -15,6 +15,9 @@ export function createAdminRoutes(db: DatabaseService, fileStorage: PrivateFileS
   router.use(authenticate(db));
   router.use(requireRole('PLATFORM_OWNER', 'PLATFORM_ADMIN'));
 
+  router.get('/admins', requireRole('PLATFORM_OWNER'), controller.listPlatformAdmins);
+  router.put('/admins/:id/permissions', requireRole('PLATFORM_OWNER'), controller.updatePlatformAdminPermissions);
+
   router.get('/overview', requirePermission('platform:view'), controller.getOverview);
   router.get('/agents', requirePermission('platform:view'), controller.getAgents);
   router.get('/retention', requirePermission('platform:view'), controller.getRetentionStats);

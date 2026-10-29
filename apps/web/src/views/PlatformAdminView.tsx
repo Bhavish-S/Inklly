@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../api/client';
 import { ShieldIcon, SearchIcon, DownloadIcon, CheckCircleIcon, PrinterIcon, UsersIcon, FileTextIcon, SlidersIcon } from '../components/icons';
 
-type AdminTab = 'overview' | 'merchants' | 'enquiries' | 'builds' | 'plans' | 'ledger' | 'agents' | 'incidents' | 'retention' | 'audit' | 'config';
+type AdminTab = 'overview' | 'merchants' | 'enquiries' | 'builds' | 'plans' | 'ledger' | 'agents' | 'incidents' | 'retention' | 'audit' | 'access' | 'config';
+const PLATFORM_PERMISSION_OPTIONS = ['platform:view', 'platform:manage', 'support:view', 'finance:view', 'security:audit', 'billing:view', 'billing:manage'];
 
 export interface PlatformAdminProps {
   onNavigate?: (path: string) => void;
@@ -10,6 +11,12 @@ export interface PlatformAdminProps {
 
 export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) => {
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
+  const [isPlatformOwner] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('inklly_user') || 'null')?.role === 'PLATFORM_OWNER'; }
+    catch { return false; }
+  });
+  const [currentPermissions, setCurrentPermissions] = useState<string[]>(() => isPlatformOwner ? ['*'] : []);
+  const [platformAccessReady, setPlatformAccessReady] = useState(isPlatformOwner);
   const [overview, setOverview] = useState<any>(null);
   const [merchants, setMerchants] = useState<any[]>([]);
   const [ledgerEntries, setLedgerEntries] = useState<any[]>([]);
@@ -45,15 +52,42 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
   const [billingInvoiceMonth, setBillingInvoiceMonth] = useState(() => new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - 1, 1)).toISOString().slice(0, 7));
   const [billingBusy, setBillingBusy] = useState(false);
   const [billingError, setBillingError] = useState('');
+  const [platformAdmins, setPlatformAdmins] = useState<any[]>([]);
+  const [platformAdminDrafts, setPlatformAdminDrafts] = useState<Record<string, string[]>>({});
+  const [platformAdminLoading, setPlatformAdminLoading] = useState(false);
+  const [platformAdminSaving, setPlatformAdminSaving] = useState<string | null>(null);
+  const [platformAdminError, setPlatformAdminError] = useState('');
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
   };
 
+  const hasPlatformPermission = (permission: string) => isPlatformOwner || currentPermissions.includes('*') || currentPermissions.includes(permission);
+
   useEffect(() => {
-    loadPlatformData();
-  }, [selectedDomain]);
+    if (isPlatformOwner) return;
+    let cancelled = false;
+    api.getMe().then((session: any) => {
+      if (cancelled) return;
+      setCurrentPermissions(Array.isArray(session.permissions) ? session.permissions : []);
+    }).catch((error: unknown) => {
+      if (!cancelled) setPlatformAdminError(error instanceof Error ? error.message : 'Could not verify platform access.');
+    }).finally(() => { if (!cancelled) setPlatformAccessReady(true); });
+    return () => { cancelled = true; };
+  }, [isPlatformOwner]);
+
+  useEffect(() => {
+    if (platformAccessReady) loadPlatformData();
+  }, [selectedDomain, platformAccessReady, currentPermissions.join('|')]);
+
+  useEffect(() => {
+    if (!platformAccessReady || isPlatformOwner || hasPlatformPermission('platform:view')) return;
+    const firstAvailableTab: AdminTab | null = hasPlatformPermission('finance:view') ? 'ledger'
+      : hasPlatformPermission('security:audit') ? 'audit'
+        : hasPlatformPermission('support:view') ? 'enquiries' : null;
+    if (firstAvailableTab) setActiveTab(firstAvailableTab);
+  }, [platformAccessReady, isPlatformOwner, currentPermissions.join('|')]);
 
   useEffect(() => {
     if (!billingOrganizationId && merchants.length > 0) setBillingOrganizationId(merchants[0].id);
@@ -75,29 +109,44 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
     return () => { cancelled = true; };
   }, [activeTab, billingOrganizationId]);
 
+  useEffect(() => {
+    if (activeTab !== 'access' || !isPlatformOwner) return;
+    let cancelled = false;
+    setPlatformAdminLoading(true);
+    setPlatformAdminError('');
+    api.getPlatformAdmins().then((admins: any[]) => {
+      if (cancelled) return;
+      setPlatformAdmins(admins);
+      setPlatformAdminDrafts(Object.fromEntries(admins.map((admin) => [admin.id, admin.permissions])));
+    }).catch((error: unknown) => {
+      if (!cancelled) setPlatformAdminError(error instanceof Error ? error.message : 'Could not load platform admin access.');
+    }).finally(() => { if (!cancelled) setPlatformAdminLoading(false); });
+    return () => { cancelled = true; };
+  }, [activeTab, isPlatformOwner]);
+
   const loadPlatformData = async () => {
     try {
       setLoading(true);
       const [ovData, merData, ledData, audData, enquiryData, agentData, retentionData, plansData, subscriptionData] = await Promise.all([
-        api.getPlatformOverview(),
-        api.getPlatformMerchants(),
-        api.getPlatformLedger(selectedDomain === 'ALL' ? undefined : selectedDomain),
-        api.getAuditLogs(),
-        api.getPlatformEnquiries(),
-        api.getPlatformAgents(),
-        api.getPlatformRetentionStats(),
-        api.getPlatformPlans(),
-        api.getSubscriptions(),
+        hasPlatformPermission('platform:view') ? api.getPlatformOverview() : Promise.resolve(null),
+        hasPlatformPermission('platform:view') ? api.getPlatformMerchants() : Promise.resolve(null),
+        hasPlatformPermission('finance:view') ? api.getPlatformLedger(selectedDomain === 'ALL' ? undefined : selectedDomain) : Promise.resolve(null),
+        hasPlatformPermission('security:audit') ? api.getAuditLogs() : Promise.resolve(null),
+        hasPlatformPermission('support:view') ? api.getPlatformEnquiries() : Promise.resolve(null),
+        hasPlatformPermission('platform:view') ? api.getPlatformAgents() : Promise.resolve(null),
+        hasPlatformPermission('platform:view') ? api.getPlatformRetentionStats() : Promise.resolve(null),
+        hasPlatformPermission('platform:view') ? api.getPlatformPlans() : Promise.resolve(null),
+        hasPlatformPermission('billing:view') ? api.getSubscriptions() : Promise.resolve(null),
       ]);
-      setOverview(ovData);
-      setMerchants(merData);
-      setLedgerEntries(ledData);
-      setAuditLogs(audData);
-      setEnquiries(enquiryData);
-      setAgentFleet(agentData);
-      setStorageStats(retentionData);
-      setPlatformPlans(plansData);
-      setSubscriptions(subscriptionData);
+      if (ovData) setOverview(ovData);
+      if (merData) setMerchants(merData);
+      if (ledData) setLedgerEntries(ledData);
+      if (audData) setAuditLogs(audData);
+      if (enquiryData) setEnquiries(enquiryData);
+      if (agentData) setAgentFleet(agentData);
+      if (retentionData) setStorageStats(retentionData);
+      if (plansData) setPlatformPlans(plansData);
+      if (subscriptionData) setSubscriptions(subscriptionData);
     } catch (err: any) {
       console.error('Failed to load platform data:', err);
     } finally {
@@ -152,6 +201,18 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
     } catch (error: unknown) {
       showToast(error instanceof Error ? error.message : 'Could not issue pilot invoice.');
     } finally { setBillingBusy(false); }
+  };
+
+  const savePlatformAdminPermissions = async (adminId: string) => {
+    try {
+      setPlatformAdminSaving(adminId);
+      const result = await api.updatePlatformAdminPermissions(adminId, platformAdminDrafts[adminId] || []);
+      setPlatformAdmins((admins) => admins.map((admin) => admin.id === adminId ? { ...admin, permissions: result.permissions } : admin));
+      setPlatformAdminDrafts((drafts) => ({ ...drafts, [adminId]: result.permissions }));
+      showToast('Platform admin permissions saved and audited. Changes apply immediately.');
+    } catch (error: unknown) {
+      setPlatformAdminError(error instanceof Error ? error.message : 'Could not save platform admin permissions.');
+    } finally { setPlatformAdminSaving(null); }
   };
 
   const handleToggleMerchantStatus = async (orgId: string, currentStatus: string) => {
@@ -359,17 +420,20 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
       {/* Navigation Tabs */}
       <div className="flex flex-wrap gap-1.5 bg-slate-100 dark:bg-slate-800/60 p-1.5 rounded-2xl border border-slate-200/80 dark:border-slate-800 text-xs font-bold">
         {[
-          { id: 'overview', label: '📊 Fleet Overview' },
-          { id: 'merchants', label: '🏪 Merchants Directory' },
-          { id: 'enquiries', label: '✉️ Website Enquiries' },
-          { id: 'builds', label: '📦 Windows Agent Builds' },
-          { id: 'plans', label: '💎 Plans & Quotas' },
-          { id: 'ledger', label: '📒 Financial Ledger' },
-          { id: 'agents', label: '🖨️ Edge Agents Fleet' },
-          { id: 'incidents', label: '🚨 Incident Response' },
-          { id: 'retention', label: '🧹 Storage & Retention' },
-          { id: 'audit', label: '🛡️ Audit Logs' },
-          { id: 'config', label: '⚙️ Runtime Rules' },
+          ...(hasPlatformPermission('platform:view') ? [
+            { id: 'overview', label: '📊 Fleet Overview' },
+            { id: 'merchants', label: '🏪 Merchants Directory' },
+            { id: 'builds', label: '📦 Windows Agent Builds' },
+            { id: 'agents', label: '🖨️ Edge Agents Fleet' },
+            { id: 'incidents', label: '🚨 Incident Response' },
+            { id: 'retention', label: '🧹 Storage & Retention' },
+          ] : []),
+          ...(hasPlatformPermission('platform:view') && hasPlatformPermission('billing:view') ? [{ id: 'plans', label: '💎 Plans & Quotas' }] : []),
+          ...(hasPlatformPermission('support:view') ? [{ id: 'enquiries', label: '✉️ Website Enquiries' }] : []),
+          ...(hasPlatformPermission('finance:view') ? [{ id: 'ledger', label: '📒 Financial Ledger' }] : []),
+          ...(hasPlatformPermission('security:audit') ? [{ id: 'audit', label: '🛡️ Audit Logs' }] : []),
+          ...(isPlatformOwner ? [{ id: 'access', label: '🔐 Platform Access' }] : []),
+          ...(isPlatformOwner ? [{ id: 'config', label: '⚙️ Runtime Rules' }] : []),
         ].map((tab) => (
           <button
             key={tab.id}
@@ -385,6 +449,12 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
           </button>
         ))}
       </div>
+
+      {platformAccessReady && !isPlatformOwner && !currentPermissions.length && (
+        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100" role="status">
+          Your platform account has no feature permissions yet. Ask a platform owner to assign the access needed for your work.
+        </section>
+      )}
 
       {/* ═══════════════════════════════════════════════════════════════
           TAB 1: OVERVIEW & FLEET METRICS
@@ -991,6 +1061,35 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
             </table>
           </div>
         </div>
+      )}
+
+      {activeTab === 'access' && isPlatformOwner && (
+        <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+          <div>
+            <h2 className="text-base font-extrabold text-slate-900 dark:text-white">Platform administrator access</h2>
+            <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-500 dark:text-slate-400">Platform permissions are separate from merchant roles. Changes are audited and take effect on the administrator’s next request.</p>
+          </div>
+          {platformAdminError && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-200">{platformAdminError}</p>}
+          {platformAdminLoading ? <p className="py-8 text-center text-sm text-slate-500">Loading platform administrators…</p>
+            : platformAdmins.length === 0 ? <p className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500 dark:border-slate-700">No platform administrator accounts are provisioned. Ask a platform owner to provision an account before assigning access.</p>
+              : <div className="space-y-4">{platformAdmins.map((admin) => {
+                const draft = platformAdminDrafts[admin.id] || [];
+                const unchanged = JSON.stringify([...draft].sort()) === JSON.stringify([...(admin.permissions || [])].sort());
+                return <article key={admin.id} className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div><h3 className="text-sm font-bold text-slate-900 dark:text-white">{admin.fullName}</h3><p className="text-xs text-slate-500">{admin.email} · {admin.isActive ? 'Active' : 'Inactive'}</p></div>
+                    <button type="button" disabled={unchanged || platformAdminSaving === admin.id || !admin.isActive} onClick={() => void savePlatformAdminPermissions(admin.id)} className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">{platformAdminSaving === admin.id ? 'Saving…' : 'Save access'}</button>
+                  </div>
+                  <fieldset disabled={!admin.isActive || platformAdminSaving === admin.id} className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    <legend className="sr-only">Permissions for {admin.email}</legend>
+                    {PLATFORM_PERMISSION_OPTIONS.map((permission) => <label key={permission} className="flex min-h-10 items-center gap-2 rounded-lg bg-slate-50 px-3 text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                      <input type="checkbox" checked={draft.includes(permission)} onChange={(event) => setPlatformAdminDrafts((current) => ({ ...current, [admin.id]: event.target.checked ? [...draft, permission] : draft.filter((item) => item !== permission) }))} />
+                      <span>{permission}</span>
+                    </label>)}
+                  </fieldset>
+                </article>;
+              })}</div>}
+        </section>
       )}
 
       {/* ═══════════════════════════════════════════════════════════════

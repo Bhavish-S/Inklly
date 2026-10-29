@@ -65,6 +65,10 @@ const ALLOWED_PLAN_STATUSES = new Set([
   'TRIAL', 'ACTIVE', 'GRACE', 'PAST_DUE', 'CANCELLED', 'SUSPENDED', 'PENDING_PAYMENT',
 ]);
 
+export const PLATFORM_ADMIN_PERMISSION_OPTIONS = [
+  'platform:view', 'platform:manage', 'support:view', 'finance:view', 'security:audit', 'billing:view', 'billing:manage',
+] as const;
+
 export class AdminController {
   private readonly pilotBilling: PilotBillingService;
 
@@ -75,6 +79,65 @@ export class AdminController {
     private enquiryRepo: EnquiryRepository,
     private fileStorage: PrivateFileStorage
   ) { this.pilotBilling = new PilotBillingService(db); }
+
+  public listPlatformAdmins = (_req: Request, res: Response) => {
+    const rows = this.db.query<any>(
+      `SELECT u.id, u.email, u.full_name, u.is_active, u.created_at, p.permission
+       FROM users u LEFT JOIN platform_admin_permissions p ON p.user_id = u.id
+       WHERE u.role = 'PLATFORM_ADMIN'
+       ORDER BY u.created_at ASC, u.id ASC, p.permission ASC`
+    );
+    const admins = new Map<string, any>();
+    for (const row of rows) {
+      if (!admins.has(row.id)) admins.set(row.id, {
+        id: row.id, email: row.email, fullName: row.full_name,
+        isActive: Boolean(row.is_active), createdAt: row.created_at, permissions: [],
+      });
+      if (typeof row.permission === 'string') admins.get(row.id).permissions.push(row.permission);
+    }
+    return res.json([...admins.values()]);
+  };
+
+  public updatePlatformAdminPermissions = (req: Request, res: Response) => {
+    const requested = req.body?.permissions;
+    const allowed = new Set<string>(PLATFORM_ADMIN_PERMISSION_OPTIONS);
+    if (!Array.isArray(requested) || requested.length > allowed.size ||
+        !requested.every((permission: unknown) => typeof permission === 'string' && allowed.has(permission)) ||
+        new Set(requested).size !== requested.length) {
+      return res.status(400).json({ error: 'permissions must be a unique list of supported platform permissions.' });
+    }
+    const targetId = String(req.params.id || '');
+    const actorId = req.user?.userId;
+    if (!actorId) return res.status(401).json({ error: 'Unauthenticated' });
+    const target = this.db.queryOne<any>(`SELECT id, role FROM users WHERE id = ?`, [targetId]);
+    if (!target || target.role !== 'PLATFORM_ADMIN') return res.status(404).json({ error: 'Platform admin not found.' });
+
+    const nextPermissions = [...requested].sort();
+    const previousPermissions = this.db.query<{ permission: string }>(
+      `SELECT permission FROM platform_admin_permissions WHERE user_id = ? ORDER BY permission`, [targetId]
+    ).map((row) => row.permission);
+    if (JSON.stringify(previousPermissions) === JSON.stringify(nextPermissions)) {
+      return res.json({ success: true, adminId: targetId, permissions: nextPermissions, unchanged: true });
+    }
+
+    const now = new Date().toISOString();
+    this.db.transaction(() => {
+      this.db.execute(`DELETE FROM platform_admin_permissions WHERE user_id = ?`, [targetId]);
+      for (const permission of nextPermissions) {
+        this.db.execute(
+          `INSERT INTO platform_admin_permissions (user_id, permission, granted_by_user_id, granted_at) VALUES (?, ?, ?, ?)`,
+          [targetId, permission, actorId, now]
+        );
+      }
+      this.userRepo.logAuditEvent({
+        id: crypto.randomUUID(), actorUserId: actorId, actorRole: req.user?.role,
+        action: 'PLATFORM_ADMIN_PERMISSIONS_UPDATED', targetType: 'USER', targetId,
+        outcome: 'SUCCESS', ipAddress: req.ip,
+        details: { previousPermissions, nextPermissions }, createdAt: now,
+      });
+    });
+    return res.json({ success: true, adminId: targetId, permissions: nextPermissions, unchanged: false });
+  };
 
   public getOverview = (req: Request, res: Response) => {
     const orgs = this.db.query<any>(`SELECT COUNT(*) as count FROM organizations`);
