@@ -39,7 +39,7 @@ WhatsApp Cloud API onboarding and message delivery are unavailable. The merchant
 
 ## Deployment and integration limits
 
-- GitHub `main` contains code commits through `b6ccef9`; Vercel reports successful deployment for `aa3d8a7` and skips server-only `b6ccef9` as frontend-unaffected. Render still responds without a `revision` and serves a seven-path OpenAPI document, while current source documents a broader API. No Render CLI, API credential, MCP deployment tool, or browser dashboard session is available here, and the last supplied startup log lacked required private-storage configuration.
+- GitHub `main` contains code through `9e28716`; GitHub reports a successful Vercel deployment for that commit. Render still responds without a `revision` and serves a seven-path OpenAPI document, while current source documents a broader API. No Render CLI, API credential, MCP deployment tool, or browser dashboard session is available here, and the last supplied startup log lacked required private-storage configuration.
 - The latest Render log connected to Supabase PostgreSQL and then exited because Supabase Storage settings are missing or invalid. The current source reports the specific invalid settings; the supplied deployed log has an older generic error, so its revision is unverified.
 - Supabase Storage tests mock the HTTP API. Live bucket permissions and file retention have not been verified against the production project.
 - Razorpay tests use test doubles; a live sandbox checkout/webhook round trip has not been verified here.
