@@ -199,8 +199,20 @@ export class OrderRepository {
     return this.hydrateOrder(row);
   }
 
+  public getOrderByIdForShop(id: string, shopId: string): Order | null {
+    const row = this.db.queryOne<any>(`SELECT * FROM orders WHERE id = ? AND shop_id = ?`, [id, shopId]);
+    if (!row) return null;
+    return this.hydrateOrder(row);
+  }
+
   public getOrderByNumber(orderNumber: string): Order | null {
     const row = this.db.queryOne<any>(`SELECT * FROM orders WHERE order_number = ?`, [orderNumber]);
+    if (!row) return null;
+    return this.hydrateOrder(row);
+  }
+
+  public getOrderByNumberForShop(orderNumber: string, shopId: string): Order | null {
+    const row = this.db.queryOne<any>(`SELECT * FROM orders WHERE order_number = ? AND shop_id = ?`, [orderNumber, shopId]);
     if (!row) return null;
     return this.hydrateOrder(row);
   }

@@ -195,18 +195,15 @@ describe('Milestone 1 Challenger Adversarial Stress Suite', { concurrency: false
   // ATTACK VECTOR 1: Cross-Tenant IDOR & Tenancy Boundaries
   // =========================================================================
   describe('Adversarial IDOR & Multi-Tenant Attack Scenarios', { concurrency: false }, () => {
-    it('IDOR 1.1: Tenant 2 cannot read Tenant 1 order via GET /orders/:id (HTTP 403 Forbidden)', async () => {
+    it('IDOR 1.1: Tenant 2 cannot distinguish Tenant 1 order from a missing order', async () => {
       const res = await fetch(`${baseUrl}/api/v1/merchant/orders/${tenant1OrderId}`, {
         headers: { Authorization: `Bearer ${tenant2Token}` },
       });
-      assert.equal(res.status, 403);
-      const data = await res.json();
-      assert.ok(data.error.includes('Tenant isolation violation'));
-      assert.equal(data.requestedShopId, tenant1ShopId);
-      assert.equal(data.userShopId, tenant2ShopId);
+      assert.equal(res.status, 404);
+      assert.deepEqual(await res.json(), { error: 'Order not found' });
     });
 
-    it('IDOR 1.2: Tenant 2 cannot mutate Tenant 1 order status via PATCH /orders/:id/status (HTTP 403 Forbidden)', async () => {
+    it('IDOR 1.2: Tenant 2 cannot mutate Tenant 1 order status or learn its existence', async () => {
       const res = await fetch(`${baseUrl}/api/v1/merchant/orders/${tenant1OrderId}/status`, {
         method: 'PATCH',
         headers: {
@@ -215,21 +212,17 @@ describe('Milestone 1 Challenger Adversarial Stress Suite', { concurrency: false
         },
         body: JSON.stringify({ status: 'COLLECTED' }),
       });
-      assert.equal(res.status, 403);
-      const data = await res.json();
-      assert.ok(data.error.includes('Tenant isolation violation'));
-      assert.ok(data.error.includes('Cannot modify order belonging to another shop'));
+      assert.equal(res.status, 404);
+      assert.deepEqual(await res.json(), { error: 'Order not found' });
     });
 
-    it('IDOR 1.3: Tenant 2 cannot trigger print dispatch on Tenant 1 order via POST /orders/:id/print (HTTP 403 Forbidden)', async () => {
+    it('IDOR 1.3: Tenant 2 cannot trigger print dispatch or learn foreign order existence', async () => {
       const res = await fetch(`${baseUrl}/api/v1/merchant/orders/${tenant1OrderId}/print`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${tenant2Token}` },
       });
-      assert.equal(res.status, 403);
-      const data = await res.json();
-      assert.ok(data.error.includes('Tenant isolation violation'));
-      assert.ok(data.error.includes('Cannot print order belonging to another shop'));
+      assert.equal(res.status, 404);
+      assert.deepEqual(await res.json(), { error: 'Order not found' });
     });
 
     it('IDOR 1.4: Tenant 2 cannot collect cash for Tenant 1 order via POST /payments/orders/:id/collect-cash (HTTP 403 Forbidden)', async () => {

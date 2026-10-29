@@ -2513,7 +2513,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.ok(expiredBody.error.includes('expired') || expiredBody.error.includes('Invalid'));
   });
 
-  it('Enforces cross-tenant isolation: blocks foreign shop query, header spoofing, and order tampering with HTTP 403', async () => {
+  it('Enforces cross-tenant isolation without exposing foreign order existence or file content', async () => {
     // 1. Cross-tenant query param tampering
     const foreignQueryRes = await fetch(`${baseUrl}/api/v1/merchant/dashboard?shopId=shop-other-tenant`, {
       headers: { Authorization: `Bearer ${merchantToken}` },
@@ -2592,21 +2592,25 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     });
     assert.equal(ownerDeleteVault.status, 200);
 
-    // 4. Fetch Tenant 1's order to get its real ID
-    const ordersRes = await fetch(`${baseUrl}/api/v1/merchant/orders`, {
-      headers: { Authorization: `Bearer ${merchantToken}` },
-    });
-    const orders = await ordersRes.json();
-    const tenant1OrderId = orders[0]?.id;
-    assert.ok(tenant1OrderId);
+    const tenant1OrderId = cashOrderId;
+    const tenant1Order = db.queryOne<any>(`SELECT order_number FROM orders WHERE id = ?`, [tenant1OrderId]);
+    const tenant1File = db.queryOne<any>(`SELECT id FROM order_files WHERE order_id = ?`, [tenant1OrderId]);
+    assert.ok(tenant1Order?.order_number);
+    assert.ok(tenant1File?.id);
 
-    // 5. Tenant 2 attempts to inspect Tenant 1's order
+    // Foreign identifiers are indistinguishable from nonexistent identifiers.
     const getOrderRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${tenant1OrderId}`, {
       headers: { Authorization: `Bearer ${tenant2Token}` },
     });
-    assert.equal(getOrderRes.status, 403);
+    assert.equal(getOrderRes.status, 404);
+    const foreignOrderBody = await getOrderRes.json() as any;
+    assert.deepEqual(foreignOrderBody, { error: 'Order not found' });
+    const foreignOrderNumber = await fetch(`${baseUrl}/api/v1/merchant/orders/${encodeURIComponent(tenant1Order.order_number)}`, {
+      headers: { Authorization: `Bearer ${tenant2Token}` },
+    });
+    assert.equal(foreignOrderNumber.status, 404);
 
-    // 6. Tenant 2 attempts to tamper with Tenant 1's order status
+    // Foreign mutation routes fail before exposing state or changing records.
     const tamperRes = await fetch(`${baseUrl}/api/v1/merchant/orders/${tenant1OrderId}/status`, {
       method: 'PATCH',
       headers: {
@@ -2615,9 +2619,32 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       },
       body: JSON.stringify({ status: 'COLLECTED' }),
     });
-    assert.equal(tamperRes.status, 403);
+    assert.equal(tamperRes.status, 404);
+    const foreignPrint = await fetch(`${baseUrl}/api/v1/merchant/orders/${tenant1OrderId}/print`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tenant2Token}` }, body: JSON.stringify({}),
+    });
+    assert.equal(foreignPrint.status, 404);
+    const foreignReconcile = await fetch(`${baseUrl}/api/v1/merchant/orders/${tenant1OrderId}/reconcile-output`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tenant2Token}` },
+      body: JSON.stringify({ physicalOutputConfirmed: true, reason: 'Inspected the completed output at the counter.' }),
+    });
+    assert.equal(foreignReconcile.status, 404);
 
-    // 7. Tenant 2 attempts to collect cash for Tenant 1's order
+    const foreignFile = await fetch(`${baseUrl}/api/v1/merchant/orders/${tenant1OrderId}/files/${tenant1File.id}`, {
+      headers: { Authorization: `Bearer ${tenant2Token}` },
+    });
+    assert.equal(foreignFile.status, 404);
+    assert.equal(foreignFile.headers.get('cache-control'), null);
+    const authorizedFile = await fetch(`${baseUrl}/api/v1/merchant/orders/${tenant1OrderId}/files/${tenant1File.id}`, {
+      headers: { Authorization: `Bearer ${merchantToken}` },
+    });
+    assert.equal(authorizedFile.status, 200);
+    assert.equal(authorizedFile.headers.get('cache-control'), 'private, no-store');
+    assert.equal(authorizedFile.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(authorizedFile.headers.get('content-type'), 'application/pdf');
+    assert.ok(Buffer.from(await authorizedFile.arrayBuffer()).subarray(0, 5).equals(Buffer.from('%PDF-')));
+
+    // Payment endpoints retain their own tenant authorization boundary.
     const cashRes = await fetch(`${baseUrl}/api/v1/payments/orders/${tenant1OrderId}/collect-cash`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${tenant2Token}` },

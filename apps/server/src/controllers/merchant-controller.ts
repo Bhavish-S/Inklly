@@ -62,6 +62,15 @@ export class MerchantController {
     return req.user?.shopId || (req.query.shopId as string) || (req.headers['x-shop-id'] as string) || '';
   }
 
+  private getOrderForAuthenticatedMerchant(idOrNumber: string, req: Request, allowOrderNumber = false) {
+    if (req.user?.role === 'PLATFORM_OWNER' || req.user?.role === 'PLATFORM_ADMIN') {
+      return this.orderRepo.getOrderById(idOrNumber) || (allowOrderNumber ? this.orderRepo.getOrderByNumber(idOrNumber) : null);
+    }
+    const shopId = req.user?.shopId;
+    if (!shopId) return null;
+    return this.orderRepo.getOrderByIdForShop(idOrNumber, shopId) || (allowOrderNumber ? this.orderRepo.getOrderByNumberForShop(idOrNumber, shopId) : null);
+  }
+
   public createAgentPairingCode = (req: Request, res: Response) => {
     const shopId = req.user?.shopId;
     if (!shopId) return res.status(403).json({ error: 'Shop owner account required' });
@@ -172,25 +181,10 @@ export class MerchantController {
 
   public getOrderById = (req: Request, res: Response) => {
     const id = String(req.params.id);
-    const order = this.orderRepo.getOrderById(id) || this.orderRepo.getOrderByNumber(id);
+    const order = this.getOrderForAuthenticatedMerchant(id, req, true);
     if (!order) {
       return res.status(404).json({ error: 'Order not found' });
     }
-
-    const effectiveShopId = this.getShopId(req);
-    if (
-      req.user?.role !== 'PLATFORM_OWNER' &&
-      req.user?.role !== 'PLATFORM_ADMIN' &&
-      effectiveShopId &&
-      order.shopId !== effectiveShopId
-    ) {
-      return res.status(403).json({
-        error: 'Tenant isolation violation: Cross-tenant access denied',
-        requestedShopId: order.shopId,
-        userShopId: effectiveShopId,
-      });
-    }
-
     res.json(this.presentOrder(order));
   };
 
@@ -202,23 +196,9 @@ export class MerchantController {
       return res.status(400).json({ error: 'Status is required' });
     }
 
-    const order = this.orderRepo.getOrderById(id);
+    const order = this.getOrderForAuthenticatedMerchant(id, req);
     if (!order) {
       return res.status(404).json({ error: 'Order not found' });
-    }
-
-    const effectiveShopId = this.getShopId(req);
-    if (
-      req.user?.role !== 'PLATFORM_OWNER' &&
-      req.user?.role !== 'PLATFORM_ADMIN' &&
-      effectiveShopId &&
-      order.shopId !== effectiveShopId
-    ) {
-      return res.status(403).json({
-        error: 'Tenant isolation violation: Cannot modify order belonging to another shop',
-        requestedShopId: order.shopId,
-        userShopId: effectiveShopId,
-      });
     }
 
     const targetStatus = (status === 'COMPLETED' ? 'COLLECTED' : status) as OrderStatus;
@@ -234,7 +214,7 @@ export class MerchantController {
     }
     try {
       this.orderRepo.updateOrderStatus(id, targetStatus);
-      const updated = this.orderRepo.getOrderById(id);
+      const updated = this.getOrderForAuthenticatedMerchant(id, req);
       res.json({ success: true, order: updated });
     } catch (err: any) {
       res.status(422).json({ error: err.message });
@@ -250,8 +230,8 @@ export class MerchantController {
       return res.status(400).json({ error: 'Confirm that you physically inspected the complete output and provide a 10–500 character note.' });
     }
 
-    const order = this.orderRepo.getOrderById(orderId);
-    if (!order || order.shopId !== shopId) return res.status(404).json({ error: 'Order not found.' });
+    const order = this.orderRepo.getOrderByIdForShop(orderId, shopId);
+    if (!order) return res.status(404).json({ error: 'Order not found.' });
     if (order.paymentMethod === 'ONLINE_RAZORPAY' && order.paymentStatus !== 'VERIFIED') {
       return res.status(409).json({ error: 'Online payment must be verified before print output can be reconciled.' });
     }
@@ -324,7 +304,7 @@ export class MerchantController {
           details: { confirmationSource: 'OPERATOR_PHYSICAL_INSPECTION', physicalOutputConfirmed: true, confirmedSides, usageMeter: 'selected document pages multiplied by copies', reason, changedJobs },
           createdAt: now,
         });
-        return { order: this.orderRepo.getOrderById(orderId), reconciledJobs: changedJobs.length, confirmedSides };
+        return { order: this.orderRepo.getOrderByIdForShop(orderId, shopId), reconciledJobs: changedJobs.length, confirmedSides };
       });
       return res.json({ success: true, ...result });
     } catch (error: any) {
@@ -337,23 +317,9 @@ export class MerchantController {
 
   public printOrder = (req: Request, res: Response) => {
     const id = String(req.params.id);
-    const order = this.orderRepo.getOrderById(id);
+    const order = this.getOrderForAuthenticatedMerchant(id, req);
     if (!order) {
       return res.status(404).json({ error: 'Order not found' });
-    }
-
-    const effectiveShopId = this.getShopId(req);
-    if (
-      req.user?.role !== 'PLATFORM_OWNER' &&
-      req.user?.role !== 'PLATFORM_ADMIN' &&
-      effectiveShopId &&
-      order.shopId !== effectiveShopId
-    ) {
-      return res.status(403).json({
-        error: 'Tenant isolation violation: Cannot print order belonging to another shop',
-        requestedShopId: order.shopId,
-        userShopId: effectiveShopId,
-      });
     }
 
     if (order.paymentMethod === 'ONLINE_RAZORPAY' && order.paymentStatus !== 'VERIFIED') {
@@ -390,7 +356,7 @@ export class MerchantController {
         this.orderRepo.updateOrderStatus(id, 'IN_PROGRESS');
       });
 
-      const updated = this.orderRepo.getOrderById(id);
+      const updated = this.getOrderForAuthenticatedMerchant(id, req);
       res.json({ success: true, message: `Print jobs queued for ${printer.name}.`, printerId: printer.id, order: updated });
     } catch (err: any) {
       if (typeof err?.message === 'string' && err.message.startsWith('PRINT_DISPATCH_CONFLICT:')) {
