@@ -2897,16 +2897,23 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.ok(Number.isInteger(body.balancePaise));
   });
 
-  it('Purchases credits for a shop', async () => {
+  it('rejects credit top-ups until provider-backed purchase is configured without changing balance', async () => {
+    const headers = { Authorization: `Bearer ${merchantToken}` };
+    const before = await fetch(`${baseUrl}/api/v1/merchant/credits/balance`, { headers });
+    assert.equal(before.status, 200);
+    const balanceBefore = (await before.json() as any).balancePaise;
     const res = await fetch(`${baseUrl}/api/v1/merchant/credits/purchase`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${merchantToken}`,
+        ...headers,
       },
       body: JSON.stringify({ amountPaise: 5000, paymentMethod: 'MANUAL_CASH' }),
     });
     assert.equal(res.status, 503);
+    assert.match((await res.json() as any).error, /No payment was accepted and no credits were added/i);
+    const after = await fetch(`${baseUrl}/api/v1/merchant/credits/balance`, { headers });
+    assert.equal((await after.json() as any).balancePaise, balanceBefore);
   });
 
   // ─── MILESTONE 5: PAYOUTS ───

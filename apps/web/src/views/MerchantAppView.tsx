@@ -391,9 +391,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [physicalOutputConfirmed, setPhysicalOutputConfirmed] = useState(false);
   const [reconcilingOutput, setReconcilingOutput] = useState(false);
 
-  // Credits state
-  const [creditQuantity, setCreditQuantity] = useState<number>(100);
-
   // Withdraw state
   const [withdrawMethod, setWithdrawMethod] = useState<'upi' | 'bank'>('upi');
   const [withdrawAmount, setWithdrawAmount] = useState<string>('');
@@ -784,10 +781,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
 
   // WhatsApp State
 
-  // Credits State
-  const [creditsRemaining, setCreditsRemaining] = useState<number>(50);
-  const [creditsUsed, setCreditsUsed] = useState<number>(12);
-  const [creditsPurchased, setCreditsPurchased] = useState<number>(0);
   const [subscriptionUsage, setSubscriptionUsage] = useState<{ periodStart: string; periodEnd: string; confirmedOrders: number; confirmedSides: number } | null>(null);
   const [subscriptionUsageError, setSubscriptionUsageError] = useState('');
   const [subscriptionUsageLoading, setSubscriptionUsageLoading] = useState(false);
@@ -800,7 +793,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [subscriptionPlanId, setSubscriptionPlanId] = useState('plan-starter');
   const subscriptionCheckoutIdempotencyKey = useRef<string | null>(null);
   const [collectingOrder, setCollectingOrder] = useState(false);
-  const [creditPurchaseToast, setCreditPurchaseToast] = useState<string | null>(null);
 
   // Withdraw State
   const [withdrawAvailable, setWithdrawAvailable] = useState<number>(4753.0);
@@ -1331,13 +1323,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     setSelectedOrder(null);
   };
 
-  const handlePurchaseCredits = (qty: number) => {
-    setCreditsRemaining((prev) => prev + qty);
-    setCreditsPurchased((prev) => prev + qty);
-    setCreditPurchaseToast(`Payment verified! Added ${qty} conversion credits. New balance: ${creditsRemaining + qty}`);
-    setTimeout(() => setCreditPurchaseToast(null), 4000);
-  };
-
   // Tour Management Handlers
   const TOUR_STEPS = [
     {
@@ -1724,7 +1709,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     { id: 'live_print', label: 'Live Print', icon: <WifiIcon size={18} /> },
     { id: 'whatsapp_setup', label: 'WhatsApp Setup', icon: <WhatsAppIcon size={18} /> },
     { id: 'storage', label: 'Storage', icon: <StoreIcon size={18} /> },
-    { id: 'credits', label: 'Credits', icon: <DollarSignIcon size={18} /> },
+    { id: 'credits', label: 'Billing & usage', icon: <DollarSignIcon size={18} /> },
     { id: 'withdraw', label: 'Withdraw', icon: <IndianRupeeIcon size={18} /> },
     { id: 'referrals', label: 'Referrals', icon: <UsersIcon size={18} /> },
     { id: 'employees', label: 'Employees', icon: <UsersIcon size={18} /> },
@@ -3210,123 +3195,8 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
         )}
 
         {/* ─────────────────────────────────────────────────────────────
-    VIEW 6: CREDITS
+    VIEW 6: BILLING & USAGE
 ───────────────────────────────────────────────────────────── */}
-{false && activeView === 'credits' && (
-  <div className="p-6 max-w-5xl w-full mx-auto space-y-6 animate-fadeIn">
-    <div className="flex justify-between items-center pb-2 border-b border-gray-100 dark:border-gray-800">
-      <div>
-        <span className="text-[10px] font-bold uppercase tracking-wider text-[#4D64E6] block">YOUR PLAN</span>
-        <h2 className="text-xl font-extrabold text-[#172031] dark:text-white">Conversion credits</h2>
-        <p className="text-xs text-gray-400">Credits are used by document conversion during your current billing period.</p>
-      </div>
-      <button
-        type="button"
-        onClick={() => triggerSaveNotification('Credits balance refreshed')}
-        className="p-2 border border-gray-200 dark:border-gray-700 rounded-xl text-xs hover:bg-gray-50 text-gray-500"
-      >
-        🔄
-      </button>
-    </div>
-
-    {creditPurchaseToast && (
-      <div className="p-3 bg-green-50 dark:bg-green-950/50 border border-green-200 dark:border-green-800 rounded-xl text-xs font-semibold text-green-800 dark:text-green-200 shadow-xs animate-fadeIn">
-        ✓ {creditPurchaseToast}
-      </div>
-    )}
-
-    {/* 4 Stat Cards */}
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-      <div className="p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl shadow-xs">
-        <div className="text-xs font-bold text-gray-400">Remaining</div>
-        <div className="text-2xl font-black text-gray-900 dark:text-white mt-1">50</div>
-      </div>
-      <div className="p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl shadow-xs">
-        <div className="text-xs font-bold text-gray-400">Used</div>
-        <div className="text-2xl font-black text-gray-900 dark:text-white mt-1">0</div>
-      </div>
-      <div className="p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl shadow-xs">
-        <div className="text-xs font-bold text-gray-400">Included in plan</div>
-        <div className="text-2xl font-black text-gray-900 dark:text-white mt-1">50</div>
-      </div>
-      <div className="p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl shadow-xs">
-        <div className="text-xs font-bold text-gray-400">Purchased</div>
-        <div className="text-2xl font-black text-gray-900 dark:text-white mt-1">0</div>
-      </div>
-    </div>
-
-    <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
-      {/* Add more credits card */}
-      <div className="md:col-span-7 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-6 shadow-xs space-y-4">
-        <div className="flex items-center gap-3 border-b pb-3">
-          <div className="w-9 h-9 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-sm">
-            🔗
-          </div>
-          <div>
-            <h3 className="font-extrabold text-sm text-[#172031] dark:text-white">Add more credits</h3>
-            <p className="text-[11px] text-gray-400">₹1.00 per credit, configured for Starter.</p>
-          </div>
-        </div>
-
-        {/* Quantity Pills */}
-        <div className="flex gap-2">
-          {[100, 500, 1000, 5000].map((qty) => (
-            <button
-              key={qty}
-              type="button"
-              onClick={() => setCreditQuantity(qty)}
-              className={`px-4 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
-                creditQuantity === qty
-                  ? 'bg-[#4D64E6] text-white border-[#4D64E6] shadow-xs'
-                  : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50'
-              }`}
-            >
-              {qty.toLocaleString()}
-            </button>
-          ))}
-        </div>
-
-        <div>
-          <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">Custom quantity</label>
-          <input
-            type="number"
-            value={creditQuantity}
-            onChange={(e) => setCreditQuantity(Math.max(1, parseInt(e.target.value) || 0))}
-            className="w-full px-3 py-2.5 border border-gray-200 dark:border-gray-700 rounded-xl text-xs bg-white dark:bg-gray-900 font-bold"
-          />
-        </div>
-
-        <div className="flex justify-between items-center p-3.5 bg-gray-50 dark:bg-gray-900 rounded-xl text-xs font-bold">
-          <span className="text-gray-600 dark:text-gray-400">Payment total</span>
-          <span className="text-base font-black text-gray-900 dark:text-white">₹{creditQuantity}.00</span>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => handlePurchaseCredits(creditQuantity)}
-          className="w-full py-3 bg-[#4D64E6] hover:bg-[#3D52D5] text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2"
-        >
-          <span>🔗</span> Pay and add credits
-        </button>
-      </div>
-
-      {/* Credit policy card */}
-      <div className="md:col-span-5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-6 space-y-3 text-xs text-gray-500 shadow-xs">
-        <div className="flex items-center gap-2 border-b pb-2">
-          <span className="text-emerald-500 font-bold text-base">🛡️</span>
-          <h3 className="font-extrabold text-sm text-[#172031] dark:text-white">Credit policy</h3>
-        </div>
-        <p className="leading-relaxed">Plan and purchased credits apply to the current billing period.</p>
-        <p className="leading-relaxed">Payment verification is idempotent; the same Razorpay order cannot add credits twice.</p>
-        <p className="leading-relaxed">Unused purchased credits expire when the current billing period ends.</p>
-        <div className="pt-2 text-[11px] text-gray-400 border-t border-gray-100 dark:border-gray-700">
-          Period ends 11/23/2026, 12:00:00 AM.
-        </div>
-      </div>
-    </div>
-  </div>
-)}
-
 {activeView === 'credits' && (
   <section className="mx-auto my-10 max-w-3xl rounded-2xl border border-slate-200 bg-white p-8 shadow-sm dark:border-slate-700 dark:bg-slate-900">
     <p className="text-xs font-bold uppercase tracking-wider text-indigo-600">Pilot billing</p>
