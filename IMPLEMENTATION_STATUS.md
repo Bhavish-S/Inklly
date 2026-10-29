@@ -9,6 +9,7 @@ Use `BUILD_AND_TEST_RESULTS.md` for the latest executed checks and `REMAINING_IS
 - **Customer ordering:** shop lookup, private upload path, server-side file inspection, quote generation in integer Paise, stale quote confirmation, order persistence, and idempotent retry when the client supplies a stable key.
 - **Accepted pricing and rate integrity:** order rows persist the calculated quote plus the exact rate and discount rules accepted at submission. Rate-rule updates use database uniqueness keys and atomic upserts so concurrent writes cannot create ambiguous prices. Existing duplicate pricing keys fail migration for manual reconciliation.
 - **Merchant API:** signed persisted sessions, active-user and current-membership checks, route permissions, tenant-scoped order search/filter/sort/pagination, private order-file authorization, rate-rule printer ownership, and order status/dispatch rules.
+- **Shop settings:** profile and operational settings now validate exact supported fields/types/enums and persist through the merchant settings route used by the UI; malformed truthy strings and unknown keys are rejected.
 - **Merchant dashboard:** status counts and recent orders come from tenant-scoped database queries; it no longer hydrates the complete order history to render its overview. Revenue is read from the payment ledger, not inferred from order state.
 - **Staff and onboarding:** owner-created shop staff and platform-created tenant owners receive hashed single-use activation tokens; staff remain inactive until password setup.
 - **Printer/agent safety:** agent-owned printer inventory, heartbeat freshness, dispatch to shop-owned queues, local durable outcome reporting, replay-safe dispatch IDs, and `OUTPUT_UNCERTAIN` handling are covered by local tests. The agent loopback endpoints are read-only and validate host/origin.
@@ -24,7 +25,7 @@ Use `BUILD_AND_TEST_RESULTS.md` for the latest executed checks and `REMAINING_IS
 
 ## Incomplete or unverified
 
-- Local work now includes changes after pushed commit `e26c2d6`; these edits are not yet pushed. Render still serves the older seven-path OpenAPI document, omits `revision`, and does not expose recent storage, print-reconciliation, or subscription usage routes. Vercel has not been confirmed for the current local frontend work.
+- Commit `5677b32` is pushed and Vercel's GitHub status is successful. Newer shop-settings changes are local and not yet pushed. Render still serves the older seven-path OpenAPI document, omits `revision`, and does not expose recent storage, print-reconciliation, or subscription usage routes.
 - PostgreSQL migration/startup against the live production project and Supabase private bucket behavior remain unverified.
 - Razorpay sandbox checkout and webhook round trip, refunds/reconciliation against provider statements, subscription checkout, configurable hybrid tariff collection, and quota enforcement are not verified or fully implemented. Usage counting alone is not billing.
 - Database migrations now install append-only ledger triggers and a unique provider-transaction index; local SQLite tests cover immutability, compensating entries, and duplicate rejection. Live Supabase migration, pre-existing duplicate review, role/owner bypass protection, and complete reconciliation remain open.
@@ -44,4 +45,4 @@ Use `BUILD_AND_TEST_RESULTS.md` for the latest executed checks and `REMAINING_IS
 
 ## Verification record
 
-For the current local snapshot, `npm run build` and `npm test` completed successfully after latest usage, collection, rate-upsert, and quote-snapshot changes. `npm audit --audit-level=high` timed out twice at the npm registry. Render still serves a stale API; Vercel serves an older frontend bundle. See `BUILD_AND_TEST_RESULTS.md` for the exact count and deployment checks.
+For the current local snapshot, `npm run build` and `npm test` completed successfully (206 tests) after usage, collection, refund rejection, rate-upsert, quote-snapshot, and settings changes. `npm audit --audit-level=high` timed out twice at the npm registry. Render still serves a stale API. See `BUILD_AND_TEST_RESULTS.md` for the deployment checks.

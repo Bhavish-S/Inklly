@@ -165,4 +165,4 @@ sequenceDiagram
 
 ## Current verification
 
-See [`BUILD_AND_TEST_RESULTS.md`](./BUILD_AND_TEST_RESULTS.md) for exact local build/test output and [`REMAINING_ISSUES.md`](./REMAINING_ISSUES.md) for deployment blockers. Latest local build and test run passed after product-flow updates. Current Render still serves an older API; Vercel's current bundle is also behind the latest local work. These checks do not establish live provider, PostgreSQL, object-storage, browser, or printer behavior.
+See [`BUILD_AND_TEST_RESULTS.md`](./BUILD_AND_TEST_RESULTS.md) for exact local build/test output and [`REMAINING_ISSUES.md`](./REMAINING_ISSUES.md) for deployment blockers. Latest local build and 206 tests pass. Vercel's deployment for `5677b32` succeeded; newer local settings work remains. Render still serves an older API. These checks do not establish live provider, PostgreSQL, object-storage, browser, or printer behavior.

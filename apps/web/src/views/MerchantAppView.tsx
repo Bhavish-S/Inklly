@@ -613,37 +613,15 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       const token = typeof window !== 'undefined' ? localStorage.getItem('inklly_token') : null;
       if (token) {
         // 1. Save Shop Details
-        try {
-          await api.updateShopSettings({
-            name: shopName,
-            phone: shopPhone,
-            address: shopAddress,
-            city: shopCity,
-            state: shopState,
-            pinCode: shopPincode,
-            tagline: shopTagline,
-          });
-        } catch {
-          // Direct fallback to PUT in case client PATCH is used
-          const isProduction = typeof window !== 'undefined' && !['localhost', '127.0.0.1'].includes(window.location.hostname);
-          const apiBase = (import.meta.env.VITE_API_BASE as string) || (isProduction ? 'https://inklly.onrender.com/api/v1' : 'http://localhost:4000/api/v1');
-          await fetch(`${apiBase}/merchant/settings`, {
-            method: 'PUT',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`,
-            },
-            body: JSON.stringify({
-              name: shopName,
-              phone: shopPhone,
-              address: shopAddress,
-              city: shopCity,
-              state: shopState,
-              pinCode: shopPincode,
-              tagline: shopTagline,
-            }),
-          });
-        }
+        await api.updateShopSettings({
+          name: shopName,
+          phone: shopPhone,
+          address: shopAddress,
+          city: shopCity,
+          state: shopState,
+          pinCode: shopPincode,
+          tagline: shopTagline,
+        });
 
         // 2. Save Rate Rules (Integer Paise conversion)
         const bwSimpPaise = Math.round(parseFloat(rateBwSingle || '2') * 100);

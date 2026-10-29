@@ -5,13 +5,13 @@
 ## Current local verification
 
 - `npm run build` — passed for database, shared, desktop agent, server, and web workspaces using Vite 6.4.5. The main JavaScript bundle is 1,175.82 kB minified (310.56 kB gzip) and triggers Vite's 500 kB chunk warning; the build completes successfully.
-- `npm test` — 205 passed, 0 failed: database 10, shared 13, agent 12, server 170.
+- `npm test` — 206 passed, 0 failed: database 10, shared 13, agent 12, server 171.
 - `npm audit --audit-level=high` — attempted twice; both requests to the npm advisory endpoint timed out, so no current audit result is available.
 - `npm run lint` — no root lint script is currently configured.
 
 The test suite covers deterministic Paise pricing, tenant boundaries, active-account and current-membership authorization, signed/revocable sessions, customer order and payment paths, private-storage behavior through a mocked Supabase API, merchant vault uploads/downloads/deletion/tenant isolation and retention, printer ownership migrations, append-only ledger enforcement and duplicate provider-transaction rejection, agent result persistence, dispatch replay/acknowledgment, expired handoff safety, paired-origin file downloads, crash-to-`OUTPUT_UNCERTAIN` recovery, developer-key scope validation/verifier redaction, and encrypted webhook-secret migration/storage.
 
-The latest local change set adds regression checks for append-only subscription usage, no cascade deletion of metering history, owner-only usage reads, idempotent physical-output metering, correct subscription OpenAPI middleware descriptions, immutable accepted quote/rate snapshots, atomic rate-rule upserts, ledger-backed cash collection from the active merchant workflow, and audited refund rejection without payment movement. The root build script now builds shared types before dependent workspaces; the build passed after moving aside the prior generated shared `dist` directory.
+The latest local change set adds regression checks for append-only subscription usage, no cascade deletion of metering history, owner-only usage reads, idempotent physical-output metering, correct subscription OpenAPI middleware descriptions, immutable accepted quote/rate snapshots, atomic rate-rule upserts, ledger-backed cash collection from the active merchant workflow, audited refund rejection without payment movement, and exact shop-settings validation/persistence. The root build script now builds shared types before dependent workspaces; the build passed after moving aside the prior generated shared `dist` directory.
 
 The print-release path now requires an online registered shop printer (or exactly one online default), assigns the target to every unassigned print job in the same transaction as order state changes, and excludes unassigned/offline targets from agent polling. Agent heartbeats synchronize inventory under the paired agent identity, so agents receive only their own queue's jobs. The Live Print screen and order printer selector consume API inventory instead of displaying sample devices. Printer discovery no longer invents HP/Canon devices. The agent reports spooler submission or uncertain output; only the authorized, audited merchant physical-output reconciliation can mark pages confirmed and make an order collectible.
 
@@ -27,7 +27,7 @@ WhatsApp Cloud API onboarding and message delivery are unavailable. The merchant
 
 ## Deployment and integration limits
 
-- At this verification snapshot, local changes are not pushed. Render still responds with the old seven-path API and no `revision`; it does not expose merchant storage, print-output reconciliation, or subscription usage routes. Vercel serves a bundle older than local source. No new deployment is verified. `/api/v1/portal/shop/campus1` previously returned HTTP 404; customer tenant availability remains unverified.
+- At this verification snapshot, commit `5677b32` is pushed and Vercel's GitHub deployment status is successful. Newer shop-settings changes are local. Render still responds with the old seven-path API and no `revision`; it does not expose merchant storage, print-output reconciliation, or subscription usage routes. `/api/v1/portal/shop/campus1` previously returned HTTP 404; customer tenant availability remains unverified.
 - The latest Render log connected to Supabase PostgreSQL and then exited because Supabase Storage settings are missing or invalid. The current source reports the specific invalid settings; the supplied deployed log has an older generic error, so its revision is unverified.
 - Supabase Storage tests mock the HTTP API. Live bucket permissions and file retention have not been verified against the production project.
 - Razorpay tests use test doubles; a live sandbox checkout/webhook round trip has not been verified here.

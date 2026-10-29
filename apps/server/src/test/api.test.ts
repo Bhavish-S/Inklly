@@ -412,6 +412,41 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     merchantToken = loginBody.token;
   });
 
+  it('validates shop settings and persists the profile fields used by the merchant form', async () => {
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` };
+    const before = await (await fetch(`${baseUrl}/api/v1/merchant/settings`, { headers })).json() as any;
+    const malformedBoolean = await fetch(`${baseUrl}/api/v1/merchant/settings`, {
+      method: 'PUT', headers, body: JSON.stringify({ acceptCashOnCollection: 'false' }),
+    });
+    assert.equal(malformedBoolean.status, 400);
+    assert.equal(db.queryOne<any>(`SELECT accept_cash_on_collection FROM shops WHERE id = 'shop-campus-1'`).accept_cash_on_collection, before.acceptCashOnCollection ? 1 : 0);
+
+    const invalidEnum = await fetch(`${baseUrl}/api/v1/merchant/settings`, {
+      method: 'PUT', headers, body: JSON.stringify({ autoPrintMode: 'PRINT_EVERYTHING_NOW' }),
+    });
+    assert.equal(invalidEnum.status, 400);
+    const unsupported = await fetch(`${baseUrl}/api/v1/merchant/settings`, {
+      method: 'PUT', headers, body: JSON.stringify({ email: 'silently-ignored@example.test' }),
+    });
+    assert.equal(unsupported.status, 400);
+
+    const saved = await fetch(`${baseUrl}/api/v1/merchant/settings`, {
+      method: 'PUT', headers,
+      body: JSON.stringify({ name: 'Campus Print Updated', phone: '+91 98765 43210', address: '100 Test Road', city: 'Pune', state: 'Maharashtra', pinCode: '411001', tagline: 'Fast test printing' }),
+    });
+    assert.equal(saved.status, 200, await saved.clone().text());
+    const savedBody = await saved.json() as any;
+    assert.equal(savedBody.shop.name, 'Campus Print Updated');
+    assert.equal(savedBody.shop.address, '100 Test Road');
+    assert.equal(savedBody.shop.pinCode, '411001');
+
+    const restore = await fetch(`${baseUrl}/api/v1/merchant/settings`, {
+      method: 'PUT', headers,
+      body: JSON.stringify({ name: before.name, phone: before.phone, address: before.address, city: before.city, state: before.state, pinCode: before.pinCode, tagline: before.tagline || '' }),
+    });
+    assert.equal(restore.status, 200);
+  });
+
   it('does not create a simulated WhatsApp pairing or save unencrypted Meta settings', async () => {
     const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` };
     const setup = await fetch(`${baseUrl}/api/v1/merchant/whatsapp/setup`, { headers });

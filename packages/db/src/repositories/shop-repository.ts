@@ -88,28 +88,49 @@ export class ShopRepository {
 
   public updateShopSettings(
     shopId: string,
-    updates: Partial<Pick<Shop, 'paymentGateway' | 'acceptCashOnCollection' | 'autoPrintMode' | 'orderSeparator'>>
+    updates: Partial<Pick<Shop, 'name' | 'tagline' | 'phone' | 'address' | 'city' | 'state' | 'pinCode' | 'paymentGateway' | 'acceptCashOnCollection' | 'autoPrintMode' | 'orderSeparator'>>
   ): void {
     const current = this.getShopById(shopId);
     if (!current) throw new Error('Shop not found');
+    if (!updates || typeof updates !== 'object' || Array.isArray(updates)) throw new Error('Settings payload must be an object.');
+    const allowedFields = new Set(['name', 'tagline', 'phone', 'address', 'city', 'state', 'pinCode', 'paymentGateway', 'acceptCashOnCollection', 'autoPrintMode', 'orderSeparator']);
+    const keys = Object.keys(updates);
+    if (!keys.length) throw new Error('At least one supported setting is required.');
+    const unsupported = keys.find((key) => !allowedFields.has(key));
+    if (unsupported) throw new Error(`Unsupported shop setting: ${unsupported}.`);
 
-    this.db.execute(
-      `UPDATE shops SET
-        payment_gateway = COALESCE(?, payment_gateway),
-        accept_cash_on_collection = COALESCE(?, accept_cash_on_collection),
-        auto_print_mode = COALESCE(?, auto_print_mode),
-        order_separator = COALESCE(?, order_separator),
-        updated_at = ?
-       WHERE id = ?`,
-      [
-        updates.paymentGateway || null,
-        updates.acceptCashOnCollection !== undefined ? (updates.acceptCashOnCollection ? 1 : 0) : null,
-        updates.autoPrintMode || null,
-        updates.orderSeparator || null,
-        new Date().toISOString(),
-        shopId,
-      ]
-    );
+    const columns: Record<string, string> = {
+      name: 'name', tagline: 'tagline', phone: 'phone', address: 'address', city: 'city', state: 'state', pinCode: 'pin_code',
+      paymentGateway: 'payment_gateway', acceptCashOnCollection: 'accept_cash_on_collection',
+      autoPrintMode: 'auto_print_mode', orderSeparator: 'order_separator',
+    };
+    const values: Array<string | number | null> = [];
+    const assignments = keys.map((key) => {
+      const value = (updates as any)[key];
+      if (['name', 'phone', 'address', 'city', 'state', 'pinCode'].includes(key)) {
+        if (typeof value !== 'string' || !value.trim() || value.trim().length > (key === 'address' ? 240 : 120)) throw new Error(`${key} must be a non-empty string of supported length.`);
+        if (key === 'pinCode' && !/^\d{6}$/.test(value.trim())) throw new Error('pinCode must be a six-digit Indian PIN code.');
+        values.push(value.trim());
+      } else if (key === 'tagline') {
+        if (typeof value !== 'string' || value.length > 180) throw new Error('tagline must be a string of at most 180 characters.');
+        values.push(value.trim() || null);
+      } else if (key === 'acceptCashOnCollection') {
+        if (typeof value !== 'boolean') throw new Error('acceptCashOnCollection must be a boolean.');
+        values.push(value ? 1 : 0);
+      } else if (key === 'paymentGateway') {
+        if (!['RAZORPAY', 'STRIPE', 'CASH_ONLY'].includes(value)) throw new Error('paymentGateway is not supported.');
+        values.push(value);
+      } else if (key === 'autoPrintMode') {
+        if (!['AUTO_ALL', 'PRINT_AFTER_PAYMENT', 'MANUAL_OFF'].includes(value)) throw new Error('autoPrintMode is not supported.');
+        values.push(value);
+      } else if (key === 'orderSeparator') {
+        if (!['NONE', 'BW_INVOICE', 'BLANK_PAGE'].includes(value)) throw new Error('orderSeparator is not supported.');
+        values.push(value);
+      }
+      return `${columns[key]} = ?`;
+    });
+    values.push(new Date().toISOString(), shopId);
+    this.db.execute(`UPDATE shops SET ${assignments.join(', ')}, updated_at = ? WHERE id = ?`, values);
   }
 
   private mapShopRow(row: any): Shop {

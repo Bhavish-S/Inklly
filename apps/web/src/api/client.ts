@@ -489,12 +489,13 @@ export const api = {
 
   async updateShopSettings(updates: any) {
     const res = await fetch(`${API_BASE}/merchant/settings`, {
-      method: 'PATCH',
+      method: 'PUT',
       headers: getHeaders(),
       body: JSON.stringify(updates),
     });
-    if (!res.ok) throw new Error('Failed to update shop settings');
-    return res.json();
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to update shop settings');
+    return body;
   },
 
   async getStaff() {
