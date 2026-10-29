@@ -679,9 +679,13 @@ export const api = {
     return body;
   },
 
-  async getAuditLogs() {
-    const res = await fetch(`${API_BASE}/platform/audit-logs`, { headers: getHeaders() });
-    return res.json();
+  async getAuditLogs(cursor?: string, limit = 100) {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (cursor) params.set('cursor', cursor);
+    const res = await fetch(`${API_BASE}/platform/audit-logs?${params.toString()}`, { headers: getHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to load audit events');
+    return body;
   },
 
   async getPlatformEnquiries() {

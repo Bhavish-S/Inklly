@@ -24,6 +24,9 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
   const [ledgerLoadingMore, setLedgerLoadingMore] = useState(false);
   const [ledgerExporting, setLedgerExporting] = useState(false);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [auditNextCursor, setAuditNextCursor] = useState<string | null>(null);
+  const [auditLoadingMore, setAuditLoadingMore] = useState(false);
+  const [auditExporting, setAuditExporting] = useState(false);
   const [enquiries, setEnquiries] = useState<any[]>([]);
   const [selectedDomain, setSelectedDomain] = useState<string>('ALL');
   const [merchantSearchQuery, setMerchantSearchQuery] = useState<string>('');
@@ -147,7 +150,10 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
         setLedgerEntries(Array.isArray(ledData.entries) ? ledData.entries : []);
         setLedgerNextCursor(typeof ledData.nextCursor === 'string' ? ledData.nextCursor : null);
       }
-      if (audData) setAuditLogs(audData);
+      if (audData) {
+        setAuditLogs(Array.isArray(audData.events) ? audData.events : []);
+        setAuditNextCursor(typeof audData.nextCursor === 'string' ? audData.nextCursor : null);
+      }
       if (enquiryData) setEnquiries(enquiryData);
       if (agentData) setAgentFleet(agentData);
       if (retentionData) setStorageStats(retentionData);
@@ -336,34 +342,60 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
     }
   };
 
-  const handleExportAuditCsv = () => {
-    const csvCell = (value: unknown) => {
-      const safe = String(value ?? '').replace(/[\r\n]+/g, ' ');
-      return `"${safe.replace(/"/g, '""')}"`;
-    };
-    const headers = ['Event ID', 'Actor User ID', 'Actor Role', 'Action', 'Target Type', 'Target ID', 'Outcome', 'IP Address', 'Timestamp'];
-    const rows = auditLogs.map((log) => [
-      log.id,
-      log.actorUserId,
-      log.actorRole,
-      log.action,
-      log.targetType,
-      log.targetId,
-      log.outcome,
-      log.ipAddress,
-      log.createdAt,
-    ].map(csvCell));
-    const csvContent = [headers.map(csvCell).join(','), ...rows.map((r) => r.join(','))].join('\r\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `Inklly-Platform-Audit-Trail-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    showToast('📥 Exported Platform Audit Log CSV.');
+  const loadMoreAudit = async () => {
+    if (!auditNextCursor || auditLoadingMore) return;
+    try {
+      setAuditLoadingMore(true);
+      const page = await api.getAuditLogs(auditNextCursor);
+      setAuditLogs((current) => {
+        const seen = new Set(current.map((event) => event.id));
+        return [...current, ...(page.events || []).filter((event: any) => !seen.has(event.id))];
+      });
+      setAuditNextCursor(typeof page.nextCursor === 'string' ? page.nextCursor : null);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not load more audit events.');
+    } finally {
+      setAuditLoadingMore(false);
+    }
+  };
+
+  const handleExportAuditCsv = async () => {
+    if (auditExporting) return;
+    try {
+      setAuditExporting(true);
+      const allEvents: any[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await api.getAuditLogs(cursor);
+        allEvents.push(...(page.events || []));
+        cursor = typeof page.nextCursor === 'string' ? page.nextCursor : undefined;
+      } while (cursor);
+
+      const csvCell = (value: unknown) => {
+        const text = String(value ?? '').replace(/[\r\n]+/g, ' ');
+        const safe = /^[\s]*[=+@\-\t\r]/.test(text) ? `'${text}` : text;
+        return `"${safe.replace(/"/g, '""')}"`;
+      };
+      const headers = ['Event ID', 'Actor User ID', 'Actor Role', 'Action', 'Target Type', 'Target ID', 'Outcome', 'IP Address', 'Timestamp'];
+      const rows = allEvents.map((log) => [
+        log.id, log.actorUserId, log.actorRole, log.action, log.targetType, log.targetId, log.outcome, log.ipAddress, log.createdAt,
+      ].map(csvCell));
+      const csvContent = [headers.map(csvCell).join(','), ...rows.map((r) => r.join(','))].join('\r\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Inklly-Platform-Audit-Trail-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast(`Exported ${allEvents.length} audit events to CSV.`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not export the full audit log.');
+    } finally {
+      setAuditExporting(false);
+    }
   };
 
   const handleOnboardMerchant = async (e: React.FormEvent) => {
@@ -385,7 +417,8 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
       setProvisionedInvitationLink(inviteUrl.toString());
       const [updatedMerchants, updatedAuditLogs] = await Promise.all([api.getPlatformMerchants(), api.getAuditLogs()]);
       setMerchants(updatedMerchants);
-      setAuditLogs(updatedAuditLogs);
+      setAuditLogs(Array.isArray(updatedAuditLogs.events) ? updatedAuditLogs.events : []);
+      setAuditNextCursor(typeof updatedAuditLogs.nextCursor === 'string' ? updatedAuditLogs.nextCursor : null);
       showToast(`Tenant created. Share the one-time owner setup link with ${result.merchant?.owner?.email || newOwnerEmail}.`);
       setNewOrgName('');
       setNewShopCode('');
@@ -1069,11 +1102,12 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
             </div>
             <button
               type="button"
-              onClick={handleExportAuditCsv}
+              onClick={() => { void handleExportAuditCsv(); }}
+              disabled={auditExporting}
               className="flex items-center gap-2 px-3.5 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs shrink-0"
             >
               <DownloadIcon size={14} />
-              <span>Export Audit Log (CSV)</span>
+              <span>{auditExporting ? 'Exporting full audit log…' : 'Export full audit log (CSV)'}</span>
             </button>
           </div>
 
@@ -1117,6 +1151,15 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
                 )}
               </tbody>
             </table>
+          </div>
+          <div className="flex items-center justify-between gap-3 border-t border-slate-100 p-4 dark:border-slate-800">
+            <span className="text-xs text-slate-500">Showing {auditLogs.length} loaded audit events.</span>
+            {auditNextCursor && (
+              <button type="button" onClick={() => { void loadMoreAudit(); }} disabled={auditLoadingMore}
+                className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200">
+                {auditLoadingMore ? 'Loading…' : 'Load older events'}
+              </button>
+            )}
           </div>
         </div>
       )}

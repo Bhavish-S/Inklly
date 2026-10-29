@@ -489,12 +489,34 @@ export class AdminController {
   };
 
   public getAuditLogs = (req: Request, res: Response) => {
-    const limit = req.query.limit === undefined ? 50 : Number(req.query.limit);
+    const limit = req.query.limit === undefined ? 100 : Number(req.query.limit);
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
       return res.status(400).json({ error: 'limit must be an integer between 1 and 100.' });
     }
-    const logs = this.userRepo.getAuditEvents(limit);
-    res.json(logs);
+    const rawCursor = req.query.cursor === undefined ? undefined : req.query.cursor;
+    let cursor: { createdAt: string; id: string } | undefined;
+    if (rawCursor !== undefined) {
+      if (typeof rawCursor !== 'string' || rawCursor.length > 512) return res.status(400).json({ error: 'cursor is invalid.' });
+      try {
+        const decoded = JSON.parse(Buffer.from(rawCursor, 'base64url').toString('utf8'));
+        if (!decoded || typeof decoded.createdAt !== 'string' || !decoded.createdAt || decoded.createdAt.length > 64 ||
+            !Number.isFinite(Date.parse(decoded.createdAt)) || typeof decoded.id !== 'string' || !decoded.id || decoded.id.length > 128 ||
+            Object.keys(decoded).some((key) => !['createdAt', 'id'].includes(key))) {
+          return res.status(400).json({ error: 'cursor is invalid.' });
+        }
+        cursor = { createdAt: decoded.createdAt, id: decoded.id };
+      } catch {
+        return res.status(400).json({ error: 'cursor is invalid.' });
+      }
+    }
+    const rows = this.userRepo.getAuditEvents(limit + 1, undefined, cursor);
+    const hasMore = rows.length > limit;
+    const events = hasMore ? rows.slice(0, limit) : rows;
+    const last = events[events.length - 1];
+    const nextCursor = hasMore && last
+      ? Buffer.from(JSON.stringify({ createdAt: last.createdAt, id: last.id })).toString('base64url')
+      : null;
+    res.json({ events, nextCursor, hasMore, limit });
   };
 
   public getEnquiries = (req: Request, res: Response) => {

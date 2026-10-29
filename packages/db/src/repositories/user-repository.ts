@@ -263,14 +263,24 @@ export class UserRepository {
     );
   }
 
-  public getAuditEvents(limit: number = 50, shopId?: string): AuditRecord[] {
+  public getAuditEvents(
+    limit: number = 50,
+    shopId?: string,
+    cursor?: { createdAt: string; id: string }
+  ): AuditRecord[] {
     let sql = `SELECT * FROM audit_events`;
     const params: any[] = [];
+    const filters: string[] = [];
     if (shopId) {
-      sql += ` WHERE shop_id = ?`;
+      filters.push(`shop_id = ?`);
       params.push(shopId);
     }
-    sql += ` ORDER BY created_at DESC LIMIT ?`;
+    if (cursor) {
+      filters.push(`(created_at < ? OR (created_at = ? AND id < ?))`);
+      params.push(cursor.createdAt, cursor.createdAt, cursor.id);
+    }
+    if (filters.length) sql += ` WHERE ${filters.join(' AND ')}`;
+    sql += ` ORDER BY created_at DESC, id DESC LIMIT ?`;
     params.push(limit);
 
     const rows = this.db.query<any>(sql, params);

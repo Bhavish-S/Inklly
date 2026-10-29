@@ -1313,9 +1313,11 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     const auditRes = await fetch(`${baseUrl}/api/v1/platform/audit-logs?limit=100`, {
       headers: { Authorization: `Bearer ${adminToken}` },
     });
-    const audit = await auditRes.json() as any[];
-    assert.ok(audit.some((entry) => entry.action === 'VIEW_PUBLIC_ENQUIRIES'));
+    const auditPage = await auditRes.json() as any;
+    assert.ok(Array.isArray(auditPage.events));
+    const audit = auditPage.events as any[];
     const viewEvent = audit.find((entry) => entry.action === 'VIEW_PUBLIC_ENQUIRIES');
+    assert.ok(viewEvent);
     assert.equal(typeof viewEvent.actorUserId, 'string');
     assert.equal(viewEvent.actorRole, 'PLATFORM_OWNER');
     assert.equal(viewEvent.targetType, 'PUBLIC_ENQUIRY_COLLECTION');
@@ -1330,6 +1332,53 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       headers: { Authorization: `Bearer ${adminToken}` },
     });
     assert.equal(oversizedAudit.status, 400);
+  });
+
+  it('paginates the complete platform audit history with stable same-timestamp ordering', async () => {
+    const createdAt = '2001-01-01T00:00:00.000Z';
+    const expectedIds = Array.from({ length: 205 }, (_, index) => `audit-page-${String(index).padStart(3, '0')}`);
+    for (const id of expectedIds) {
+      db.execute(
+        `INSERT INTO audit_events (id, action, target_type, target_id, outcome, created_at)
+         VALUES (?, 'AUDIT_PAGINATION_TEST', 'TEST', ?, 'SUCCESS', ?)`,
+        [id, id, createdAt]
+      );
+    }
+
+    const headers = { Authorization: `Bearer ${adminToken}` };
+    const invalidCursor = await fetch(`${baseUrl}/api/v1/platform/audit-logs?cursor=not-a-cursor`, { headers });
+    assert.equal(invalidCursor.status, 400);
+    const denied = await fetch(`${baseUrl}/api/v1/platform/audit-logs`);
+    assert.equal(denied.status, 401);
+
+    const received: any[] = [];
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+    do {
+      const url = new URL(`${baseUrl}/api/v1/platform/audit-logs`);
+      url.searchParams.set('limit', '37');
+      if (cursor) url.searchParams.set('cursor', cursor);
+      const response = await fetch(url, { headers });
+      assert.equal(response.status, 200);
+      const page = await response.json() as any;
+      assert.ok(Array.isArray(page.events));
+      assert.ok(page.events.length <= 37);
+      received.push(...page.events);
+      cursor = page.nextCursor || undefined;
+      if (cursor) {
+        assert.equal(page.hasMore, true);
+        assert.equal(seenCursors.has(cursor), false, 'audit pagination cursor must advance');
+        seenCursors.add(cursor);
+      } else {
+        assert.equal(page.hasMore, false);
+      }
+    } while (cursor);
+
+    assert.equal(received.length, Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM audit_events`)?.count));
+    assert.equal(new Set(received.map((event) => event.id)).size, received.length, 'pages must not duplicate audit rows');
+    const paginatedEvents = received.filter((event) => event.action === 'AUDIT_PAGINATION_TEST');
+    assert.equal(paginatedEvents.length, expectedIds.length);
+    assert.deepEqual(paginatedEvents.map((event) => event.id), [...expectedIds].sort().reverse());
   });
 
   it('paginates every platform ledger row with a stable created_at and id cursor', async () => {
