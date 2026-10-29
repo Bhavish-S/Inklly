@@ -1313,7 +1313,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
         return;
       }
       if (order?.rawStatus !== 'READY_FOR_COLLECTION') {
-        setOrderActionToast('An order can be collected only after the print agent confirms every job is ready.');
+        setOrderActionToast('An order can be collected only after authorized staff inspect and confirm the completed print output.');
         return;
       }
       if (isCashOnCollection && !isPaymentVerified) await api.collectCash(targetId);

@@ -1266,17 +1266,39 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(diag.hardwareSafety, 'OUTPUT_UNCERTAIN on hardware jam or spooler halt');
   });
 
-  it('Collects cash at counter and credits ledger', async () => {
+  it('rejects cash collection before print output is ready', async () => {
+    // Earlier print-output reconciliation tests deliberately exercise the
+    // ready state; reset this shared fixture for the negative case.
+    db.execute(`UPDATE orders SET status = 'AWAITING_REVIEW', payment_status = 'PENDING' WHERE id = ?`, [cashOrderId]);
+    const url = `${baseUrl}/api/v1/payments/orders/${cashOrderId}/collect-cash`;
+    const response = await fetch(url, {
+      method: 'POST', headers: { Authorization: `Bearer ${merchantToken}` },
+    });
+    assert.equal(response.status, 409);
+    assert.match((await response.json() as any).error, /only when the order is ready for collection/i);
+    const order = db.queryOne<any>(`SELECT status, payment_status FROM orders WHERE id = ?`, [cashOrderId]);
+    assert.equal(order.status, 'AWAITING_REVIEW');
+    assert.equal(order.payment_status, 'PENDING');
+    assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM payments WHERE order_id = ? AND provider = 'MANUAL_CASH'`, [cashOrderId]).count), 0);
+    assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM ledger_entries WHERE order_id = ? AND provider = 'MANUAL_CASH'`, [cashOrderId]).count), 0);
+    assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM webhook_events WHERE idempotency_key = ?`, [`payment.succeeded:pay-cash-${cashOrderId}`]).count), 0);
+  });
+
+  it('collects cash at counter and retries idempotently without duplicate records', async () => {
+    db.execute(`UPDATE orders SET status = 'READY_FOR_COLLECTION' WHERE id = ?`, [cashOrderId]);
     const url = `${baseUrl}/api/v1/payments/orders/${cashOrderId}/collect-cash`;
     const responses = await Promise.all([1, 2].map(() => fetch(url, {
       method: 'POST', headers: { Authorization: `Bearer ${merchantToken}` },
     })));
-    assert.deepEqual(responses.map((response) => response.status).sort(), [200, 409]);
-    const success = responses[0].status === 200 ? responses[0] : responses[1];
-    const cashBody = await success.json();
+    assert.deepEqual(responses.map((response) => response.status), [200, 200]);
+    const responseBodies = await Promise.all(responses.map((response) => response.json()));
+    assert.equal(responseBodies.filter((body: any) => body.idempotent).length, 1);
+    const cashBody = responseBodies.find((body: any) => !body.idempotent);
     assert.equal(cashBody.order.paymentStatus, 'VERIFIED');
+    assert.equal(cashBody.order.status, 'COLLECTED');
     assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM payments WHERE order_id = ? AND provider = 'MANUAL_CASH'`, [cashOrderId]).count), 1);
     assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM ledger_entries WHERE order_id = ? AND provider = 'MANUAL_CASH'`, [cashOrderId]).count), 1);
+    assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM webhook_events WHERE idempotency_key = ?`, [`payment.succeeded:pay-cash-${cashOrderId}`]).count), 1);
   });
 
   it('Platform Owner Console returns system metrics and ledger', async () => {
@@ -2897,6 +2919,10 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     });
     assert.equal(bigOrderRes.status, 201);
     const bigOrder = await bigOrderRes.json();
+
+    // This test exercises payout eligibility, not print dispatch. Treat output
+    // as an established fixture precondition before recording counter cash.
+    db.execute(`UPDATE orders SET status = 'READY_FOR_COLLECTION' WHERE id = ?`, [bigOrder.orderId]);
 
     const cashRes = await fetch(`${baseUrl}/api/v1/payments/orders/${bigOrder.orderId}/collect-cash`, {
       method: 'POST',

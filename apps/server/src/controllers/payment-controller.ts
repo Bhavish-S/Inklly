@@ -295,7 +295,7 @@ export class PaymentController {
 
   public collectCashAtCounter = (req: Request, res: Response) => {
     const id = String(req.params.id);
-    let outcome: 'NOT_FOUND' | 'FORBIDDEN' | 'WRONG_METHOD' | 'ALREADY_RECORDED' | 'RECORDED';
+    let outcome: 'NOT_FOUND' | 'FORBIDDEN' | 'WRONG_METHOD' | 'ALREADY_RECORDED' | 'NOT_READY' | 'RECORDED' | 'IDEMPOTENT_RETRY';
     try {
       outcome = this.db.transaction(() => {
         // Serialize cash collection on the order row, then re-read all state
@@ -314,7 +314,22 @@ export class PaymentController {
           (!effectiveShopId || order.shopId !== effectiveShopId)
         ) return 'FORBIDDEN';
         if (order.paymentMethod !== 'CASH_ON_COLLECTION') return 'WRONG_METHOD';
-        if (order.paymentStatus === 'VERIFIED') return 'ALREADY_RECORDED';
+        if (order.paymentStatus === 'VERIFIED') {
+          const existingCashPayment = this.db.queryOne<any>(
+            `SELECT id FROM payments WHERE order_id = ? AND provider = 'MANUAL_CASH' AND status = 'VERIFIED'`,
+            [order.id]
+          );
+          if (!existingCashPayment) return 'ALREADY_RECORDED';
+          if (order.status === 'READY_FOR_COLLECTION') {
+            // Repair a legacy/incomplete state safely; this transition is still
+            // inside the same transaction and is idempotent on subsequent calls.
+            this.orderRepo.updateOrderStatus(order.id, 'COLLECTED');
+          } else if (order.status !== 'COLLECTED') {
+            return 'NOT_READY';
+          }
+          return 'IDEMPOTENT_RETRY';
+        }
+        if (order.status !== 'READY_FOR_COLLECTION') return 'NOT_READY';
 
         const now = new Date().toISOString();
         const paymentId = `pay-cash-${order.id}`;
@@ -347,9 +362,7 @@ export class PaymentController {
             capturedAt: now,
           });
         }
-        if (order.status === 'READY_FOR_COLLECTION') {
-          this.orderRepo.updateOrderStatus(order.id, 'COLLECTED');
-        }
+        this.orderRepo.updateOrderStatus(order.id, 'COLLECTED');
         return 'RECORDED';
       });
     } catch (error) {
@@ -361,11 +374,13 @@ export class PaymentController {
     if (outcome === 'FORBIDDEN') return res.status(403).json({ error: 'Order is not available to this shop.' });
     if (outcome === 'WRONG_METHOD') return res.status(409).json({ error: 'Cash collection is only available for cash-on-collection orders.' });
     if (outcome === 'ALREADY_RECORDED') return res.status(409).json({ error: 'Payment for this order has already been recorded.' });
+    if (outcome === 'NOT_READY') return res.status(409).json({ error: 'Cash can be recorded only when the order is ready for collection.' });
 
     const updated = this.orderRepo.getOrderById(id);
     return res.json({
       success: true,
-      message: 'Cash payment recorded and order updated',
+      message: outcome === 'IDEMPOTENT_RETRY' ? 'Cash payment was already recorded for this order.' : 'Cash payment recorded and order updated',
+      idempotent: outcome === 'IDEMPOTENT_RETRY',
       order: updated,
     });
   };

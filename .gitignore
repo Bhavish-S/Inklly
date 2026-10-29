@@ -54,3 +54,4 @@ apps/server/uploads/
 apps/server/downloads/*.msi
 apps/server/downloads/*.zip
 apps/server/downloads/*.exe
+uploads/
