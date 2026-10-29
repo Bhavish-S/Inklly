@@ -10,6 +10,7 @@ export function createSubscriptionRoutes(db: DatabaseService): Router {
   router.get('/plans', controller.listPlans);
   const requireAuthentication = authenticate(db);
   router.get('/usage', requireAuthentication, requireRole('MERCHANT_OWNER'), controller.usage);
+  router.get('/invoices', requireAuthentication, requireRole('MERCHANT_OWNER'), controller.invoices);
   router.post('/checkout', requireAuthentication, requireRole('MERCHANT_OWNER'), controller.createCheckout);
   router.post('/verify', requireAuthentication, requireRole('MERCHANT_OWNER'), controller.verifySubscription);
 

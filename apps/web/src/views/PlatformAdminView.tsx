@@ -35,6 +35,16 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
   const [agentFleet, setAgentFleet] = useState<any[]>([]);
   const [platformPlans, setPlatformPlans] = useState<any[]>([]);
   const [subscriptions, setSubscriptions] = useState<any[]>([]);
+  const [billingOrganizationId, setBillingOrganizationId] = useState('');
+  const [billingTariffs, setBillingTariffs] = useState<any[]>([]);
+  const [pilotInvoices, setPilotInvoices] = useState<any[]>([]);
+  const [billingBaseRupees, setBillingBaseRupees] = useState('');
+  const [billingSideRupees, setBillingSideRupees] = useState('');
+  const [billingIncludedSides, setBillingIncludedSides] = useState('0');
+  const [billingEffectiveMonth, setBillingEffectiveMonth] = useState(() => new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() + 1, 1)).toISOString().slice(0, 7));
+  const [billingInvoiceMonth, setBillingInvoiceMonth] = useState(() => new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - 1, 1)).toISOString().slice(0, 7));
+  const [billingBusy, setBillingBusy] = useState(false);
+  const [billingError, setBillingError] = useState('');
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -44,6 +54,26 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
   useEffect(() => {
     loadPlatformData();
   }, [selectedDomain]);
+
+  useEffect(() => {
+    if (!billingOrganizationId && merchants.length > 0) setBillingOrganizationId(merchants[0].id);
+  }, [merchants, billingOrganizationId]);
+
+  useEffect(() => {
+    if (activeTab !== 'plans' || !billingOrganizationId) return;
+    let cancelled = false;
+    setBillingError('');
+    Promise.all([api.getPlatformBillingTariffs(billingOrganizationId), api.getPlatformBillingInvoices(billingOrganizationId)])
+      .then(([tariffs, invoices]) => {
+        if (cancelled) return;
+        setBillingTariffs(tariffs);
+        setPilotInvoices(invoices);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setBillingError(error instanceof Error ? error.message : 'Could not load pilot billing data.');
+      });
+    return () => { cancelled = true; };
+  }, [activeTab, billingOrganizationId]);
 
   const loadPlatformData = async () => {
     try {
@@ -73,6 +103,55 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
     } finally {
       setLoading(false);
     }
+  };
+
+  const parseRupees = (value: string): number | null => {
+    const match = /^(0|[1-9]\d*)(?:\.(\d{1,2}))?$/.exec(value.trim());
+    if (!match) return null;
+    const paise = Number(match[1]) * 100 + Number((match[2] || '').padEnd(2, '0'));
+    return Number.isSafeInteger(paise) ? paise : null;
+  };
+
+  const refreshPilotBilling = async () => {
+    const [tariffs, invoices] = await Promise.all([
+      api.getPlatformBillingTariffs(billingOrganizationId), api.getPlatformBillingInvoices(billingOrganizationId),
+    ]);
+    setBillingTariffs(tariffs);
+    setPilotInvoices(invoices);
+  };
+
+  const savePilotTariff = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!billingOrganizationId) return;
+    const monthlyBasePaise = parseRupees(billingBaseRupees);
+    const perSidePaise = parseRupees(billingSideRupees);
+    const includedSides = Number(billingIncludedSides);
+    if (monthlyBasePaise === null || perSidePaise === null || !Number.isSafeInteger(includedSides) || includedSides < 0) {
+      showToast('Enter valid INR amounts with up to two decimal places and a whole-number side allowance.');
+      return;
+    }
+    try {
+      setBillingBusy(true);
+      await api.addPlatformBillingTariff(billingOrganizationId, { monthlyBasePaise, perSidePaise, includedSides, effectiveFrom: `${billingEffectiveMonth}-01` });
+      setBillingBaseRupees('');
+      setBillingSideRupees('');
+      showToast('Pilot tariff saved as an immutable effective-dated rate.');
+      await refreshPilotBilling();
+    } catch (error: unknown) {
+      showToast(error instanceof Error ? error.message : 'Could not save pilot tariff.');
+    } finally { setBillingBusy(false); }
+  };
+
+  const issuePilotInvoice = async () => {
+    if (!billingOrganizationId) return;
+    try {
+      setBillingBusy(true);
+      const result = await api.issuePlatformBillingInvoice({ organizationId: billingOrganizationId, period: billingInvoiceMonth });
+      showToast(result.created ? 'Invoice issued. No payment was collected.' : 'This invoice already exists; the existing statement was returned.');
+      await refreshPilotBilling();
+    } catch (error: unknown) {
+      showToast(error instanceof Error ? error.message : 'Could not issue pilot invoice.');
+    } finally { setBillingBusy(false); }
   };
 
   const handleToggleMerchantStatus = async (orgId: string, currentStatus: string) => {
@@ -603,7 +682,7 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
       {activeTab === 'plans' && (
         <section className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
           <h2 className="text-base font-extrabold text-slate-900 dark:text-white">Pilot plan tiers</h2>
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Tier definitions come from the API catalog. Prices are configured per pilot; checkout, printed-side billing, and quota enforcement are not active.</p>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Tier features and quotas remain informational. Configure organization-specific monthly rates and issue manual invoices from confirmed print-side usage below; this does not collect payment.</p>
           <div className="mt-5 grid gap-4 md:grid-cols-2">
             {platformPlans.map((plan: any) => (
               <article key={plan.id} className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
@@ -624,7 +703,49 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
             ))}
             {platformPlans.length === 0 && <p className="text-sm text-slate-500">The plan catalog could not be loaded.</p>}
           </div>
-          <div className="mt-5 border-t border-slate-100 pt-4 text-xs text-amber-700 dark:border-slate-800 dark:text-amber-300">Plan catalog and quota editing are code-managed. No plan changes or charges can be made from this page.</div>
+          <div className="mt-5 border-t border-slate-100 pt-4 text-xs text-amber-700 dark:border-slate-800 dark:text-amber-300">Plan catalog and quota enforcement remain code-managed. Pilot invoices are before tax, immutable after issue, and require separate manual collection.</div>
+          <section className="mt-6 rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 dark:border-indigo-900 dark:bg-indigo-950/20" aria-labelledby="pilot-billing-title">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <div><h3 id="pilot-billing-title" className="font-extrabold text-slate-900 dark:text-white">Hybrid pilot billing</h3><p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Rates are stored in integer paise. Printed-side quantity comes only from audited physical-output confirmation.</p></div>
+              <label className="w-full text-xs font-bold text-slate-600 dark:text-slate-300 sm:max-w-xs">Organization
+                <select value={billingOrganizationId} onChange={(event) => setBillingOrganizationId(event.target.value)} className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-900">
+                  <option value="">Choose organization</option>
+                  {merchants.map((merchant: any) => <option key={merchant.id} value={merchant.id}>{merchant.name} · {merchant.id}</option>)}
+                </select>
+              </label>
+            </div>
+            {billingError && <p role="alert" className="mt-3 rounded-lg bg-rose-50 p-3 text-xs text-rose-800 dark:bg-rose-950/30 dark:text-rose-200">{billingError}</p>}
+            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+              <form onSubmit={savePilotTariff} className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+                <h4 className="text-sm font-bold text-slate-900 dark:text-white">Add rate schedule</h4>
+                <p className="mt-1 text-[11px] text-slate-500">Schedules are append-only and begin on a calendar month boundary.</p>
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                  <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Monthly base (₹)<input inputMode="decimal" value={billingBaseRupees} onChange={(event) => setBillingBaseRupees(event.target.value)} required pattern="(?:0|[1-9]\d*)(?:\.\d{1,2})?" placeholder="0.00" className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-900" /></label>
+                  <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Fee per printed side (₹)<input inputMode="decimal" value={billingSideRupees} onChange={(event) => setBillingSideRupees(event.target.value)} required pattern="(?:0|[1-9]\d*)(?:\.\d{1,2})?" placeholder="0.00" className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-900" /></label>
+                  <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Included sides<input type="number" min="0" step="1" value={billingIncludedSides} onChange={(event) => setBillingIncludedSides(event.target.value)} required className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-900" /></label>
+                  <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Effective month<input type="month" value={billingEffectiveMonth} onChange={(event) => setBillingEffectiveMonth(event.target.value)} required className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-900" /></label>
+                </div>
+                <button disabled={!billingOrganizationId || billingBusy} className="mt-3 min-h-10 rounded-lg bg-indigo-600 px-4 text-xs font-bold text-white disabled:opacity-50">{billingBusy ? 'Saving…' : 'Save rate schedule'}</button>
+                <ul className="mt-3 space-y-1 text-xs text-slate-600 dark:text-slate-300">
+                  {billingTariffs.map((tariff) => <li key={tariff.id}>{tariff.effectiveFrom.slice(0, 7)} · ₹{(tariff.monthlyBasePaise / 100).toFixed(2)}/month · ₹{(tariff.perSidePaise / 100).toFixed(2)}/side · {tariff.includedSides.toLocaleString()} included</li>)}
+                  {!billingError && billingOrganizationId && billingTariffs.length === 0 && <li>No billing rate schedule configured.</li>}
+                </ul>
+              </form>
+              <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+                <h4 className="text-sm font-bold text-slate-900 dark:text-white">Issue monthly invoice</h4>
+                <p className="mt-1 text-[11px] text-slate-500">Only completed months can be issued. Duplicate requests return the existing immutable invoice.</p>
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
+                  <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Billing month<input type="month" value={billingInvoiceMonth} onChange={(event) => setBillingInvoiceMonth(event.target.value)} className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-900" /></label>
+                  <button type="button" disabled={!billingOrganizationId || !billingInvoiceMonth || billingBusy || billingTariffs.length === 0} onClick={issuePilotInvoice} className="min-h-10 rounded-lg bg-slate-900 px-4 text-xs font-bold text-white disabled:opacity-50 dark:bg-white dark:text-slate-900">{billingBusy ? 'Working…' : 'Issue invoice'}</button>
+                </div>
+                <p className="mt-3 rounded-lg bg-amber-50 p-3 text-xs leading-5 text-amber-900 dark:bg-amber-950/30 dark:text-amber-100">Manual collection only. No customer payment, platform payment, tax, or ledger entry is created by issuing a statement.</p>
+                <ul className="mt-3 divide-y divide-slate-100 text-xs dark:divide-slate-800">
+                  {pilotInvoices.map((invoice) => <li key={invoice.id} className="flex items-center justify-between gap-2 py-2"><span>{new Date(invoice.periodStart).toLocaleDateString('en-IN', { month: 'short', year: 'numeric', timeZone: 'UTC' })} · {invoice.confirmedSides.toLocaleString()} sides · {invoice.collectionStatus.replace(/_/g, ' ').toLowerCase()}</span><strong>₹{(invoice.totalPaise / 100).toFixed(2)}</strong></li>)}
+                  {billingOrganizationId && pilotInvoices.length === 0 && <li className="py-2 text-slate-500">No invoices issued.</li>}
+                </ul>
+              </div>
+            </div>
+          </section>
         </section>
       )}
 

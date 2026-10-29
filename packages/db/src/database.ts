@@ -41,6 +41,7 @@ export class DatabaseService {
       this.ensureSqliteRateRuleUniquenessMigration();
       this.ensureSqliteOrderPricingSnapshotMigration();
       this.ensureSqliteWebhookOutboxMigration();
+      this.ensureSqlitePilotBillingMigration();
     }
   }
 
@@ -149,6 +150,7 @@ export class DatabaseService {
     this.ensurePostgresRateRuleUniquenessMigration();
     this.ensurePostgresOrderPricingSnapshotMigration();
     this.ensurePostgresWebhookOutboxMigration();
+    this.ensurePostgresPilotBillingMigration();
   }
 
   private ensureSqliteSubscriptionUsageMigration(): void {
@@ -348,6 +350,80 @@ export class DatabaseService {
     } catch (error) {
       try { this.queryPostgres('ROLLBACK'); } catch { /* preserve original error */ }
       throw new Error(`[Inklly DB] Webhook outbox migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+
+  private ensureSqlitePilotBillingMigration(): void {
+    if (this.db!.prepare(`SELECT version FROM inklly_schema_migrations WHERE version = 15`).get()) return;
+    this.db!.exec('BEGIN');
+    try {
+      this.db!.exec(`CREATE TABLE IF NOT EXISTS subscription_billing_tariffs (
+        id TEXT PRIMARY KEY, organization_id TEXT NOT NULL,
+        monthly_base_paise INTEGER NOT NULL CHECK (monthly_base_paise >= 0),
+        per_side_paise INTEGER NOT NULL CHECK (per_side_paise >= 0),
+        included_sides INTEGER NOT NULL DEFAULT 0 CHECK (included_sides >= 0),
+        currency TEXT NOT NULL DEFAULT 'INR' CHECK (currency = 'INR'),
+        effective_from TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL,
+        UNIQUE (organization_id, effective_from),
+        FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+      )`);
+      this.db!.exec(`CREATE INDEX IF NOT EXISTS idx_billing_tariffs_org_effective ON subscription_billing_tariffs(organization_id, effective_from DESC)`);
+      this.db!.exec(`CREATE TABLE IF NOT EXISTS subscription_invoices (
+        id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, period_start TEXT NOT NULL, period_end TEXT NOT NULL,
+        tariff_id TEXT NOT NULL, currency TEXT NOT NULL DEFAULT 'INR' CHECK (currency = 'INR'),
+        monthly_base_paise INTEGER NOT NULL CHECK (monthly_base_paise >= 0), included_sides INTEGER NOT NULL CHECK (included_sides >= 0),
+        confirmed_sides INTEGER NOT NULL CHECK (confirmed_sides >= 0), billable_sides INTEGER NOT NULL CHECK (billable_sides >= 0),
+        per_side_paise INTEGER NOT NULL CHECK (per_side_paise >= 0), usage_fee_paise INTEGER NOT NULL CHECK (usage_fee_paise >= 0),
+        total_paise INTEGER NOT NULL CHECK (total_paise >= 0), line_items_json TEXT NOT NULL, issued_by TEXT NOT NULL, issued_at TEXT NOT NULL,
+        UNIQUE (organization_id, period_start, period_end),
+        FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+        FOREIGN KEY (tariff_id) REFERENCES subscription_billing_tariffs(id)
+      )`);
+      this.db!.exec(`CREATE INDEX IF NOT EXISTS idx_subscription_invoices_org_period ON subscription_invoices(organization_id, period_start DESC)`);
+      this.db!.exec(`CREATE TRIGGER IF NOT EXISTS subscription_billing_tariffs_prevent_update BEFORE UPDATE ON subscription_billing_tariffs BEGIN SELECT RAISE(ABORT, 'subscription_billing_tariffs are append-only'); END`);
+      this.db!.exec(`CREATE TRIGGER IF NOT EXISTS subscription_billing_tariffs_prevent_delete BEFORE DELETE ON subscription_billing_tariffs BEGIN SELECT RAISE(ABORT, 'subscription_billing_tariffs are append-only'); END`);
+      this.db!.exec(`CREATE TRIGGER IF NOT EXISTS subscription_invoices_prevent_update BEFORE UPDATE ON subscription_invoices BEGIN SELECT RAISE(ABORT, 'subscription_invoices are append-only'); END`);
+      this.db!.exec(`CREATE TRIGGER IF NOT EXISTS subscription_invoices_prevent_delete BEFORE DELETE ON subscription_invoices BEGIN SELECT RAISE(ABORT, 'subscription_invoices are append-only'); END`);
+      this.db!.prepare(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (15, ?)`).run(new Date().toISOString());
+      this.db!.exec('COMMIT');
+    } catch (error) {
+      try { this.db!.exec('ROLLBACK'); } catch { /* preserve original error */ }
+      throw error;
+    }
+  }
+
+  private ensurePostgresPilotBillingMigration(): void {
+    if (this.queryPostgres(`SELECT version FROM inklly_schema_migrations WHERE version = ?`, [15]).length) return;
+    this.queryPostgres('BEGIN');
+    try {
+      this.queryPostgres(`CREATE TABLE IF NOT EXISTS subscription_billing_tariffs (
+        id TEXT PRIMARY KEY, organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        monthly_base_paise INTEGER NOT NULL CHECK (monthly_base_paise >= 0), per_side_paise INTEGER NOT NULL CHECK (per_side_paise >= 0),
+        included_sides INTEGER NOT NULL DEFAULT 0 CHECK (included_sides >= 0), currency TEXT NOT NULL DEFAULT 'INR' CHECK (currency = 'INR'),
+        effective_from TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE (organization_id, effective_from)
+      )`);
+      this.queryPostgres(`CREATE INDEX IF NOT EXISTS idx_billing_tariffs_org_effective ON subscription_billing_tariffs(organization_id, effective_from DESC)`);
+      this.queryPostgres(`CREATE TABLE IF NOT EXISTS subscription_invoices (
+        id TEXT PRIMARY KEY, organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        period_start TEXT NOT NULL, period_end TEXT NOT NULL, tariff_id TEXT NOT NULL REFERENCES subscription_billing_tariffs(id),
+        currency TEXT NOT NULL DEFAULT 'INR' CHECK (currency = 'INR'), monthly_base_paise INTEGER NOT NULL CHECK (monthly_base_paise >= 0),
+        included_sides INTEGER NOT NULL CHECK (included_sides >= 0), confirmed_sides INTEGER NOT NULL CHECK (confirmed_sides >= 0),
+        billable_sides INTEGER NOT NULL CHECK (billable_sides >= 0), per_side_paise INTEGER NOT NULL CHECK (per_side_paise >= 0),
+        usage_fee_paise INTEGER NOT NULL CHECK (usage_fee_paise >= 0), total_paise INTEGER NOT NULL CHECK (total_paise >= 0),
+        line_items_json TEXT NOT NULL, issued_by TEXT NOT NULL, issued_at TEXT NOT NULL,
+        UNIQUE (organization_id, period_start, period_end)
+      )`);
+      this.queryPostgres(`CREATE INDEX IF NOT EXISTS idx_subscription_invoices_org_period ON subscription_invoices(organization_id, period_start DESC)`);
+      this.queryPostgres(`CREATE OR REPLACE FUNCTION prevent_pilot_billing_record_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'pilot billing records are append-only'; END; $$`);
+      this.queryPostgres(`DROP TRIGGER IF EXISTS subscription_billing_tariffs_immutable ON subscription_billing_tariffs`);
+      this.queryPostgres(`CREATE TRIGGER subscription_billing_tariffs_immutable BEFORE UPDATE OR DELETE ON subscription_billing_tariffs FOR EACH ROW EXECUTE FUNCTION prevent_pilot_billing_record_mutation()`);
+      this.queryPostgres(`DROP TRIGGER IF EXISTS subscription_invoices_immutable ON subscription_invoices`);
+      this.queryPostgres(`CREATE TRIGGER subscription_invoices_immutable BEFORE UPDATE OR DELETE ON subscription_invoices FOR EACH ROW EXECUTE FUNCTION prevent_pilot_billing_record_mutation()`);
+      this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [15, new Date().toISOString()]);
+      this.queryPostgres('COMMIT');
+    } catch (error) {
+      try { this.queryPostgres('ROLLBACK'); } catch { /* preserve original error */ }
+      throw new Error(`[Inklly DB] Pilot billing migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
     }
   }
 

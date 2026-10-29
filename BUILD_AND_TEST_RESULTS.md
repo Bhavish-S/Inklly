@@ -4,14 +4,14 @@
 
 ## Current local verification
 
-- `npm run build` — passed for database, shared, desktop agent, server, and web workspaces using Vite 6.4.5. The main JavaScript bundle is 1,182.68 kB minified (311.92 kB gzip) and triggers Vite's 500 kB chunk warning; the build completes successfully.
-- `npm test` — 212 passed, 0 failed: database 11, shared 13, agent 12, server 176.
+- `npm run build` — passed for database, shared, desktop agent, server, and web workspaces using Vite 6.4.5. The main JavaScript bundle is 1,193.73 kB minified (314.65 kB gzip) and triggers Vite's 500 kB chunk warning; the build completes successfully.
+- `npm test` — 215 passed, 0 failed: database 11, shared 13, agent 12, server 179.
 - `npm audit --audit-level=high` — attempted twice; both requests to the npm advisory endpoint timed out, so no current audit result is available.
 - `npm run lint` — no root lint script is currently configured.
 
 The test suite covers deterministic Paise pricing, tenant boundaries, active-account/current-membership/current-shop authorization (including inactive-shop denial), signed/revocable sessions, customer order and payment paths, private-storage behavior through a mocked Supabase API, merchant vault uploads/downloads/deletion/tenant isolation and retention, printer ownership migrations, append-only ledger enforcement and duplicate provider-transaction rejection, agent result persistence, dispatch replay/acknowledgment, expired handoff safety, paired-origin file downloads, crash-to-`OUTPUT_UNCERTAIN` recovery, developer-key scope validation/verifier redaction, encrypted webhook-secret migration/storage, idempotent webhook outbox events, leasing/retry/history isolation, HMAC signing, and public-address filtering.
 
-The latest local change set adds transactional webhook outbox delivery for `order.created`, `order.status_changed`, and `payment.succeeded`; timestamped HMAC signing; DNS-pinned public HTTPS requests; bounded retries and tenant-scoped attempt history; and regression coverage for these behaviors. It also adds append-only usage metering, immutable accepted quote/rate snapshots, atomic rate-rule upserts, payment-aware collection, audited refund rejection, and strict shop-settings validation. The root build script builds shared types before dependent workspaces.
+The latest local change set adds invoice-only hybrid pilot billing: organization-specific effective-dated tariffs and immutable monthly statements calculated in integer Paise from operator-confirmed print sides. Invoice issuance is idempotent and audited with the statement insert; statements remain manual-pending, before tax, and create no payment or ledger entry. Tests cover included-side arithmetic, overage, replay, immutability, tenant-scoped owner reads, role gating, and non-creation of payment records. It also includes transactional webhook outbox delivery, append-only usage metering, accepted quote/rate snapshots, atomic rate upserts, payment-aware collection, audited refund rejection, and strict settings validation. The root build script builds shared types before dependent workspaces.
 
 The print-release path now requires an online registered shop printer (or exactly one online default), assigns the target to every unassigned print job in the same transaction as order state changes, and excludes unassigned/offline targets from agent polling. Agent heartbeats synchronize inventory under the paired agent identity, so agents receive only their own queue's jobs. The Live Print screen and order printer selector consume API inventory instead of displaying sample devices. Printer discovery no longer invents HP/Canon devices. The agent reports spooler submission or uncertain output; only the authorized, audited merchant physical-output reconciliation can mark pages confirmed and make an order collectible.
 
@@ -27,7 +27,7 @@ WhatsApp Cloud API onboarding and message delivery are unavailable. The merchant
 
 ## Deployment and integration limits
 
-- Commit `e135daf` is pushed, and the live Vercel site serves the exact JavaScript bundle produced by its local build (`index--3MSaozT.js`). Render still responds with the old seven-path API and no `revision`; it does not expose merchant storage, print-output reconciliation, or subscription usage routes. `/api/v1/portal/shop/campus1` previously returned HTTP 404; customer tenant availability remains unverified.
+- Commit `a93b83a` (inactive-shop authorization) is pushed. The invoice-only billing backend and UI changes in the current workspace are not pushed; Vercel serves the previous frontend bundle. Render still responds with the old seven-path API and no `revision`; anonymous `/api/v1/developer/keys` returns HTTP 200. `/api/v1/portal/shop/campus1` previously returned HTTP 404; customer tenant availability remains unverified.
 - The latest Render log connected to Supabase PostgreSQL and then exited because Supabase Storage settings are missing or invalid. The current source reports the specific invalid settings; the supplied deployed log has an older generic error, so its revision is unverified.
 - Supabase Storage tests mock the HTTP API. Live bucket permissions and file retention have not been verified against the production project.
 - Razorpay tests use test doubles; a live sandbox checkout/webhook round trip has not been verified here.

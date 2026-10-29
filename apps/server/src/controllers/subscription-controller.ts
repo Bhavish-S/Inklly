@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { SubscriptionPlan } from '@inklly/shared';
 import { DatabaseService } from '@inklly/db';
+import { PilotBillingService } from '../services/pilot-billing';
 
 export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
   {
@@ -58,7 +59,8 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
 ];
 
 export class SubscriptionController {
-  constructor(private readonly db: DatabaseService) {}
+  private readonly pilotBilling: PilotBillingService;
+  constructor(private readonly db: DatabaseService) { this.pilotBilling = new PilotBillingService(db); }
 
   public listPlans = (_req: Request, res: Response) => {
     res.json(SUBSCRIPTION_PLANS.map(({ monthlyPricePaise: _monthly, annualPricePaise: _annual, ...plan }) => ({
@@ -106,5 +108,11 @@ export class SubscriptionController {
       billingStatus: 'METERING_ONLY',
       chargeCreated: false,
     });
+  };
+
+  public invoices = (req: Request, res: Response) => {
+    const organizationId = req.user?.organizationId;
+    if (!organizationId) return res.status(403).json({ error: 'An organization owner account is required.' });
+    return res.json(this.pilotBilling.listInvoices(organizationId));
   };
 }

@@ -209,6 +209,23 @@ export class DeveloperController {
             },
           },
         },
+        '/subscriptions/invoices': {
+          get: {
+            summary: 'List issued pilot invoices for the authenticated merchant organization',
+            description: 'Merchant-owner only. Statements are immutable INR Paise snapshots and remain manual-pending; this endpoint never records payment.',
+            security: [{ bearerAuth: [] }],
+            responses: { 200: { description: 'Invoices belonging only to the authenticated organization.' }, 401: { description: 'Authentication required.' }, 403: { description: 'Merchant owner role required.' } },
+          },
+        },
+        '/platform/billing/organizations/{organizationId}/tariffs': {
+          parameters: [{ name: 'organizationId', in: 'path', required: true, schema: { type: 'string' } }],
+          get: { summary: 'List effective-dated pilot billing tariffs for an organization', security: [{ bearerAuth: [] }], responses: { 200: { description: 'Append-only tariff history.' }, 403: { description: 'Platform billing:view permission required.' } } },
+          post: { summary: 'Add a month-effective pilot billing tariff', security: [{ bearerAuth: [] }], requestBody: { required: true }, responses: { 201: { description: 'Tariff recorded in integer Paise.' }, 400: { description: 'Invalid month or amount.' }, 409: { description: 'Tariff is not later than the current schedule.' } } },
+        },
+        '/platform/billing/invoices': {
+          get: { summary: 'List pilot invoices', security: [{ bearerAuth: [] }], responses: { 200: { description: 'Issued immutable invoice snapshots; no payment data is implied.' } } },
+          post: { summary: 'Issue an idempotent monthly pilot invoice from confirmed print-side usage', description: 'Requires an active organization and completed calendar month. Uses the effective tariff and append-only operator-confirmed usage. Does not charge the merchant or write a customer-payment ledger entry.', security: [{ bearerAuth: [] }], requestBody: { required: true }, responses: { 201: { description: 'Invoice issued.' }, 200: { description: 'Existing invoice returned for an idempotent replay.' }, 409: { description: 'The organization, tariff schedule, or period is not invoiceable.' } } },
+        },
         '/agent/enroll': {
           post: {
             summary: 'Pair Desktop Print Agent with Shop ID and secret key',

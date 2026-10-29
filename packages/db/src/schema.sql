@@ -536,6 +536,46 @@ CREATE TABLE IF NOT EXISTS subscription_usage_events (
 
 CREATE INDEX IF NOT EXISTS idx_subscription_usage_org_created ON subscription_usage_events(organization_id, created_at);
 
+-- Platform-to-merchant pilot billing is invoice-only. Tariffs and issued
+-- statements are immutable snapshots; this is separate from customer payments.
+CREATE TABLE IF NOT EXISTS subscription_billing_tariffs (
+    id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL,
+    monthly_base_paise INTEGER NOT NULL CHECK (monthly_base_paise >= 0),
+    per_side_paise INTEGER NOT NULL CHECK (per_side_paise >= 0),
+    included_sides INTEGER NOT NULL DEFAULT 0 CHECK (included_sides >= 0),
+    currency TEXT NOT NULL DEFAULT 'INR' CHECK (currency = 'INR'),
+    effective_from TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (organization_id, effective_from),
+    FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_billing_tariffs_org_effective ON subscription_billing_tariffs(organization_id, effective_from DESC);
+
+CREATE TABLE IF NOT EXISTS subscription_invoices (
+    id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL,
+    period_start TEXT NOT NULL,
+    period_end TEXT NOT NULL,
+    tariff_id TEXT NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'INR' CHECK (currency = 'INR'),
+    monthly_base_paise INTEGER NOT NULL CHECK (monthly_base_paise >= 0),
+    included_sides INTEGER NOT NULL CHECK (included_sides >= 0),
+    confirmed_sides INTEGER NOT NULL CHECK (confirmed_sides >= 0),
+    billable_sides INTEGER NOT NULL CHECK (billable_sides >= 0),
+    per_side_paise INTEGER NOT NULL CHECK (per_side_paise >= 0),
+    usage_fee_paise INTEGER NOT NULL CHECK (usage_fee_paise >= 0),
+    total_paise INTEGER NOT NULL CHECK (total_paise >= 0),
+    line_items_json TEXT NOT NULL,
+    issued_by TEXT NOT NULL,
+    issued_at TEXT NOT NULL,
+    UNIQUE (organization_id, period_start, period_end),
+    FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+    FOREIGN KEY (tariff_id) REFERENCES subscription_billing_tariffs(id)
+);
+CREATE INDEX IF NOT EXISTS idx_subscription_invoices_org_period ON subscription_invoices(organization_id, period_start DESC);
+
 CREATE TABLE IF NOT EXISTS credit_accounts (
     id TEXT PRIMARY KEY,
     shop_id TEXT NOT NULL UNIQUE,

@@ -665,6 +665,46 @@ export const api = {
     return res.json();
   },
 
+  async getSubscriptionInvoices() {
+    const res = await fetch(`${API_BASE}/subscriptions/invoices`, { headers: getHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to load billing statements');
+    return body;
+  },
+
+  async getPlatformBillingInvoices(organizationId?: string) {
+    const query = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : '';
+    const res = await fetch(`${API_BASE}/platform/billing/invoices${query}`, { headers: getHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to load pilot invoices');
+    return body;
+  },
+
+  async getPlatformBillingTariffs(organizationId: string) {
+    const res = await fetch(`${API_BASE}/platform/billing/organizations/${encodeURIComponent(organizationId)}/tariffs`, { headers: getHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to load billing rates');
+    return body;
+  },
+
+  async addPlatformBillingTariff(organizationId: string, payload: { monthlyBasePaise: number; perSidePaise: number; includedSides: number; effectiveFrom: string }) {
+    const res = await fetch(`${API_BASE}/platform/billing/organizations/${encodeURIComponent(organizationId)}/tariffs`, {
+      method: 'POST', headers: getHeaders(), body: JSON.stringify(payload),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to save pilot billing rates');
+    return body;
+  },
+
+  async issuePlatformBillingInvoice(payload: { organizationId: string; period: string }) {
+    const res = await fetch(`${API_BASE}/platform/billing/invoices`, {
+      method: 'POST', headers: getHeaders(), body: JSON.stringify(payload),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to issue pilot invoice');
+    return body;
+  },
+
   async getPlatformPlans() {
     const res = await fetch(`${API_BASE}/platform/plans`, { headers: getHeaders() });
     const body = await res.json().catch(() => ({}));

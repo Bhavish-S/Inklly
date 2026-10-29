@@ -31,6 +31,10 @@ export function createAdminRoutes(db: DatabaseService, fileStorage: PrivateFileS
   router.get('/subscriptions', requirePermission('billing:view'), controller.listSubscriptions);
   router.post('/subscriptions', requirePermission('billing:manage'), controller.createSubscription);
   router.patch('/subscriptions/:id', requirePermission('billing:manage'), controller.updateSubscription);
+  router.get('/billing/organizations/:organizationId/tariffs', requirePermission('billing:view'), controller.listBillingTariffs);
+  router.post('/billing/organizations/:organizationId/tariffs', requirePermission('billing:manage'), controller.addBillingTariff);
+  router.get('/billing/invoices', requirePermission('billing:view'), controller.listBillingInvoices);
+  router.post('/billing/invoices', requirePermission('billing:manage'), controller.issueBillingInvoice);
 
   return router;
 }

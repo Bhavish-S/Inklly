@@ -949,6 +949,61 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     }
   });
 
+  it('issues tenant-scoped invoice-only pilot bills with configurable Paise rates', async () => {
+    const platformLogin = await fetch(`${baseUrl}/api/v1/auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'admin@inklly.com', password: 'DemoPlatformPassword123!' }),
+    });
+    assert.equal(platformLogin.status, 200);
+    adminToken = (await platformLogin.json() as any).token;
+    const now = new Date();
+    const previousMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+    const period = `${previousMonthStart.getUTCFullYear()}-${String(previousMonthStart.getUTCMonth() + 1).padStart(2, '0')}`;
+    const usageTimestamp = `${previousMonthStart.toISOString().slice(0, 10)}T12:00:00.000Z`;
+    const sourceOrder = db.queryOne<any>(`SELECT o.id FROM orders o LEFT JOIN subscription_usage_events u ON u.order_id = o.id WHERE o.shop_id = 'shop-campus-1' AND o.id <> ? AND u.id IS NULL LIMIT 1`, [cashOrderId]);
+    assert.ok(sourceOrder?.id);
+    db.execute(`INSERT INTO subscription_usage_events (id, organization_id, shop_id, order_id, confirmed_sides, confirmation_source, created_at)
+      VALUES (?, 'org-campus-network', 'shop-campus-1', ?, 10, 'OPERATOR_PHYSICAL_INSPECTION', ?)`, [`billing-usage-${crypto.randomUUID()}`, sourceOrder.id, usageTimestamp]);
+
+    const tariffUrl = `${baseUrl}/api/v1/platform/billing/organizations/org-campus-network/tariffs`;
+    const tariffRes = await fetch(tariffUrl, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ monthlyBasePaise: 49900, perSidePaise: 4, includedSides: 2, effectiveFrom: `${period}-01` }),
+    });
+    assert.equal(tariffRes.status, 201, await tariffRes.clone().text());
+    const tariff = (await tariffRes.json() as any).tariff;
+    assert.equal(tariff.currency, 'INR');
+
+    const ledgerBefore = Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM ledger_entries`)?.count || 0);
+    const issue = () => fetch(`${baseUrl}/api/v1/platform/billing/invoices`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ organizationId: 'org-campus-network', period }),
+    });
+    const first = await issue();
+    assert.equal(first.status, 201, await first.clone().text());
+    const firstBody = await first.json() as any;
+    assert.deepEqual([firstBody.invoice.confirmedSides, firstBody.invoice.includedSides, firstBody.invoice.billableSides], [10, 2, 8]);
+    assert.deepEqual([firstBody.invoice.monthlyBasePaise, firstBody.invoice.perSidePaise, firstBody.invoice.usageFeePaise, firstBody.invoice.totalPaise], [49900, 4, 32, 49932]);
+    assert.equal(firstBody.invoice.status, 'ISSUED');
+    assert.equal(firstBody.invoice.collectionStatus, 'MANUAL_PENDING');
+    assert.equal(firstBody.invoice.paymentRecorded, false);
+    const replay = await issue();
+    assert.equal(replay.status, 200);
+    assert.equal((await replay.json() as any).invoice.id, firstBody.invoice.id);
+    assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM ledger_entries`)?.count || 0), ledgerBefore);
+
+    const merchantInvoices = await fetch(`${baseUrl}/api/v1/subscriptions/invoices`, { headers: { Authorization: `Bearer ${merchantToken}` } });
+    assert.equal(merchantInvoices.status, 200);
+    const ownInvoices = await merchantInvoices.json() as any[];
+    assert.deepEqual(ownInvoices.map((invoice) => invoice.id), [firstBody.invoice.id]);
+    assert.equal((await fetch(`${baseUrl}/api/v1/subscriptions/invoices`)).status, 401);
+    const ownerCannotSetTariff = await fetch(tariffUrl, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+      body: JSON.stringify({ monthlyBasePaise: 1, perSidePaise: 1, includedSides: 0, effectiveFrom: '2999-01-01' }),
+    });
+    assert.equal(ownerCannotSetTariff.status, 403);
+  });
+
   it('Agent download endpoint never claims an unconfigured installer exists', async () => {
     const scriptRes = await fetch(`${baseUrl}/api/v1/agent/download?platform=win-x64&shopCode=campus1&format=script`);
     assert.equal(scriptRes.status, 410);
@@ -1309,6 +1364,8 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(spec.openapi, '3.0.3');
     assert.ok(spec.paths['/portal/quote']);
     assert.ok(spec.paths['/subscriptions/usage']?.get.description.includes('does not create a charge'));
+    assert.ok(spec.paths['/subscriptions/invoices']?.get.description.includes('never records payment'));
+    assert.ok(spec.paths['/platform/billing/invoices']?.post.description.includes('Does not charge'));
     assert.ok(!spec.paths['/subscriptions/usage']?.get.description.includes('active subscription'));
     assert.ok(spec.paths['/developer/webhooks/{id}/deliveries']?.get.description.includes('HMAC SHA-256'));
 

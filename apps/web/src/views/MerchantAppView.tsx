@@ -692,6 +692,8 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [subscriptionUsage, setSubscriptionUsage] = useState<{ periodStart: string; periodEnd: string; confirmedOrders: number; confirmedSides: number } | null>(null);
   const [subscriptionUsageError, setSubscriptionUsageError] = useState('');
   const [subscriptionUsageLoading, setSubscriptionUsageLoading] = useState(false);
+  const [subscriptionInvoices, setSubscriptionInvoices] = useState<any[]>([]);
+  const [subscriptionInvoiceError, setSubscriptionInvoiceError] = useState('');
   const [collectingOrder, setCollectingOrder] = useState(false);
   const [creditPurchaseToast, setCreditPurchaseToast] = useState<string | null>(null);
 
@@ -1036,10 +1038,13 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     let cancelled = false;
     setSubscriptionUsageLoading(true);
     setSubscriptionUsageError('');
-    api.getSubscriptionUsage().then((usage) => {
-      if (!cancelled) setSubscriptionUsage(usage);
-    }).catch((error: unknown) => {
-      if (!cancelled) setSubscriptionUsageError(error instanceof Error ? error.message : 'Could not load usage.');
+    setSubscriptionInvoiceError('');
+    Promise.allSettled([api.getSubscriptionUsage(), api.getSubscriptionInvoices()]).then(([usageResult, invoiceResult]) => {
+      if (cancelled) return;
+      if (usageResult.status === 'fulfilled') setSubscriptionUsage(usageResult.value);
+      else setSubscriptionUsageError(usageResult.reason instanceof Error ? usageResult.reason.message : 'Could not load usage.');
+      if (invoiceResult.status === 'fulfilled') setSubscriptionInvoices(invoiceResult.value);
+      else setSubscriptionInvoiceError(invoiceResult.reason instanceof Error ? invoiceResult.reason.message : 'Could not load billing statements.');
     }).finally(() => {
       if (!cancelled) setSubscriptionUsageLoading(false);
     });
@@ -3088,7 +3093,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   <section className="mx-auto my-10 max-w-3xl rounded-2xl border border-slate-200 bg-white p-8 shadow-sm dark:border-slate-700 dark:bg-slate-900">
     <p className="text-xs font-bold uppercase tracking-wider text-indigo-600">Pilot billing</p>
     <h2 className="mt-2 text-2xl font-extrabold text-slate-900 dark:text-white">Print-side usage</h2>
-    <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">Usage is recorded after staff confirm complete physical output. These totals are informational; subscription pricing and payment collection are not active, and this meter does not create charges.</p>
+    <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">Usage counts only staff-confirmed physical output. Issued pilot statements show the configured monthly base and per-side rate; collection is manual and no payment is recorded here.</p>
     {liveUser?.role !== 'MERCHANT_OWNER' ? (
       <p className="mt-5 rounded-xl bg-slate-50 p-4 text-sm text-slate-600 dark:bg-slate-800 dark:text-slate-300">Usage totals are available to the merchant owner.</p>
     ) : subscriptionUsageLoading ? (
@@ -3108,6 +3113,23 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
         <p className="text-xs text-slate-500 sm:col-span-2">Period: {new Date(subscriptionUsage.periodStart).toLocaleDateString('en-IN')} – {new Date(subscriptionUsage.periodEnd).toLocaleDateString('en-IN')}. Side totals use server-stored page ranges and copies, confirmed by shop staff.</p>
       </div>
     ) : null}
+    <div className="mt-7 border-t border-slate-200 pt-5 dark:border-slate-700">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">Pilot billing statements</h3>
+        <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">Manual collection</span>
+      </div>
+      {subscriptionInvoiceError ? <p role="alert" className="mt-3 text-sm text-rose-700 dark:text-rose-300">{subscriptionInvoiceError}</p> : subscriptionInvoices.length === 0 ? <p className="mt-3 text-sm text-slate-500">No invoices have been issued for this organization.</p> : (
+        <ul className="mt-3 divide-y divide-slate-100 dark:divide-slate-800">
+          {subscriptionInvoices.map((invoice) => (
+            <li key={invoice.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div><div className="text-sm font-bold text-slate-900 dark:text-white">{new Date(invoice.periodStart).toLocaleDateString('en-IN', { month: 'long', year: 'numeric', timeZone: 'UTC' })}</div><div className="text-xs text-slate-500">{invoice.confirmedSides.toLocaleString()} confirmed sides · {invoice.status} · {invoice.collectionStatus.replace(/_/g, ' ').toLowerCase()}</div></div>
+              <div className="text-sm font-extrabold text-slate-900 dark:text-white">{new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(invoice.totalPaise / 100)}</div>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="mt-2 text-[11px] text-slate-500">Statements are immutable and before any tax, which is not configured. This view does not collect payment.</p>
+    </div>
     <button type="button" onClick={() => onNavigate?.('/pricing')} className="mt-6 min-h-11 rounded-xl bg-indigo-600 px-5 text-sm font-bold text-white hover:bg-indigo-700">View pilot pricing</button>
   </section>
 )}

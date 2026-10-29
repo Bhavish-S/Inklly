@@ -4,6 +4,7 @@ import { SubscriptionPlan, MoneyDomain } from '@inklly/shared';
 import * as crypto from 'node:crypto';
 import { PrivateFileStorage } from '../services/private-file-storage';
 import { purgeExpiredPrintFiles } from '../services/print-file-retention';
+import { PilotBillingError, PilotBillingService } from '../services/pilot-billing';
 
 export const SAAS_PLANS: SubscriptionPlan[] = [
   {
@@ -65,13 +66,15 @@ const ALLOWED_PLAN_STATUSES = new Set([
 ]);
 
 export class AdminController {
+  private readonly pilotBilling: PilotBillingService;
+
   constructor(
     private db: DatabaseService,
     private ledgerRepo: LedgerRepository,
     private userRepo: UserRepository,
     private enquiryRepo: EnquiryRepository,
     private fileStorage: PrivateFileStorage
-  ) {}
+  ) { this.pilotBilling = new PilotBillingService(db); }
 
   public getOverview = (req: Request, res: Response) => {
     const orgs = this.db.query<any>(`SELECT COUNT(*) as count FROM organizations`);
@@ -437,5 +440,69 @@ export class AdminController {
 
   public updateSubscription = (req: Request, res: Response) => {
     return res.status(503).json({ error: 'Subscription billing is not configured. Subscription changes are unavailable.' });
+  };
+
+  public listBillingTariffs = (req: Request, res: Response) => {
+    const organizationId = String(req.params.organizationId || '');
+    if (!this.db.queryOne(`SELECT id FROM organizations WHERE id = ?`, [organizationId])) return res.status(404).json({ error: 'Organization not found.' });
+    return res.json(this.pilotBilling.listTariffs(organizationId));
+  };
+
+  public addBillingTariff = (req: Request, res: Response) => {
+    const organizationId = String(req.params.organizationId || '');
+    try {
+      const tariff = this.db.transaction(() => {
+        const created = this.pilotBilling.addTariff({
+          organizationId,
+          monthlyBasePaise: req.body?.monthlyBasePaise,
+          perSidePaise: req.body?.perSidePaise,
+          includedSides: req.body?.includedSides ?? 0,
+          effectiveFrom: req.body?.effectiveFrom,
+          createdBy: req.user!.userId,
+        });
+        this.userRepo.logAuditEvent({
+          id: crypto.randomUUID(), actorUserId: req.user?.userId, actorRole: req.user?.role,
+          organizationId, action: 'PILOT_BILLING_TARIFF_CREATED', targetType: 'BILLING_TARIFF', targetId: created.id,
+          outcome: 'SUCCESS', ipAddress: req.ip,
+          details: { monthlyBasePaise: created.monthlyBasePaise, perSidePaise: created.perSidePaise, includedSides: created.includedSides, effectiveFrom: created.effectiveFrom },
+          createdAt: new Date().toISOString(),
+        });
+        return created;
+      });
+      return res.status(201).json({ tariff });
+    } catch (error) {
+      if (error instanceof PilotBillingError) return res.status(error.statusCode).json({ error: error.message });
+      throw error;
+    }
+  };
+
+  public listBillingInvoices = (req: Request, res: Response) => {
+    const organizationId = typeof req.query.organizationId === 'string' ? req.query.organizationId : undefined;
+    const rawLimit = Number(req.query.limit ?? 100);
+    const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(100, Math.floor(rawLimit))) : 100;
+    return res.json(this.pilotBilling.listInvoices(organizationId, limit));
+  };
+
+  public issueBillingInvoice = (req: Request, res: Response) => {
+    const organizationId = typeof req.body?.organizationId === 'string' ? req.body.organizationId : '';
+    try {
+      const result = this.db.transaction(() => {
+        const issued = this.pilotBilling.issueMonthlyInvoice(organizationId, req.body?.period, req.user!.userId);
+        if (issued.created) {
+          this.userRepo.logAuditEvent({
+            id: crypto.randomUUID(), actorUserId: req.user?.userId, actorRole: req.user?.role,
+            organizationId, action: 'PILOT_BILLING_INVOICE_ISSUED', targetType: 'SUBSCRIPTION_INVOICE', targetId: issued.invoice.id,
+            outcome: 'SUCCESS', ipAddress: req.ip,
+            details: { periodStart: issued.invoice.periodStart, periodEnd: issued.invoice.periodEnd, totalPaise: issued.invoice.totalPaise, currency: issued.invoice.currency },
+            createdAt: new Date().toISOString(),
+          });
+        }
+        return issued;
+      });
+      return res.status(result.created ? 201 : 200).json(result);
+    } catch (error) {
+      if (error instanceof PilotBillingError) return res.status(error.statusCode).json({ error: error.message });
+      throw error;
+    }
   };
 }

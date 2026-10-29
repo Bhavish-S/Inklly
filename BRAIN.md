@@ -14,7 +14,7 @@ Safety requirements:
 - An ambiguous spooler result is `OUTPUT_UNCERTAIN`. Never automatically retry it; require operator reconciliation.
 - Derive merchant tenant scope from the authenticated membership. Client-provided shop IDs are not authorization.
 - Distinguish provider acceptance, spooler submission, and confirmed physical output. Do not imply a printer produced paper unless the system can prove it.
-- Treat all payment, printer, WhatsApp, webhook, installer, and billing integrations as unavailable until end-to-end evidence exists.
+- Treat all payment, printer, WhatsApp, webhook, installer, and automated billing integrations as unavailable until end-to-end evidence exists. Local pilot invoice statements do not represent collected money.
 
 ## Repository map
 
@@ -50,21 +50,22 @@ Implemented locally with regression coverage:
 - Staff invitation and platform tenant onboarding use hashed single-use activation links.
 - Razorpay credentials and developer webhook secrets are encrypted at rest; payment signature checks and provider event deduplication exist in source, but live provider verification has not been done.
 - Private customer files use a private-storage abstraction and retention cleanup; production Supabase storage has not been verified against the live bucket.
-- After audited physical-output confirmation, one idempotent usage event stores expected selected pages multiplied by copies. The owner can view period totals; this is an operator-confirmed meter, not a printer hardware count, and it creates no charge. Subscription tariff, invoicing, and checkout remain inactive.
+- After audited physical-output confirmation, one idempotent usage event stores expected selected pages multiplied by copies. The owner can view period totals; this is an operator-confirmed meter, not a printer hardware count, and it creates no charge by itself. Tariffs and invoice-only statements are implemented locally; checkout and collection remain inactive.
+- Invoice-only pilot billing now stores append-only organization-specific tariffs by effective month and immutable, idempotent monthly statements from confirmed-side usage. Platform tariff/invoice operations are permission-gated and transactionally audited; merchant owners see only their organization's statements. Statements are manual-pending, before tax, create no ledger/payment entry, and do not enable checkout or automatic collection.
 - Refund requests reserve the remaining verified payment balance. A merchant can reject a pending request with an audited reason and no money movement; approval remains unavailable until provider refund processing is configured.
 - Agent local status endpoints are read-only and host/origin validated. Physical printing remains disabled by default; the production installer is unavailable.
 
-Latest verified local run on 2026-10-29: `npm run build` passed and `npm test` passed 212 tests after the inactive-shop authorization regression was added. `npm audit --audit-level=high` could not reach the npm advisory endpoint on two earlier attempts. Commit `e135daf` is pushed, and Vercel serves its matching web bundle. Render continues serving the older API. Live PostgreSQL migrations/triggers, object storage, provider, webhook destinations, browser, and hardware behavior remain unverified.
+Latest verified local run on 2026-10-29: `npm run build` passed and `npm test` passed 215 tests after the invoice-only pilot billing slice. `npm audit --audit-level=high` could not reach the npm advisory endpoint on two earlier attempts. Commit `a93b83a` is pushed; the invoice slice is local and unpushed. Vercel and Render deployment of the new UI/API remain unverified; Render was still serving an older seven-path API on the last live check. Live PostgreSQL migrations/triggers, object storage, provider, webhook destinations, browser, and hardware behavior remain unverified.
 
 ## Known incomplete product areas
 
 - Real tenant provisioning/deployment state: the local health handler returns `RENDER_GIT_COMMIT`, but the live Render health response still omits `revision`; its OpenAPI document has only seven paths and `/api/v1/portal/shop/campus1` returns 404. This indicates Render is still serving an older backend revision. Do not seed fake production tenants.
-- Payment: no verified live Razorpay sandbox checkout/webhook round trip. Per-side output usage is recorded after operator confirmation and visible to owners; tariff management and subscription charges remain inactive.
+- Payment and billing: no verified live Razorpay sandbox checkout/webhook round trip. Per-side output usage drives immutable invoice-only pilot statements with configurable effective-dated rates; automated SaaS checkout/collection, tax calculation, quota enforcement, and payment reconciliation remain inactive.
 - Financial ledger: SQLite and PostgreSQL startup migrations add update/delete rejection triggers and provider transaction uniqueness. These migrations have local SQLite tests; live Supabase migration, legacy duplicate analysis, database-owner privilege hardening, and full reconciliation remain unverified.
 - Vault: authorized staff can upload inspected PDF/JPEG/PNG files, organize categories, download through the private storage API, and delete stored documents. Order-file 24-hour cleanup does not purge vault documents; vault records remain until staff delete them, so approve a retention/privacy policy before production use. Live Supabase behavior is unverified.
 - WhatsApp: no real Meta onboarding, credential lifecycle, inbound intake, or outbound delivery; setup/pairing fails closed.
 - Developer API keys can be created/revoked and authenticate merchant business routes only when `ENABLE_EXTERNAL_API_ACCESS=true`; they are bound to one shop and checked for environment, expiry, revocation, owner membership, and limited scopes. Webhook infrastructure supports three persisted event types and signed retrying delivery. Hosted delivery verification and broader event types remain incomplete.
-- Platform incidents and runtime configuration are not fully backed by durable operational services. The admin console labels these workflows unavailable and does not fabricate records or success messages. Subscription billing and plan quota enforcement are incomplete.
+- Platform incidents and runtime configuration are not fully backed by durable operational services. The admin console labels these workflows unavailable and does not fabricate records or success messages. Pilot tariff and invoice APIs are implemented locally; recurring subscription state management, automatic collection, and plan quota enforcement remain incomplete.
 - Physical Windows printer output, capabilities, status fidelity, signed installer, and crash/recovery behavior still require supported hardware verification.
 - Production backups, recovery drills, shared rate limiting, monitoring, legal/privacy review, and account recovery need release work.
 
