@@ -1338,14 +1338,29 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       });
       assert.equal(unsupportedDirectReady.status, 409);
 
+      const pendingJobId = `job-pending-${crypto.randomUUID()}`;
+      const fileId = db.queryOne<any>(`SELECT id FROM order_files WHERE order_id = ? ORDER BY id LIMIT 1`, [cashOrderId]).id;
+      const now = new Date().toISOString();
+      db.execute(`INSERT INTO print_jobs (id, order_id, order_file_id, status, created_at, updated_at) VALUES (?, ?, ?, 'OUTPUT_UNCERTAIN', ?, ?)`, [pendingJobId, cashOrderId, fileId, now, now]);
+      const inspectedJobIds = db.query<any>(`SELECT id FROM print_jobs WHERE order_id = ? AND id <> ? ORDER BY id`, [cashOrderId, pendingJobId]).map((job) => job.id);
+
       const reconciliation = await fetch(`${baseUrl}/api/v1/merchant/orders/${cashOrderId}/reconcile-output`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
-        body: JSON.stringify({ physicalOutputConfirmed: true, reason: 'Inspected all pages in the output tray and confirmed the full order is present.' }),
+        body: JSON.stringify({ physicalOutputConfirmed: true, confirmedJobIds: inspectedJobIds, reason: 'Inspected the completed output for each selected print job.' }),
       });
       assert.equal(reconciliation.status, 200, await reconciliation.clone().text());
       assert.equal(db.queryOne<any>(`SELECT status FROM print_jobs WHERE id = ?`, [ticket.jobId]).status, 'PRINT_CONFIRMED');
+      assert.equal(db.queryOne<any>(`SELECT status FROM print_jobs WHERE id = ?`, [pendingJobId]).status, 'OUTPUT_UNCERTAIN');
+      assert.equal(db.queryOne<any>(`SELECT status FROM orders WHERE id = ?`, [cashOrderId]).status, 'IN_PROGRESS');
+      assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM subscription_usage_events WHERE order_id = ?`, [cashOrderId]).count), 0, 'partial output must not be metered');
+
+      const finalReconciliation = await fetch(`${baseUrl}/api/v1/merchant/orders/${cashOrderId}/reconcile-output`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+        body: JSON.stringify({ physicalOutputConfirmed: true, confirmedJobIds: [pendingJobId], reason: 'Inspected the remaining output and confirmed it is complete.' }),
+      });
+      assert.equal(finalReconciliation.status, 200, await finalReconciliation.clone().text());
       assert.equal(db.queryOne<any>(`SELECT status FROM orders WHERE id = ?`, [cashOrderId]).status, 'READY_FOR_COLLECTION');
-      assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM audit_events WHERE action = 'MERCHANT_PRINT_OUTPUT_RECONCILED' AND target_id = ?`, [cashOrderId]).count), 1);
+      assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM audit_events WHERE action = 'MERCHANT_PRINT_OUTPUT_RECONCILED' AND target_id = ?`, [cashOrderId]).count), 2, 'each partial reconciliation should have its own audit record');
 
       const anonymousUsage = await fetch(`${baseUrl}/api/v1/subscriptions/usage`);
       assert.equal(anonymousUsage.status, 401);

@@ -33,7 +33,10 @@ export class MerchantController {
   ) {}
 
   private presentOrder(order: any) {
-    return { ...order, files: (order.files || []).map((file: any) => {
+    const printJobs = this.db.query<any>(
+      `SELECT id, order_file_id, status FROM print_jobs WHERE order_id = ? ORDER BY id`, [order.id]
+    ).map((job) => ({ id: job.id, orderFileId: job.order_file_id, status: job.status }));
+    return { ...order, printJobs, files: (order.files || []).map((file: any) => {
       const { storageKey: _storageKey, ...safeFile } = file;
       return { ...safeFile, fileUrl: `/api/v1/merchant/orders/${encodeURIComponent(order.id)}/files/${encodeURIComponent(file.id)}` };
     }) };
@@ -228,7 +231,11 @@ export class MerchantController {
     const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
     if (!shopId) return res.status(403).json({ error: 'An authenticated shop is required.' });
     if (req.body?.physicalOutputConfirmed !== true || reason.length < 10 || reason.length > 500) {
-      return res.status(400).json({ error: 'Confirm that you physically inspected the complete output and provide a 10–500 character note.' });
+      return res.status(400).json({ error: 'Confirm that you physically inspected the reported output and provide a 10–500 character note.' });
+    }
+    const requestedJobIds = req.body?.confirmedJobIds;
+    if (requestedJobIds !== undefined && (!Array.isArray(requestedJobIds) || requestedJobIds.length < 1 || requestedJobIds.length > 100 || requestedJobIds.some((id: unknown) => typeof id !== 'string' || id.length < 1 || id.length > 200) || new Set(requestedJobIds).size !== requestedJobIds.length)) {
+      return res.status(400).json({ error: 'confirmedJobIds must contain 1–100 unique print job IDs that you physically inspected.' });
     }
 
     const order = this.orderRepo.getOrderByIdForShop(orderId, shopId);
@@ -242,7 +249,7 @@ export class MerchantController {
 
     const allowedStatuses: PrintJobStatus[] = [
       'DISPATCHED', 'SUBMITTED_TO_SPOOLER', 'OUTPUT_PENDING_CONFIRMATION',
-      'OUTPUT_UNCERTAIN', 'NEEDS_PHYSICAL_VERIFICATION', 'PRINT_CONFIRMED',
+      'PARTIAL_OUTPUT', 'OUTPUT_UNCERTAIN', 'NEEDS_PHYSICAL_VERIFICATION', 'PRINT_CONFIRMED',
     ];
     const actorId = req.user?.userId;
     if (!actorId) return res.status(401).json({ error: 'Authentication required.' });
@@ -257,17 +264,24 @@ export class MerchantController {
           throw new Error('RECONCILIATION_CONFLICT: order state changed; refresh and review it.');
         }
         const jobs = this.db.query<any>(
-          `SELECT id, status FROM print_jobs WHERE order_id = ? ORDER BY id`, [orderId]
+          `SELECT id, order_file_id, status FROM print_jobs WHERE order_id = ? ORDER BY id`, [orderId]
         );
-        if (!jobs.length || jobs.some((job) => !allowedStatuses.includes(job.status as PrintJobStatus))) {
-          throw new Error('RECONCILIATION_CONFLICT: one or more print jobs are not eligible for physical-output confirmation. Do not retry them blindly.');
+        const jobIdsToConfirm: string[] = requestedJobIds ?? jobs.map((job) => job.id);
+        const selectedJobs = jobs.filter((job) => jobIdsToConfirm.includes(job.id));
+        if (!jobs.length || selectedJobs.length !== jobIdsToConfirm.length || selectedJobs.some((job) => !allowedStatuses.includes(job.status as PrintJobStatus))) {
+          throw new Error('RECONCILIATION_CONFLICT: one or more selected print jobs do not belong to this order or are not eligible for physical-output confirmation. Do not retry them blindly.');
         }
 
         const org = this.db.queryOne<any>(`SELECT organization_id FROM shops WHERE id = ?`, [shopId]);
         if (!org?.organization_id) throw new Error('RECONCILIATION_CONFLICT: shop billing organization is unavailable.');
-        const files = this.db.query<any>(`SELECT page_count, print_options FROM order_files WHERE order_id = ?`, [orderId]);
-        if (!files.length) throw new Error('RECONCILIATION_CONFLICT: order has no billable print files.');
-        const confirmedSides = files.reduce((total, file) => {
+        const files = this.db.query<any>(
+          `SELECT id, page_count, print_options FROM order_files WHERE order_id = ?`, [orderId]
+        );
+        if (!files.length || jobs.some((job) => !files.some((file) => file.id === job.order_file_id))) throw new Error('RECONCILIATION_CONFLICT: order has missing or unlinked print files.');
+        const selectedFileIds = new Set(selectedJobs.map((job) => job.order_file_id));
+        const selectedFiles = files.filter((file) => selectedFileIds.has(file.id));
+        if (selectedFiles.length !== selectedFileIds.size) throw new Error('RECONCILIATION_CONFLICT: one or more selected print files are unavailable.');
+        const physicallyConfirmedSides = selectedFiles.reduce((total, file) => {
           const options = JSON.parse(String(file.print_options));
           const copies = Number(options.copies);
           if (!Number.isInteger(copies) || copies < 1 || copies > 500) throw new Error('RECONCILIATION_CONFLICT: order print settings are invalid.');
@@ -275,10 +289,10 @@ export class MerchantController {
           if (!Number.isSafeInteger(total + sides)) throw new Error('RECONCILIATION_CONFLICT: confirmed print side count exceeds supported limits.');
           return total + sides;
         }, 0);
-        if (!Number.isInteger(confirmedSides) || confirmedSides < 1) throw new Error('RECONCILIATION_CONFLICT: confirmed print side count is invalid.');
+        if (!Number.isInteger(physicallyConfirmedSides) || physicallyConfirmedSides < 1) throw new Error('RECONCILIATION_CONFLICT: confirmed print side count is invalid.');
 
         const changedJobs: Array<{ id: string; previousStatus: string }> = [];
-        for (const job of jobs) {
+        for (const job of selectedJobs) {
           if (job.status === 'PRINT_CONFIRMED') continue;
           let from = job.status as PrintJobStatus;
           if (from === 'OUTPUT_UNCERTAIN') {
@@ -291,21 +305,37 @@ export class MerchantController {
           changedJobs.push({ id: job.id, previousStatus: job.status });
         }
 
-        if (current.status !== 'READY_FOR_COLLECTION') this.orderRepo.updateOrderStatus(orderId, 'READY_FOR_COLLECTION');
-        this.db.execute(
-          `INSERT INTO subscription_usage_events (id, organization_id, shop_id, order_id, confirmed_sides, confirmation_source, created_at)
-           VALUES (?, ?, ?, ?, ?, 'OPERATOR_PHYSICAL_INSPECTION', ?) ON CONFLICT (order_id) DO NOTHING`,
-          [crypto.randomUUID(), org.organization_id, shopId, orderId, confirmedSides, now]
-        );
+        const currentJobStates = this.db.query<any>(`SELECT id, status FROM print_jobs WHERE order_id = ? ORDER BY id`, [orderId]);
+        const orderComplete = currentJobStates.length > 0 && currentJobStates.every((job) => job.status === 'PRINT_CONFIRMED');
+        let confirmedSides: number | null = null;
+        if (orderComplete) {
+          if (current.status !== 'READY_FOR_COLLECTION') this.orderRepo.updateOrderStatus(orderId, 'READY_FOR_COLLECTION');
+          // Usage events are order-scoped and append-only; meter only once every file is confirmed.
+          const totalConfirmedSides = files.reduce((total, file) => {
+            const options = JSON.parse(String(file.print_options));
+            const copies = Number(options.copies);
+            if (!Number.isInteger(copies) || copies < 1 || copies > 500) throw new Error('RECONCILIATION_CONFLICT: order print settings are invalid.');
+            const sides = parsePageRange(typeof options.pageRange === 'string' ? options.pageRange : undefined, Number(file.page_count)).length * copies;
+            if (!Number.isSafeInteger(total + sides)) throw new Error('RECONCILIATION_CONFLICT: confirmed print side count exceeds supported limits.');
+            return total + sides;
+          }, 0);
+          if (!Number.isInteger(totalConfirmedSides) || totalConfirmedSides < 1) throw new Error('RECONCILIATION_CONFLICT: confirmed print side count is invalid.');
+          confirmedSides = totalConfirmedSides;
+          this.db.execute(
+            `INSERT INTO subscription_usage_events (id, organization_id, shop_id, order_id, confirmed_sides, confirmation_source, created_at)
+             VALUES (?, ?, ?, ?, ?, 'OPERATOR_PHYSICAL_INSPECTION', ?) ON CONFLICT (order_id) DO NOTHING`,
+            [crypto.randomUUID(), org.organization_id, shopId, orderId, totalConfirmedSides, now]
+          );
+        }
         this.userRepo.logAuditEvent({
           id: crypto.randomUUID(), actorUserId: actorId, actorRole: req.user?.role,
           shopId, organizationId: req.user?.organizationId,
           action: 'MERCHANT_PRINT_OUTPUT_RECONCILED', targetType: 'ORDER', targetId: orderId,
           outcome: 'SUCCESS', ipAddress: req.ip,
-          details: { confirmationSource: 'OPERATOR_PHYSICAL_INSPECTION', physicalOutputConfirmed: true, confirmedSides, usageMeter: 'selected document pages multiplied by copies', reason, changedJobs },
+          details: { confirmationSource: 'OPERATOR_PHYSICAL_INSPECTION', physicalOutputConfirmed: true, physicallyConfirmedSides, orderComplete, meteredSides: confirmedSides, usageMeter: 'selected document pages multiplied by copies after all files are confirmed', reason, changedJobs },
           createdAt: now,
         });
-        return { order: this.orderRepo.getOrderByIdForShop(orderId, shopId), reconciledJobs: changedJobs.length, confirmedSides };
+        return { order: this.orderRepo.getOrderByIdForShop(orderId, shopId), reconciledJobs: changedJobs.length, confirmedJobIds: selectedJobs.map((job) => job.id), pendingJobIds: currentJobStates.filter((job) => job.status !== 'PRINT_CONFIRMED').map((job) => job.id), orderComplete, physicallyConfirmedSides, confirmedSides };
       });
       return res.json({ success: true, ...result });
     } catch (error: any) {

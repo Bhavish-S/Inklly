@@ -359,11 +359,11 @@ export const api = {
     return body;
   },
 
-  async reconcilePrintOutput(orderId: string, reason: string) {
+  async reconcilePrintOutput(orderId: string, reason: string, confirmedJobIds?: string[]) {
     const res = await fetch(`${API_BASE}/merchant/orders/${encodeURIComponent(orderId)}/reconcile-output`, {
       method: 'POST',
       headers: getHeaders(),
-      body: JSON.stringify({ physicalOutputConfirmed: true, reason }),
+      body: JSON.stringify({ physicalOutputConfirmed: true, reason, ...(confirmedJobIds ? { confirmedJobIds } : {}) }),
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || 'Could not reconcile print output');

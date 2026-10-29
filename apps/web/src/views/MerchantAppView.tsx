@@ -395,6 +395,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
   const [reconcileReason, setReconcileReason] = useState('');
   const [physicalOutputConfirmed, setPhysicalOutputConfirmed] = useState(false);
+  const [confirmedOutputJobIds, setConfirmedOutputJobIds] = useState<string[]>([]);
   const [reconcilingOutput, setReconcilingOutput] = useState(false);
 
   // Live Print search & filter
@@ -988,6 +989,8 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       id: o.orderNumber || o.id,
       rawId: o.id,
       rawStatus: o.status,
+      files: o.files || [],
+      printJobs: o.printJobs || [],
       customer: o.customerName || 'Walk-in Customer',
       phone: o.customerPhone || 'Counter QR',
       document: file?.fileName || 'Customer_Document.pdf',
@@ -1424,18 +1427,21 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     setTimeout(() => setOrderActionToast(null), 3000);
   };
 
-  const handleReconcilePrintOutput = async (orderId: string) => {
+  const handleReconcilePrintOutput = async (orderId: string, confirmedJobIds: string[]) => {
     if (!physicalOutputConfirmed || reconcileReason.trim().length < 10) return;
     const order = findCachedOrder(orderId);
     const targetId = order?.rawId || orderId;
     setReconcilingOutput(true);
     try {
-      await api.reconcilePrintOutput(targetId, reconcileReason.trim());
+      const reconciliation = await api.reconcilePrintOutput(targetId, reconcileReason.trim(), confirmedJobIds);
       await fetchLiveOrdersFromApi();
       setSelectedOrder(null);
       setReconcileReason('');
       setPhysicalOutputConfirmed(false);
-      setOrderActionToast(`Order #${orderId}: physical output recorded and audit logged.`);
+      setConfirmedOutputJobIds([]);
+      setOrderActionToast(reconciliation.orderComplete
+        ? `Order #${orderId}: all output was verified and is ready for collection.`
+        : `Order #${orderId}: inspected output recorded. Remaining files still need review.`);
     } catch (error) {
       setOrderActionToast(error instanceof Error ? error.message : 'Print output could not be reconciled.');
     } finally {
@@ -2828,17 +2834,28 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                     <section className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3 dark:border-amber-900 dark:bg-amber-950/30">
                       <div>
                         <h4 className="text-xs font-extrabold text-amber-950 dark:text-amber-100">Reconcile physical print output</h4>
-                        <p className="mt-1 text-[11px] leading-5 text-amber-900/80 dark:text-amber-200/80">Inspect the printer and every requested page. This confirms all files in the order are complete; spooler acceptance alone is not proof of printed output.</p>
+                        <p className="mt-1 text-[11px] leading-5 text-amber-900/80 dark:text-amber-200/80">Select only files whose complete output you physically inspected. The order becomes ready for collection after every file is confirmed; spooler acceptance alone is not proof of printed output.</p>
+                      </div>
+                      <div className="space-y-2">
+                        {(selectedOrder.files || []).map((file: any) => {
+                          const job = (selectedOrder.printJobs || []).find((candidate: any) => candidate.orderFileId === file.id);
+                          if (!job) return <p key={file.id} className="text-[11px] text-rose-700">Print job missing for {file.fileName}; contact support.</p>;
+                          const alreadyConfirmed = job.status === 'PRINT_CONFIRMED';
+                          return <label key={job.id} className="flex items-start gap-2 rounded-lg border border-amber-200 bg-white/70 p-2 text-[11px] text-amber-950 dark:border-amber-900 dark:bg-slate-900/60 dark:text-amber-100">
+                            <input type="checkbox" checked={alreadyConfirmed || confirmedOutputJobIds.includes(job.id)} disabled={alreadyConfirmed} onChange={(event) => setConfirmedOutputJobIds((current) => event.target.checked ? [...current, job.id] : current.filter((id) => id !== job.id))} className="mt-0.5" />
+                            <span><strong>{file.fileName}</strong> · {file.pageCount} pages · {alreadyConfirmed ? 'Output verified' : `Status: ${job.status.replaceAll('_', ' ').toLowerCase()}`}</span>
+                          </label>;
+                        })}
                       </div>
                       <label className="flex items-start gap-2 text-[11px] font-semibold text-amber-950 dark:text-amber-100">
                         <input type="checkbox" checked={physicalOutputConfirmed} onChange={(event) => setPhysicalOutputConfirmed(event.target.checked)} className="mt-0.5" />
-                        I physically inspected the output and confirmed every requested page was produced.
+                        I physically inspected each selected file and confirmed its complete output.
                       </label>
                       <label className="block text-[11px] font-semibold text-amber-950 dark:text-amber-100">
                         Inspection note
                         <textarea value={reconcileReason} onChange={(event) => setReconcileReason(event.target.value)} maxLength={500} minLength={10} rows={2} placeholder="Describe what you inspected (10–500 characters)" className="mt-1.5 w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs text-slate-900 dark:border-amber-800 dark:bg-slate-900 dark:text-white" />
                       </label>
-                      <button type="button" disabled={!physicalOutputConfirmed || reconcileReason.trim().length < 10 || reconcilingOutput} onClick={() => { void handleReconcilePrintOutput(selectedOrder.id); }} className="w-full rounded-lg bg-amber-700 px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
+                      <button type="button" disabled={!physicalOutputConfirmed || confirmedOutputJobIds.length === 0 || reconcileReason.trim().length < 10 || reconcilingOutput} onClick={() => { void handleReconcilePrintOutput(selectedOrder.id, confirmedOutputJobIds); }} className="w-full rounded-lg bg-amber-700 px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
                         {reconcilingOutput ? 'Saving reconciliation…' : 'Confirm inspected output'}
                       </button>
                     </section>
