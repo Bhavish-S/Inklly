@@ -219,6 +219,7 @@ CREATE TABLE IF NOT EXISTS storage_documents (
     file_size_bytes INTEGER NOT NULL,
     page_count INTEGER NOT NULL DEFAULT 1,
     storage_key TEXT NOT NULL,
+    deletion_requested_at TEXT,
     created_at TEXT NOT NULL,
     FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE,
     FOREIGN KEY (shop_id, category_id) REFERENCES storage_categories(shop_id, id) ON DELETE RESTRICT

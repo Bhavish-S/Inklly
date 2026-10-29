@@ -16,6 +16,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
   let merchantToken: string;
   let adminToken: string;
   let cashOrderId: string;
+  let apiApp: any;
   const originalExternalApiSetting = process.env.ENABLE_EXTERNAL_API_ACCESS;
   const originalPublicUploadMinuteLimit = process.env.PUBLIC_UPLOADS_PER_MINUTE;
   const originalPublicUploadDayLimit = process.env.PUBLIC_UPLOADS_PER_DAY;
@@ -26,6 +27,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     process.env.PUBLIC_UPLOADS_PER_DAY = '10000';
     db = new DatabaseService(':memory:');
     const app = createApp(db);
+    apiApp = app;
     // Keep these legacy API-contract fixtures representative of a shop that
     // has opted to make contact details optional. Required-field enforcement
     // is covered explicitly in the customer-portal E2E suite.
@@ -836,6 +838,26 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     const invalidCursor = await fetch(`${baseUrl}/api/v1/merchant/storage/documents?cursor=invalid`, { headers });
     assert.equal(invalidCursor.status, 400);
 
+    const privateStorage = apiApp.locals.privateFileStorage;
+    const originalRemove = privateStorage.remove.bind(privateStorage);
+    privateStorage.remove = async () => false;
+    try {
+      const failedDelete = await fetch(`${baseUrl}/api/v1/merchant/storage/documents/${encodeURIComponent(storedSecond.id)}`, {
+        method: 'DELETE', headers,
+      });
+      assert.equal(failedDelete.status, 503);
+      assert.ok(db.queryOne<any>(`SELECT deletion_requested_at FROM storage_documents WHERE id = ?`, [storedSecond.id])?.deletion_requested_at,
+        'failed object removal leaves a retryable hidden tombstone');
+      const pendingDownload = await fetch(`${baseUrl}/api/v1/merchant/storage/documents/${encodeURIComponent(storedSecond.id)}/download`, {
+        headers: { Authorization: `Bearer ${merchantToken}` },
+      });
+      assert.equal(pendingDownload.status, 404, 'a document pending deletion cannot still be downloaded');
+      const pendingList = await fetch(`${baseUrl}/api/v1/merchant/storage/documents?categoryId=${encodeURIComponent(created.category.id)}`, { headers });
+      assert.equal((await pendingList.json() as any).total, 1, 'pending deletion is hidden from normal vault listings');
+    } finally {
+      privateStorage.remove = originalRemove;
+    }
+
     const download = await fetch(`${baseUrl}${stored.downloadUrl}`, { headers: { Authorization: `Bearer ${merchantToken}` } });
     assert.equal(download.status, 200);
     assert.equal(download.headers.get('cache-control'), 'private, no-store');
@@ -850,6 +872,8 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       method: 'DELETE', headers,
     });
     assert.equal(removeSecondDocument.status, 200);
+    assert.equal(db.queryOne<any>(`SELECT id FROM storage_documents WHERE id = ?`, [storedSecond.id]), null,
+      'authorized retry after storage recovers removes the pending tombstone');
 
     const remove = await fetch(`${baseUrl}/api/v1/merchant/storage/categories/${encodeURIComponent(created.category.id)}`, { method: 'DELETE', headers });
     assert.equal(remove.status, 200);

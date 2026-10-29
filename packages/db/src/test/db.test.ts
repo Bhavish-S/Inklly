@@ -403,3 +403,30 @@ describe('shared public upload rate-limit migration', () => {
     }
   });
 });
+
+describe('merchant vault deletion lifecycle migration', () => {
+  it('adds retryable deletion state to an existing vault without changing stored rows', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'inklly-vault-delete-migration-'));
+    const databasePath = path.join(directory, 'existing.sqlite');
+    try {
+      const initial = new DatabaseService(databasePath);
+      seedDatabase(initial);
+      initial.execute(
+        `INSERT INTO storage_documents (id, shop_id, file_name, mime_type, file_size_bytes, page_count, storage_key, created_at)
+         VALUES ('vault-existing', 'shop-campus-1', 'existing.pdf', 'application/pdf', 100, 1, 'uploads/shop-campus-1/existing.pdf', '2026-10-29T00:00:00.000Z')`
+      );
+      initial.execute(`ALTER TABLE storage_documents DROP COLUMN deletion_requested_at`);
+      initial.execute(`DELETE FROM inklly_schema_migrations WHERE version = 25`);
+      initial.close();
+
+      const upgraded = new DatabaseService(databasePath);
+      const column = (upgraded.getRawDb().prepare(`PRAGMA table_info(storage_documents)`).all() as Array<{ name: string }>).find((item) => item.name === 'deletion_requested_at');
+      assert.ok(column);
+      assert.equal(upgraded.queryOne<any>(`SELECT deletion_requested_at FROM storage_documents WHERE id = 'vault-existing'`)?.deletion_requested_at, null);
+      assert.ok(upgraded.queryOne(`SELECT version FROM inklly_schema_migrations WHERE version = 25`));
+      upgraded.close();
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});

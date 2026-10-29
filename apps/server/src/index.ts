@@ -14,6 +14,7 @@ import { createDeveloperRoutes } from './routes/developer-routes';
 import { createSubscriptionRoutes } from './routes/subscription-routes';
 import { assertSessionSecretConfigured } from './middleware/session-token';
 import { purgeExpiredPrintFiles } from './services/print-file-retention';
+import { purgePendingVaultDeletions } from './services/merchant-vault-retention';
 import { PrivateFileStorage } from './services/private-file-storage';
 import { createUploadConcurrencyGuard } from './middleware/public-upload-guard';
 import { createPublicUploadRateLimit } from './middleware/public-upload-rate-limit';
@@ -80,6 +81,11 @@ export function createApp(db?: DatabaseService): express.Express {
   }, 15 * 60 * 1000);
   retentionTimer.unref();
   void purgeExpiredPrintFiles(database, fileStorage).catch((error) => console.error('[File retention] Initial cleanup pass failed', error));
+  const vaultDeletionTimer = setInterval(() => {
+    void purgePendingVaultDeletions(database, fileStorage).catch((error) => console.error('[Vault deletion] Cleanup pass failed', error));
+  }, 60 * 1000);
+  vaultDeletionTimer.unref();
+  void purgePendingVaultDeletions(database, fileStorage).catch((error) => console.error('[Vault deletion] Initial cleanup pass failed', error));
 
   app.get(['/health', '/api/v1/health'], (_req, res) => {
     res.json({

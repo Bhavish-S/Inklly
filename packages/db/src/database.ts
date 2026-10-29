@@ -51,6 +51,7 @@ export class DatabaseService {
       this.ensureSqlitePlatformSubscriptionBillingMigration();
       this.ensureSqliteCopyDiscountUniquenessMigration();
       this.ensureSqliteAgentPrintReadinessMigration();
+      this.ensureSqliteMerchantVaultDeletionMigration();
     }
   }
 
@@ -169,6 +170,7 @@ export class DatabaseService {
     this.ensurePostgresPlatformSubscriptionBillingMigration();
     this.ensurePostgresCopyDiscountUniquenessMigration();
     this.ensurePostgresAgentPrintReadinessMigration();
+    this.ensurePostgresMerchantVaultDeletionMigration();
   }
 
   private ensureSqliteAgentPrintReadinessMigration(): void {
@@ -197,6 +199,35 @@ export class DatabaseService {
     } catch (error) {
       try { this.queryPostgres('ROLLBACK'); } catch { /* preserve the original error */ }
       throw new Error(`[Inklly DB] PostgreSQL agent print-readiness migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+
+  private ensureSqliteMerchantVaultDeletionMigration(): void {
+    if (this.db!.prepare(`SELECT version FROM inklly_schema_migrations WHERE version = 25`).get()) return;
+    this.db!.exec('BEGIN');
+    try {
+      const columns = this.db!.prepare(`PRAGMA table_info(storage_documents)`).all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === 'deletion_requested_at')) {
+        this.db!.exec(`ALTER TABLE storage_documents ADD COLUMN deletion_requested_at TEXT`);
+      }
+      this.db!.prepare(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (25, ?)`).run(new Date().toISOString());
+      this.db!.exec('COMMIT');
+    } catch (error) {
+      try { this.db!.exec('ROLLBACK'); } catch { /* preserve the original error */ }
+      throw new Error(`[Inklly DB] Merchant vault deletion migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+
+  private ensurePostgresMerchantVaultDeletionMigration(): void {
+    if (this.queryPostgres(`SELECT version FROM inklly_schema_migrations WHERE version = ?`, [25]).length) return;
+    this.queryPostgres('BEGIN');
+    try {
+      this.queryPostgres(`ALTER TABLE storage_documents ADD COLUMN IF NOT EXISTS deletion_requested_at TEXT`);
+      this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [25, new Date().toISOString()]);
+      this.queryPostgres('COMMIT');
+    } catch (error) {
+      try { this.queryPostgres('ROLLBACK'); } catch { /* preserve the original error */ }
+      throw new Error(`[Inklly DB] PostgreSQL merchant vault deletion migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
     }
   }
 
@@ -1344,6 +1375,7 @@ CREATE TABLE IF NOT EXISTS storage_documents (
   file_size_bytes INTEGER NOT NULL,
   page_count INTEGER NOT NULL DEFAULT 1,
   storage_key TEXT NOT NULL,
+  deletion_requested_at TEXT,
   created_at TEXT NOT NULL,
   FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE,
   FOREIGN KEY (shop_id, category_id) REFERENCES storage_categories(shop_id, id) ON DELETE RESTRICT

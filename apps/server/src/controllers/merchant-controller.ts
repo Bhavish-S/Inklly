@@ -941,7 +941,7 @@ export class MerchantController {
   public getStorageCategories = (req: Request, res: Response) => {
     const shopId = this.getShopId(req);
     const rows = this.db.query<any>(
-      `SELECT sc.*, (SELECT COUNT(*) FROM storage_documents sd WHERE sd.shop_id = sc.shop_id AND sd.category_id = sc.id) AS document_count
+      `SELECT sc.*, (SELECT COUNT(*) FROM storage_documents sd WHERE sd.shop_id = sc.shop_id AND sd.category_id = sc.id AND sd.deletion_requested_at IS NULL) AS document_count
        FROM storage_categories sc WHERE sc.shop_id = ? ORDER BY sc.created_at DESC`,
       [shopId]
     );
@@ -1028,7 +1028,7 @@ export class MerchantController {
       }
     }
 
-    let sql = `SELECT sd.*, sc.name as category_name FROM storage_documents sd LEFT JOIN storage_categories sc ON sc.id = sd.category_id WHERE sd.shop_id = ?`;
+    let sql = `SELECT sd.*, sc.name as category_name FROM storage_documents sd LEFT JOIN storage_categories sc ON sc.id = sd.category_id WHERE sd.shop_id = ? AND sd.deletion_requested_at IS NULL`;
     const params: any[] = [shopId];
 
     if (categoryId) {
@@ -1036,7 +1036,7 @@ export class MerchantController {
       params.push(categoryId);
     }
 
-    let countSql = `SELECT COUNT(*) AS total FROM storage_documents sd WHERE sd.shop_id = ?`;
+    let countSql = `SELECT COUNT(*) AS total FROM storage_documents sd WHERE sd.shop_id = ? AND sd.deletion_requested_at IS NULL`;
     const countParams: any[] = [shopId];
     if (categoryId) {
       countSql += ` AND sd.category_id = ?`;
@@ -1044,7 +1044,7 @@ export class MerchantController {
     }
     const total = Number(this.db.queryOne<any>(countSql, countParams)?.total || 0);
     const uncategorizedCount = Number(this.db.queryOne<any>(
-      `SELECT COUNT(*) AS total FROM storage_documents WHERE shop_id = ? AND category_id IS NULL`, [shopId]
+      `SELECT COUNT(*) AS total FROM storage_documents WHERE shop_id = ? AND category_id IS NULL AND deletion_requested_at IS NULL`, [shopId]
     )?.total || 0);
 
     if (cursor) {
@@ -1157,7 +1157,7 @@ export class MerchantController {
     const docId = String(req.params.id);
 
     const row = this.db.queryOne<any>(
-      `SELECT sd.storage_key, sd.file_name, sd.mime_type FROM storage_documents sd WHERE sd.id = ? AND sd.shop_id = ?`,
+      `SELECT sd.storage_key, sd.file_name, sd.mime_type FROM storage_documents sd WHERE sd.id = ? AND sd.shop_id = ? AND sd.deletion_requested_at IS NULL`,
       [docId, shopId]
     );
     if (!row || String(row.storage_key).startsWith('expired:')) return res.status(404).json({ error: 'Document is unavailable.' });
@@ -1180,12 +1180,14 @@ export class MerchantController {
     const docId = String(req.params.id);
 
     const row = this.db.queryOne<any>(
-      `SELECT sd.storage_key FROM storage_documents sd WHERE sd.id = ? AND sd.shop_id = ?`,
-      [docId, shopId]
+      `UPDATE storage_documents SET deletion_requested_at = COALESCE(deletion_requested_at, ?)
+       WHERE id = ? AND shop_id = ? RETURNING storage_key`,
+      [new Date().toISOString(), docId, shopId]
     );
     if (!row) return res.status(404).json({ error: 'Document not found.' });
 
-    if (!String(row.storage_key).startsWith('expired:')) {
+    const referencedByOrder = this.db.queryOne<any>(`SELECT id FROM order_files WHERE storage_key = ? LIMIT 1`, [row.storage_key]);
+    if (!referencedByOrder && !String(row.storage_key).startsWith('expired:')) {
       try {
         const removed = await this.fileStorage.remove(String(row.storage_key));
         if (!removed) return res.status(503).json({ error: 'Document could not be deleted from private storage. Please retry.' });
@@ -1194,7 +1196,13 @@ export class MerchantController {
       }
     }
 
-    this.db.execute(`DELETE FROM storage_documents WHERE id = ?`, [docId]);
+    try {
+      this.db.execute(`DELETE FROM storage_documents WHERE id = ? AND shop_id = ? AND deletion_requested_at IS NOT NULL`, [docId, shopId]);
+    } catch {
+      // Keep the hidden tombstone so an authorized retry can safely finish the
+      // metadata cleanup after the object has already been removed.
+      return res.status(503).json({ error: 'The file was removed from storage, but its vault record is pending cleanup. Retry this delete to finish.' });
+    }
     res.json({ success: true });
   };
 
