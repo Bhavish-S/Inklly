@@ -234,6 +234,14 @@ export class PortalController {
     if (!Number.isSafeInteger(serverQuote.totalPaise) || serverQuote.totalPaise < 1 || serverQuote.totalPaise > 5_000_000_000) {
       return res.status(422).json({ error: 'The calculated order total is outside the supported range.' });
     }
+    if (normalizedPaymentMethod === 'ONLINE_RAZORPAY' && serverQuote.totalPaise < 100) {
+      return res.status(422).json({
+        code: 'RAZORPAY_MINIMUM_AMOUNT',
+        error: 'Razorpay checkout requires an order total of at least ₹1.00. Choose cash at collection if available, or adjust the order.',
+        minimumAmountPaise: 100,
+        cashOnCollectionAvailable: shop.acceptCashOnCollection,
+      });
+    }
     // New customer clients submit a complete quote and must confirm changes or expiry.
     // Legacy/API clients without a quote ID remain safe because the order always uses
     // this server-calculated quote and amount, never client-supplied totals.

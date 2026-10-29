@@ -7,6 +7,7 @@ import * as crypto from 'node:crypto';
 import { makeTestPdf } from './test-pdf';
 import { createSessionToken, hashSessionToken, verifySessionToken } from '../middleware/session-token';
 import { decryptWebhookSecret, encryptWebhookSecret } from '../services/webhook-secrets';
+import { ShopPaymentCredentialsService } from '../services/shop-payment-credentials';
 
 describe('Inklly Backend API Integration Test Suite', { concurrency: false }, () => {
   let server: http.Server;
@@ -299,6 +300,52 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(orderRes.status, 201);
     const order = await orderRes.json() as any;
     assert.equal(order.totalAmountPaise, 200);
+  });
+
+  it('rejects sub-₹1 Razorpay orders before persistence and accepts the ₹1 boundary', async () => {
+    const shopId = 'shop-campus-1';
+    const rate = db.queryOne<any>(`SELECT id, price_per_printed_side_paise FROM rate_rules WHERE shop_id = ? AND printer_id IS NULL AND paper_size = 'A4' AND color_mode = 'bw' AND duplex_mode = 'simplex'`, [shopId]);
+    assert.ok(rate);
+    const oldEncryptionKey = process.env.RAZORPAY_CREDENTIALS_ENCRYPTION_KEY;
+    process.env.RAZORPAY_CREDENTIALS_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
+    const credentials = new ShopPaymentCredentialsService(db);
+    const ordersBefore = Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM orders WHERE shop_id = ?`, [shopId])?.count);
+    try {
+      credentials.saveRazorpay(shopId, 'rzp_test_inklly', 'test-api-secret', 'test-webhook-secret');
+      db.execute(`UPDATE rate_rules SET price_per_printed_side_paise = 99 WHERE id = ?`, [rate.id]);
+      const uploadRes = await fetch(`${baseUrl}/api/v1/portal/upload`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shopId, fileName: 'minimum-payment.pdf', fileData: makeTestPdf(1).toString('base64') }),
+      });
+      assert.equal(uploadRes.status, 201);
+      const upload = await uploadRes.json() as any;
+      const payload = {
+        shopId, paymentMethod: 'ONLINE_RAZORPAY',
+        files: [{ fileName: 'minimum-payment.pdf', storageKey: upload.storageKey, pageCount: upload.pageCount, options: { colorMode: 'bw', duplexMode: 'simplex', paperSize: 'A4', copies: 1 } }],
+      };
+      const subMinimum = await fetch(`${baseUrl}/api/v1/portal/orders`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'razorpay-minimum-99-001' }, body: JSON.stringify(payload),
+      });
+      assert.equal(subMinimum.status, 422);
+      const rejection = await subMinimum.json() as any;
+      assert.equal(rejection.code, 'RAZORPAY_MINIMUM_AMOUNT');
+      assert.equal(rejection.minimumAmountPaise, 100);
+      assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM orders WHERE shop_id = ?`, [shopId])?.count), ordersBefore);
+
+      db.execute(`UPDATE rate_rules SET price_per_printed_side_paise = 100 WHERE id = ?`, [rate.id]);
+      const boundary = await fetch(`${baseUrl}/api/v1/portal/orders`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'razorpay-minimum-100-01' }, body: JSON.stringify(payload),
+      });
+      assert.equal(boundary.status, 201, await boundary.clone().text());
+      const accepted = await boundary.json() as any;
+      assert.equal(accepted.totalAmountPaise, 100);
+      assert.equal(accepted.status, 'AWAITING_PAYMENT');
+    } finally {
+      db.execute(`UPDATE rate_rules SET price_per_printed_side_paise = ? WHERE id = ?`, [rate.price_per_printed_side_paise, rate.id]);
+      credentials.removeRazorpay(shopId);
+      if (oldEncryptionKey === undefined) delete process.env.RAZORPAY_CREDENTIALS_ENCRYPTION_KEY;
+      else process.env.RAZORPAY_CREDENTIALS_ENCRYPTION_KEY = oldEncryptionKey;
+    }
   });
 
   it('requires customer confirmation when a complete quote no longer matches current shop pricing', async () => {

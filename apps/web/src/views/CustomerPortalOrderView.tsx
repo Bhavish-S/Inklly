@@ -384,6 +384,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
 
   const totalPagesCount = documents.reduce((acc, d) => acc + parsePageRangeCount(d.options.pageRange || 'All', d.pageCount) * (d.options.copies || 1), 0) * globalCopies;
   const grandTotalPaise = Number.isSafeInteger(serverQuote?.totalPaise) ? serverQuote.totalPaise : null;
+  const onlinePaymentBelowMinimum = grandTotalPaise !== null && grandTotalPaise < 100;
   const formatPaise = (paise: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(paise / 100);
   const availablePaperSizes = (['A4', 'A3', 'PHOTO_4X6', 'PHOTO_5X7'] as const).filter((paperSize) => {
     const requiredModes = activeDoc?.options.colorMode === 'mixed'
@@ -764,6 +765,10 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
     }
     if (!pendingOnlineOrder && (!serverQuote || quoteLoading || quoteError || !Number.isSafeInteger(serverQuote.totalPaise))) {
       setSubmitError(quoteError || 'Wait for the shop to finish calculating your exact quote.');
+      return;
+    }
+    if (!pendingOnlineOrder && paymentMethod === 'ONLINE_RAZORPAY' && onlinePaymentBelowMinimum) {
+      setSubmitError('Razorpay checkout requires an order total of at least ₹1.00. Choose cash at collection if available, or adjust the order.');
       return;
     }
     if (!pendingOnlineOrder && documents.some((document) => !document.storageKey || !document.file)) {
@@ -2036,20 +2041,25 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
 
             <button
               type="button"
-              disabled={documents.length === 0 || isSubmitting || quoteLoading || grandTotalPaise === null || !shop.onlinePaymentAvailable}
+              disabled={documents.length === 0 || isSubmitting || quoteLoading || grandTotalPaise === null || !shop.onlinePaymentAvailable || onlinePaymentBelowMinimum}
               onClick={() => {
                 setPaymentMethod('ONLINE_RAZORPAY');
                 setSubmitError(null);
                 setReviewModalOpen(true);
               }}
-              className={`min-h-[44px] px-2.5 py-1.5 rounded-xl text-xs transition-all flex flex-col items-center justify-center leading-tight border ${shop.onlinePaymentAvailable ? 'cursor-pointer bg-slate-100 border-slate-200 text-slate-800 hover:bg-slate-200' : 'cursor-not-allowed bg-slate-100 border-slate-200 text-slate-400'}`}
-              title={shop.onlinePaymentAvailable ? 'Pay securely with Razorpay' : 'Online payment is not enabled by this shop'}
+              className={`min-h-[44px] px-2.5 py-1.5 rounded-xl text-xs transition-all flex flex-col items-center justify-center leading-tight border ${shop.onlinePaymentAvailable && !onlinePaymentBelowMinimum ? 'cursor-pointer bg-slate-100 border-slate-200 text-slate-800 hover:bg-slate-200' : 'cursor-not-allowed bg-slate-100 border-slate-200 text-slate-400'}`}
+              title={!shop.onlinePaymentAvailable ? 'Online payment is not enabled by this shop' : onlinePaymentBelowMinimum ? 'Razorpay requires a minimum order total of ₹1.00' : 'Pay securely with Razorpay'}
             >
               <span>Online payment</span>
-              <span className="text-[9px] font-medium">{shop.onlinePaymentAvailable ? 'Razorpay' : 'unavailable'}</span>
+              <span className="text-[9px] font-medium">{!shop.onlinePaymentAvailable ? 'unavailable' : onlinePaymentBelowMinimum ? 'min ₹1.00' : 'Razorpay'}</span>
             </button>
           </div>
         </div>
+        {shop.onlinePaymentAvailable && onlinePaymentBelowMinimum && (
+          <p className="mt-2 text-right text-xs text-amber-700" role="status">
+            Razorpay requires at least ₹1.00. Choose cash at collection if available, or adjust the order.
+          </p>
+        )}
       </div>
 
       {/* 4. ORDER REVIEW MODAL (WCAG 2.2 SC 3.3.4 Error Prevention) */}
