@@ -3141,7 +3141,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(res.status, 400);
   });
 
-  it('keeps a refund pending until provider processing is configured', async () => {
+  it('requires the explicit cash-return workflow for cash refunds', async () => {
     // Create a fresh refund to process
     const createRes = await fetch(`${baseUrl}/api/v1/payments/orders/${cashOrderId}/refunds`, {
       method: 'POST',
@@ -3163,9 +3163,32 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       },
       body: JSON.stringify({ action: 'APPROVE' }),
     });
-    assert.equal(processRes.status, 503);
+    assert.equal(processRes.status, 409);
     const processBody = await processRes.json();
-    assert.match(processBody.error, /remains pending/);
+    assert.match(processBody.error, /collected in cash/i);
+    assert.equal(db.queryOne<any>(`SELECT status FROM refunds WHERE id = ?`, [createBody.refundId]).status, 'REQUESTED');
+  });
+
+  it('records a cash refund only after explicit return confirmation', async () => {
+    const createRes = await fetch(`${baseUrl}/api/v1/payments/orders/${cashOrderId}/refunds`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+      body: JSON.stringify({ amountPaise: 100, reason: 'Cash refund requested by customer' }),
+    });
+    assert.equal(createRes.status, 201);
+    const { refundId } = await createRes.json();
+    const missingConfirmation = await fetch(`${baseUrl}/api/v1/payments/refunds/${refundId}/process`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+      body: JSON.stringify({ action: 'RECORD_OFFLINE', reason: 'Cash handed back today' }),
+    });
+    assert.equal(missingConfirmation.status, 400);
+    const result = await fetch(`${baseUrl}/api/v1/payments/refunds/${refundId}/process`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+      body: JSON.stringify({ action: 'RECORD_OFFLINE', cashReturned: true, reason: 'Cash handed back to customer at counter' }),
+    });
+    assert.equal(result.status, 200);
+    assert.equal((await result.json()).status, 'COMPLETED');
+    assert.equal(db.queryOne<any>(`SELECT status FROM refunds WHERE id = ?`, [refundId]).status, 'COMPLETED');
+    assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM ledger_entries WHERE provider = 'MANUAL_CASH' AND provider_transaction_id = ? AND amount_paise = -100`, [`manual-cash-refund:${refundId}`]).count), 1);
   });
 
   it('Rejects a refund request without moving money and releases its reserved balance', async () => {
@@ -3197,7 +3220,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM audit_events WHERE action = 'REFUND_REQUEST_REJECTED' AND target_id = ?`, [createBody.refundId]).count), 1);
     assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM ledger_entries WHERE domain = 'CUSTOMER_PRINT_PAYMENT' AND order_id = ? AND amount_paise = -200`, [cashOrderId]).count), 0);
     const remainingReservation = Number(db.queryOne<any>(`SELECT COALESCE(SUM(amount_paise), 0) AS total FROM refunds WHERE order_id = ? AND status IN ('REQUESTED', 'PROCESSING', 'COMPLETED')`, [cashOrderId]).total);
-    assert.equal(remainingReservation, 800, 'the rejected refund is excluded from reserved refundable amount');
+    assert.equal(remainingReservation, 900, 'the rejected refund is excluded while active refund reservations remain reserved');
   });
 
   // ─── MILESTONE 3: SUBSCRIPTIONS ───

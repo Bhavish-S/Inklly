@@ -36,6 +36,7 @@ export type PaymentStatus =
   | 'EXPIRED'
   | 'CANCELLED'
   | 'REFUND_PENDING'
+  | 'PARTIALLY_REFUNDED'
   | 'REFUNDED'
   | 'REVERSED'
   | 'RECONCILIATION_REQUIRED';

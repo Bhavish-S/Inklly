@@ -310,11 +310,11 @@ export const api = {
     return res.json();
   },
 
-  async processRefund(refundId: string, action: 'APPROVE' | 'REJECT', reason?: string) {
+  async processRefund(refundId: string, action: 'APPROVE' | 'REJECT' | 'RECORD_OFFLINE', reason?: string, cashReturned = false) {
     const res = await fetch(`${API_BASE}/payments/refunds/${refundId}/process`, {
       method: 'POST',
       headers: getHeaders(),
-      body: JSON.stringify({ action, reason }),
+      body: JSON.stringify({ action, reason, cashReturned }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Refund processing failed' }));

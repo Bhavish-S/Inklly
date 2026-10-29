@@ -129,6 +129,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     | 'storage'
     | 'credits'
     | 'withdraw'
+    | 'refunds'
     | 'referrals'
     | 'employees'
     | 'train_bot'
@@ -950,6 +951,9 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   // Live Orders Data (Populated in real-time from server API and customer intake)
   const [ordersList, setOrdersList] = useState<any[]>([]);
   const [livePrintOrders, setLivePrintOrders] = useState<any[]>([]);
+  const [refunds, setRefunds] = useState<any[]>([]);
+  const [refundsLoading, setRefundsLoading] = useState(false);
+  const [refundActionError, setRefundActionError] = useState('');
   const [queueOrders, setQueueOrders] = useState<any[]>([]);
   const [queuePage, setQueuePage] = useState(1);
   const [queueLoading, setQueueLoading] = useState(false);
@@ -1072,6 +1076,28 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       if (activeView === 'orders') await fetchOrdersPage(queuePage);
       setIsRefreshingOrders(false);
     }
+  };
+
+  const fetchRefunds = async () => {
+    setRefundsLoading(true);
+    setRefundActionError('');
+    try { setRefunds(await api.listRefunds()); }
+    catch (error: any) { setRefundActionError(error?.message || 'Could not load refunds.'); }
+    finally { setRefundsLoading(false); }
+  };
+
+  const processRefundAction = async (refund: any, action: 'APPROVE' | 'REJECT' | 'RECORD_OFFLINE') => {
+    let reason: string | undefined;
+    if (action === 'REJECT') {
+      reason = window.prompt('Why is this refund being rejected?') || '';
+      if (reason.trim().length < 3) return;
+    } else if (action === 'RECORD_OFFLINE') {
+      reason = window.prompt('Confirm cash was returned. Add a note for the audit record (10+ characters):') || '';
+      if (reason.trim().length < 10 || !window.confirm(`Confirm ₹${(refund.amountPaise / 100).toFixed(2)} was physically returned to the customer?`)) return;
+    } else if (!window.confirm('Send this refund request to the shop’s Razorpay account?')) return;
+    setRefundActionError('');
+    try { await api.processRefund(refund.id, action, reason, action === 'RECORD_OFFLINE'); await fetchRefunds(); }
+    catch (error: any) { setRefundActionError(error?.message || 'Refund action failed. Refresh and reconcile its status.'); await fetchRefunds(); }
   };
 
   const fetchLivePrintOrders = async () => {
@@ -1255,6 +1281,10 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     const debounce = window.setTimeout(() => { void fetchOrdersPage(queuePage); }, 300);
     return () => window.clearTimeout(debounce);
   }, [activeView, ordersTab, orderSearchQuery, queuePage]);
+
+  useEffect(() => {
+    if (activeView === 'refunds') void fetchRefunds();
+  }, [activeView]);
 
   useEffect(() => {
     if (activeView !== 'live_print') return;
@@ -1813,6 +1843,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     { id: 'storage', label: 'Storage', icon: <StoreIcon size={18} /> },
     { id: 'credits', label: 'Billing & usage', icon: <DollarSignIcon size={18} /> },
     { id: 'withdraw', label: 'Settlements', icon: <IndianRupeeIcon size={18} /> },
+    { id: 'refunds', label: 'Refunds', icon: <IndianRupeeIcon size={18} /> },
     { id: 'referrals', label: 'Referral program', icon: <UsersIcon size={18} /> },
     { id: 'employees', label: 'Employees', icon: <UsersIcon size={18} /> },
     { id: 'train_bot', label: 'Train Bot', icon: <SlidersIcon size={18} /> },
@@ -3404,6 +3435,23 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
 {/* ─────────────────────────────────────────────────────────────
     VIEW 7: WITHDRAW EARNINGS
 ───────────────────────────────────────────────────────────── */}
+{activeView === 'refunds' && (
+  <section className="mx-auto w-full max-w-6xl p-5 md:p-8">
+    <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+      <div><p className="text-xs font-bold uppercase tracking-wider text-indigo-600">Payments</p><h1 className="mt-1 text-2xl font-black">Refund requests</h1><p className="mt-1 text-sm text-slate-500">Review customer requests and track provider-confirmed outcomes.</p></div>
+      <button type="button" onClick={() => void fetchRefunds()} className="min-h-10 rounded-xl border border-slate-300 px-4 text-sm font-bold hover:bg-slate-50">Refresh</button>
+    </div>
+    {refundActionError && <div role="alert" className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{refundActionError}</div>}
+    {refundsLoading ? <p className="rounded-2xl bg-white p-6 text-sm text-slate-500">Loading refund requests…</p> : refunds.length === 0 ? <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center"><h2 className="font-bold">No refund requests</h2><p className="mt-1 text-sm text-slate-500">New customer requests will appear here.</p></div> :
+      <div className="space-y-3">{refunds.map((refund) => <article key={refund.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs md:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-bold">Order {refund.orderNumber} · {refund.customerName || 'Customer'}</p><p className="mt-1 text-sm text-slate-500">₹{(refund.amountPaise / 100).toFixed(2)} · {new Date(refund.requestedAt).toLocaleString('en-IN')}</p><p className="mt-2 text-sm text-slate-600">{refund.reason}</p></div><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold">{refund.status.replaceAll('_', ' ')}</span></div>
+        {refund.failureReason && <p className="mt-3 text-sm text-rose-700">{refund.failureReason}</p>}
+        {refund.status === 'PROCESSING' && <p className="mt-3 text-sm text-amber-800">Provider confirmation pending. Refresh this list before taking further action.</p>}
+        {(refund.status === 'REQUESTED' || (refund.status === 'PROCESSING' && refund.paymentProvider === 'RAZORPAY')) && <div className="mt-4 flex flex-wrap gap-2">{refund.paymentProvider === 'RAZORPAY' && <button type="button" onClick={() => void processRefundAction(refund, 'APPROVE')} className="min-h-10 rounded-xl bg-indigo-600 px-4 text-sm font-bold text-white hover:bg-indigo-700">{refund.providerRefundId || refund.status === 'PROCESSING' ? 'Reconcile with Razorpay' : 'Process refund'}</button>}{refund.status === 'REQUESTED' && <><button type="button" onClick={() => void processRefundAction(refund, 'REJECT')} className="min-h-10 rounded-xl border border-slate-300 px-4 text-sm font-bold hover:bg-slate-50">Reject with reason</button>{refund.paymentProvider === 'MANUAL_CASH' && <button type="button" onClick={() => void processRefundAction(refund, 'RECORD_OFFLINE')} className="min-h-10 rounded-xl border border-amber-300 px-4 text-sm font-bold text-amber-900 hover:bg-amber-50">Record cash returned</button>}</>}</div>}
+      </article>)}</div>}
+  </section>
+)}
+
 {activeView === 'withdraw' && (
   <section className="mx-auto my-10 max-w-3xl rounded-2xl border border-slate-200 bg-white p-8 shadow-sm dark:border-slate-700 dark:bg-slate-900">
     <p className="text-xs font-bold uppercase tracking-wider text-indigo-600">Shop settlements</p>
