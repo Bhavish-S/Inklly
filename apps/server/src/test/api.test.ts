@@ -79,6 +79,8 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       const res = await fetch(`${baseUrl}${path}`);
       assert.equal(res.status, 401, `${path} must reject anonymous requests`);
     }
+    const history = await fetch(`${baseUrl}/api/v1/developer/webhooks/whk-private/deliveries`);
+    assert.equal(history.status, 401, 'webhook delivery history must reject anonymous requests');
   });
 
   it('keeps personal website enquiries behind platform authentication', async () => {
@@ -391,6 +393,10 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(conflict.status, 409);
     const countAfter = Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM orders WHERE shop_id = ?`, ['shop-campus-1'])?.count);
     assert.equal(countAfter, countBefore + 1);
+    assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM webhook_events WHERE organization_id = (SELECT organization_id FROM shops WHERE id = ?) AND idempotency_key = ?`, [payload.shopId, `order.created:${firstOrder.orderId}`])?.count), 1,
+      'order creation writes one transactional webhook event');
+    assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM webhook_events WHERE idempotency_key = ?`, [`order.created:${firstOrder.orderId}`])?.count), 1,
+      'idempotent order replay does not create a duplicate webhook event');
 
     const missingKey = await fetch(`${baseUrl}/api/v1/portal/orders`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'bad' }, body: JSON.stringify(payload),
@@ -1304,6 +1310,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.ok(spec.paths['/portal/quote']);
     assert.ok(spec.paths['/subscriptions/usage']?.get.description.includes('does not create a charge'));
     assert.ok(!spec.paths['/subscriptions/usage']?.get.description.includes('active subscription'));
+    assert.ok(spec.paths['/developer/webhooks/{id}/deliveries']?.get.description.includes('HMAC SHA-256'));
 
     const requiredMerchantOperations: Record<string, string[]> = {
       '/merchant/dashboard': ['get'],
@@ -1507,6 +1514,50 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       assert.equal(listed.status, 200);
       const subscriptions = await listed.json() as any[];
       assert.ok(subscriptions.every((item) => !('secret' in item) && !('webhookSecret' in item)));
+
+      const eventId = repo.enqueueWebhookEvent(createdBody.organizationId, 'order.created', `webhook-history-test:${crypto.randomUUID()}`, { orderId: 'ord_history_test' });
+      const historyResponse = await fetch(`${baseUrl}/api/v1/developer/webhooks/${encodeURIComponent(createdBody.id)}/deliveries`, {
+        headers: { Authorization: `Bearer ${merchantToken}` },
+      });
+      assert.equal(historyResponse.status, 200);
+      const history = await historyResponse.json() as any[];
+      assert.equal(history.length, 1);
+      assert.equal(history[0].eventId, eventId);
+      assert.equal(history[0].status, 'PENDING');
+
+      const invalidHistoryQuery = await fetch(`${baseUrl}/api/v1/developer/webhooks/${encodeURIComponent(createdBody.id)}/deliveries?limit=500`, {
+        headers: { Authorization: `Bearer ${merchantToken}` },
+      });
+      assert.equal(invalidHistoryQuery.status, 400);
+
+      db.execute(`UPDATE webhook_deliveries SET status = 'IN_PROGRESS' WHERE event_id = ?`, [eventId]);
+      const blockedRotation = await fetch(`${baseUrl}/api/v1/developer/webhooks/${encodeURIComponent(createdBody.id)}/rotate-secret`, {
+        method: 'POST', headers: { Authorization: `Bearer ${merchantToken}` },
+      });
+      assert.equal(blockedRotation.status, 409, 'secret rotation must not race an in-flight signed attempt');
+      db.execute(`UPDATE webhook_deliveries SET status = 'PENDING' WHERE event_id = ?`, [eventId]);
+
+      const rotation = await fetch(`${baseUrl}/api/v1/developer/webhooks/${encodeURIComponent(createdBody.id)}/rotate-secret`, {
+        method: 'POST', headers: { Authorization: `Bearer ${merchantToken}` },
+      });
+      assert.equal(rotation.status, 200);
+      const rotated = await rotation.json() as any;
+      assert.notEqual(rotated.webhookSecret, createdBody.webhookSecret);
+      assert.equal(decryptWebhookSecret(db.queryOne<any>(`SELECT secret FROM webhook_subscriptions WHERE id = ?`, [createdBody.id]).secret), rotated.webhookSecret);
+
+      const revoked = await fetch(`${baseUrl}/api/v1/developer/webhooks/${encodeURIComponent(createdBody.id)}`, {
+        method: 'DELETE', headers: { Authorization: `Bearer ${merchantToken}` },
+      });
+      assert.equal(revoked.status, 200);
+      assert.equal(db.queryOne<any>(`SELECT status FROM webhook_deliveries WHERE event_id = ? AND subscription_id = ?`, [eventId, createdBody.id]).status, 'CANCELLED');
+      const afterRevoke = await fetch(`${baseUrl}/api/v1/developer/webhooks/${encodeURIComponent(createdBody.id)}/deliveries`, {
+        headers: { Authorization: `Bearer ${merchantToken}` },
+      });
+      assert.equal(afterRevoke.status, 200, 'delivery history remains available after revocation');
+      const afterRevokeList = await fetch(`${baseUrl}/api/v1/developer/webhooks`, { headers: { Authorization: `Bearer ${merchantToken}` } });
+      const afterRevokeSubscriptions = await afterRevokeList.json() as any[];
+      assert.equal(afterRevokeSubscriptions.find((item) => item.id === createdBody.id)?.isActive, false,
+        'revoked destinations remain visible to their owner for audit history');
     } finally {
       if (oldKey === undefined) delete process.env.RAZORPAY_CREDENTIALS_ENCRYPTION_KEY;
       else process.env.RAZORPAY_CREDENTIALS_ENCRYPTION_KEY = oldKey;

@@ -36,6 +36,35 @@ export interface WebhookSubscriptionRecord {
   updatedAt: string;
 }
 
+export interface WebhookDeliveryLease {
+  deliveryId: string;
+  organizationId: string;
+  subscriptionId: string;
+  targetUrl: string;
+  encryptedSecret: string;
+  eventId: string;
+  eventType: string;
+  eventCreatedAt: string;
+  payloadJson: string;
+  attemptCount: number;
+}
+
+export interface WebhookDeliveryHistoryRecord {
+  deliveryId: string;
+  subscriptionId: string;
+  eventId: string;
+  eventType: string;
+  payloadJson: string;
+  status: string;
+  attemptCount: number;
+  nextAttemptAt: string;
+  lastStatusCode: number | null;
+  lastError: string | null;
+  deliveredAt: string | null;
+  createdAt: string;
+  attempts: Array<{ attemptNumber: number; statusCode: number | null; error: string | null; startedAt: string; completedAt: string | null }>;
+}
+
 const DISPATCH_ACK_LEASE_MS = 2 * 60 * 1000;
 
 export class AgentRepository {
@@ -410,9 +439,54 @@ export class AgentRepository {
     );
   }
 
+  public rotateWebhookSecret(subscriptionId: string, orgId: string, encryptedSecret: string): 'ROTATED' | 'IN_PROGRESS' | 'NOT_FOUND' {
+    return this.db.transaction(() => {
+      const subscription = this.db.queryOne<any>(
+        `UPDATE webhook_subscriptions SET updated_at = updated_at
+         WHERE id = ? AND organization_id = ? AND is_active = 1 RETURNING id`,
+        [subscriptionId, orgId]
+      );
+      if (!subscription) return 'NOT_FOUND';
+      const active = this.db.queryOne<any>(
+        `SELECT COUNT(*) AS count FROM webhook_deliveries WHERE subscription_id = ? AND organization_id = ? AND status = 'IN_PROGRESS'`,
+        [subscriptionId, orgId]
+      );
+      if (Number(active?.count || 0) > 0) return 'IN_PROGRESS';
+      this.db.execute(
+        `UPDATE webhook_subscriptions SET secret = ?, updated_at = ? WHERE id = ? AND organization_id = ? AND is_active = 1`,
+        [encryptedSecret, new Date().toISOString(), subscriptionId, orgId]
+      );
+      return 'ROTATED';
+    });
+  }
+
+  public revokeWebhookSubscription(subscriptionId: string, orgId: string): boolean {
+    return this.db.transaction(() => {
+      const now = new Date().toISOString();
+      const revoked = this.db.queryOne<any>(
+        `UPDATE webhook_subscriptions SET is_active = 0, updated_at = ?
+         WHERE id = ? AND organization_id = ? AND is_active = 1 RETURNING id`,
+        [now, subscriptionId, orgId]
+      );
+      if (!revoked) return false;
+      this.db.execute(
+        `UPDATE webhook_deliveries SET status = 'CANCELLED', lease_until = NULL, updated_at = ?
+         WHERE subscription_id = ? AND organization_id = ? AND status = 'PENDING'`,
+        [now, subscriptionId, orgId]
+      );
+      return true;
+    });
+  }
+
+  public hasWebhookSubscription(subscriptionId: string, orgId: string): boolean {
+    return Boolean(this.db.queryOne<any>(
+      `SELECT id FROM webhook_subscriptions WHERE id = ? AND organization_id = ?`, [subscriptionId, orgId]
+    ));
+  }
+
   public getWebhooksByOrg(orgId: string): WebhookSubscriptionRecord[] {
     const rows = this.db.query<any>(
-      `SELECT * FROM webhook_subscriptions WHERE organization_id = ? AND is_active = 1`,
+      `SELECT * FROM webhook_subscriptions WHERE organization_id = ? ORDER BY is_active DESC, created_at DESC`,
       [orgId]
     );
     return rows.map((r) => ({
@@ -425,5 +499,172 @@ export class AgentRepository {
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     }));
+  }
+
+  /** Persist an event and fan it out once to subscriptions active at event time. */
+  public enqueueWebhookEvent(organizationId: string, eventType: string, idempotencyKey: string, payload: unknown): string {
+    const now = new Date().toISOString();
+    const eventId = `evt-${crypto.randomUUID()}`;
+    const payloadJson = JSON.stringify(payload);
+    if (typeof payloadJson !== 'string') throw new Error('Webhook event payload must be JSON serializable.');
+    return this.db.transaction(() => {
+      this.db.execute(
+        `INSERT INTO webhook_events (id, organization_id, event_type, idempotency_key, payload_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (organization_id, idempotency_key) DO NOTHING`,
+        [eventId, organizationId, eventType, idempotencyKey, payloadJson, now]
+      );
+      const event = this.db.queryOne<any>(
+        `SELECT id FROM webhook_events WHERE organization_id = ? AND idempotency_key = ?`,
+        [organizationId, idempotencyKey]
+      );
+      if (!event) throw new Error('Webhook event could not be persisted.');
+      const subscriptions = this.db.query<any>(
+        `SELECT id, event_types FROM webhook_subscriptions WHERE organization_id = ? AND is_active = 1`,
+        [organizationId]
+      );
+      for (const subscription of subscriptions) {
+        let eventTypes: unknown;
+        try { eventTypes = JSON.parse(String(subscription.event_types)); } catch { continue; }
+        if (!Array.isArray(eventTypes) || !eventTypes.includes(eventType)) continue;
+        const deliveryId = `whd-${crypto.randomUUID()}`;
+        this.db.execute(
+          `INSERT INTO webhook_deliveries (id, organization_id, subscription_id, event_id, status, attempt_count, next_attempt_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'PENDING', 0, ?, ?, ?) ON CONFLICT (subscription_id, event_id) DO NOTHING`,
+          [deliveryId, organizationId, subscription.id, event.id, now, now, now]
+        );
+      }
+      return String(event.id);
+    });
+  }
+
+  /** Atomically lease due records so multiple server workers do not send the same delivery. */
+  public claimDueWebhookDeliveries(limit: number, leaseMs: number): WebhookDeliveryLease[] {
+    const boundedLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+    const boundedLeaseMs = Math.max(5_000, Math.min(300_000, Math.floor(leaseMs)));
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const leaseUntil = new Date(now.getTime() + boundedLeaseMs).toISOString();
+    return this.db.transaction(() => {
+      const candidates = this.db.query<any>(
+        `SELECT id, status, lease_until FROM webhook_deliveries
+         WHERE (status = 'PENDING' AND next_attempt_at <= ?)
+            OR (status = 'IN_PROGRESS' AND lease_until IS NOT NULL AND lease_until <= ?)
+         ORDER BY next_attempt_at ASC, created_at ASC LIMIT ?`,
+        [nowIso, nowIso, boundedLimit]
+      );
+      const claimed: WebhookDeliveryLease[] = [];
+      for (const candidate of candidates) {
+        const oldStatus = String(candidate.status);
+        const oldLease = candidate.lease_until === null ? null : String(candidate.lease_until);
+        const leasePredicate = oldLease === null ? 'lease_until IS NULL' : 'lease_until = ?';
+        const updateParams: Array<string | number | null> = [leaseUntil, nowIso, candidate.id, oldStatus];
+        if (oldLease !== null) updateParams.push(oldLease);
+        const updated = this.db.queryOne<any>(
+          `UPDATE webhook_deliveries SET status = 'IN_PROGRESS', lease_until = ?, attempt_count = attempt_count + 1, updated_at = ?
+           WHERE id = ? AND status = ? AND ${leasePredicate}
+           RETURNING id, organization_id, subscription_id, event_id, attempt_count`,
+          updateParams
+        );
+        if (!updated) continue;
+        const joined = this.db.queryOne<any>(
+          `SELECT wd.id AS delivery_id, wd.organization_id, wd.subscription_id, wd.event_id, wd.attempt_count,
+          ws.target_url, ws.secret, we.event_type, we.payload_json, we.created_at AS event_created_at
+           FROM webhook_deliveries wd
+           JOIN webhook_subscriptions ws ON ws.id = wd.subscription_id AND ws.organization_id = wd.organization_id AND ws.is_active = 1
+           JOIN webhook_events we ON we.id = wd.event_id AND we.organization_id = wd.organization_id
+           WHERE wd.id = ? AND wd.status = 'IN_PROGRESS' AND wd.lease_until = ?`,
+          [updated.id, leaseUntil]
+        );
+        if (!joined) {
+          this.db.execute(`UPDATE webhook_deliveries SET status = 'FAILED', lease_until = NULL, last_error = ?, updated_at = ? WHERE id = ?`,
+            ['Webhook subscription or event is no longer available.', nowIso, updated.id]);
+          continue;
+        }
+        this.db.execute(
+          `INSERT INTO webhook_delivery_attempts (id, delivery_id, attempt_number, started_at)
+           VALUES (?, ?, ?, ?)`,
+          [`wha-${crypto.randomUUID()}`, joined.delivery_id, Number(joined.attempt_count), nowIso]
+        );
+        claimed.push({
+          deliveryId: String(joined.delivery_id), organizationId: String(joined.organization_id),
+          subscriptionId: String(joined.subscription_id), targetUrl: String(joined.target_url),
+          encryptedSecret: String(joined.secret), eventId: String(joined.event_id),
+          eventType: String(joined.event_type), eventCreatedAt: String(joined.event_created_at), payloadJson: String(joined.payload_json),
+          attemptCount: Number(joined.attempt_count),
+        });
+      }
+      return claimed;
+    });
+  }
+
+  /** Finish one leased attempt. Retry timing and terminal classification are chosen by the worker. */
+  public recordWebhookDeliveryResult(
+    deliveryId: string,
+    success: boolean,
+    statusCode: number | null,
+    safeError: string | null,
+    nextAttemptAt: string | null,
+    permanentlyFailed = false
+  ): void {
+    const now = new Date().toISOString();
+    const boundedStatus = statusCode !== null && Number.isInteger(statusCode) && statusCode >= 100 && statusCode <= 599 ? statusCode : null;
+    const boundedError = safeError ? String(safeError).slice(0, 500) : null;
+    this.db.transaction(() => {
+      const row = this.db.queryOne<any>(
+        `SELECT attempt_count FROM webhook_deliveries WHERE id = ? AND status = 'IN_PROGRESS'`, [deliveryId]
+      );
+      if (!row) return;
+      this.db.execute(
+        `UPDATE webhook_delivery_attempts SET status_code = ?, error = ?, completed_at = ?
+         WHERE delivery_id = ? AND attempt_number = ? AND completed_at IS NULL`,
+        [boundedStatus, boundedError, now, deliveryId, Number(row.attempt_count)]
+      );
+      const status = success ? 'DELIVERED' : permanentlyFailed ? 'FAILED' : 'PENDING';
+      const deliveredAt = success ? now : null;
+      this.db.execute(
+        `UPDATE webhook_deliveries SET status = ?, next_attempt_at = ?, lease_until = NULL,
+         last_status_code = ?, last_error = ?, delivered_at = ?, updated_at = ?
+         WHERE id = ? AND status = 'IN_PROGRESS'`,
+        [status, nextAttemptAt || now, boundedStatus, success ? null : boundedError, deliveredAt, now, deliveryId]
+      );
+    });
+  }
+
+  /** Tenant-scoped delivery history. Encrypted subscription secrets are never returned. */
+  public listWebhookDeliveries(orgId: string, subscriptionId?: string, limit = 50, offset = 0): WebhookDeliveryHistoryRecord[] {
+    const boundedLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+    const boundedOffset = Math.max(0, Math.floor(offset));
+    const filter = subscriptionId ? ' AND wd.subscription_id = ?' : '';
+    const params: Array<string | number | null> = [orgId];
+    if (subscriptionId) params.push(subscriptionId);
+    params.push(boundedLimit, boundedOffset);
+    const rows = this.db.query<any>(
+      `SELECT wd.id AS delivery_id, wd.subscription_id, wd.event_id, we.event_type, we.payload_json,
+              wd.status, wd.attempt_count, wd.next_attempt_at, wd.last_status_code, wd.last_error,
+              wd.delivered_at, wd.created_at
+       FROM webhook_deliveries wd JOIN webhook_events we ON we.id = wd.event_id AND we.organization_id = wd.organization_id
+       WHERE wd.organization_id = ?${filter}
+       ORDER BY wd.created_at DESC, wd.id DESC LIMIT ? OFFSET ?`, params
+    );
+    return rows.map((row) => {
+      const attempts = this.db.query<any>(
+        `SELECT attempt_number, status_code, error, started_at, completed_at FROM webhook_delivery_attempts
+         WHERE delivery_id = ? ORDER BY attempt_number ASC`, [row.delivery_id]
+      );
+      return {
+        deliveryId: String(row.delivery_id), subscriptionId: String(row.subscription_id), eventId: String(row.event_id),
+        eventType: String(row.event_type), payloadJson: String(row.payload_json), status: String(row.status),
+        attemptCount: Number(row.attempt_count), nextAttemptAt: String(row.next_attempt_at),
+        lastStatusCode: row.last_status_code === null ? null : Number(row.last_status_code),
+        lastError: row.last_error === null ? null : String(row.last_error),
+        deliveredAt: row.delivered_at === null ? null : String(row.delivered_at), createdAt: String(row.created_at),
+        attempts: attempts.map((attempt) => ({
+          attemptNumber: Number(attempt.attempt_number),
+          statusCode: attempt.status_code === null ? null : Number(attempt.status_code),
+          error: attempt.error === null ? null : String(attempt.error),
+          startedAt: String(attempt.started_at), completedAt: attempt.completed_at === null ? null : String(attempt.completed_at),
+        })),
+      };
+    });
   }
 }

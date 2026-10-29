@@ -4,7 +4,7 @@ import { isIP } from 'node:net';
 import { AgentRepository, DeveloperKeyRecord, WebhookSubscriptionRecord } from '@inklly/db';
 import { encryptWebhookSecret } from '../services/webhook-secrets';
 
-const WEBHOOK_EVENT_TYPES = ['order.created', 'order.status_changed', 'payment.succeeded', 'print_job.jammed', 'spooler.offline'];
+const WEBHOOK_EVENT_TYPES = ['order.created', 'order.status_changed', 'payment.succeeded'];
 
 const MERCHANT_ROUTE_DOCUMENTATION: Array<{ path: string; method: string; summary: string; access: string }> = [
   { path: '/merchant/dashboard', method: 'get', summary: 'Get merchant dashboard data', access: 'Requires orders:view.' },
@@ -114,7 +114,7 @@ function normalizeWebhookUrl(value: unknown): string | null {
   let url: URL;
   try { url = new URL(value); } catch { return null; }
   const hostname = url.hostname.toLowerCase().replace(/\.$/, '');
-  if (url.protocol !== 'https:' || url.username || url.password || url.hash || isIP(hostname) || !hostname.includes('.') ||
+  if (url.protocol !== 'https:' || (url.port && url.port !== '443') || url.username || url.password || url.hash || isIP(hostname) || !hostname.includes('.') ||
       hostname === 'localhost' || ['.localhost', '.local', '.internal', '.test', '.invalid'].some((suffix) => hostname.endsWith(suffix))) {
     return null;
   }
@@ -158,6 +158,29 @@ export class DeveloperController {
       },
       servers,
       paths: {
+        '/developer/webhooks': {
+          get: { summary: 'List active organization webhook subscriptions', security: [{ bearerAuth: [] }], responses: { 200: { description: 'Tenant-scoped subscriptions; secrets are omitted.' } } },
+          post: { summary: 'Create a signed webhook subscription', security: [{ bearerAuth: [] }], responses: { 201: { description: 'Subscription and one-time webhook secret.' }, 400: { description: 'Invalid HTTPS destination or event type.' } } },
+        },
+        '/developer/webhooks/{id}': {
+          delete: { summary: 'Revoke an organization webhook destination', security: [{ bearerAuth: [] }], responses: { 200: { description: 'Destination revoked and pending deliveries cancelled.' }, 404: { description: 'Subscription not found.' } } },
+        },
+        '/developer/webhooks/{id}/rotate-secret': {
+          post: { summary: 'Rotate a webhook signing secret', security: [{ bearerAuth: [] }], responses: { 200: { description: 'New signing secret returned once.' }, 409: { description: 'Wait for active attempts before rotating.' } } },
+        },
+        '/developer/webhooks/{id}/deliveries': {
+          get: {
+            summary: 'List persisted delivery attempts for a webhook subscription',
+            description: 'Organization-scoped history. Events are signed with X-Inklly-Signature (timestamped HMAC SHA-256), sent only to pinned public HTTPS addresses, and retried with bounded backoff.',
+            security: [{ bearerAuth: [] }],
+            parameters: [
+              { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+              { name: 'limit', in: 'query', required: false, schema: { type: 'integer', minimum: 1, maximum: 100 } },
+              { name: 'offset', in: 'query', required: false, schema: { type: 'integer', minimum: 0 } },
+            ],
+            responses: { 200: { description: 'Persisted delivery records and attempts.' }, 404: { description: 'Subscription not found in the active organization.' } },
+          },
+        },
         '/portal/shop/{shop_code}': {
           get: {
             summary: 'Get public shop metadata for QR customer portal',
@@ -284,6 +307,21 @@ export class DeveloperController {
     res.json(webhooks);
   };
 
+  public getWebhookDeliveries = (req: Request, res: Response) => {
+    const orgId = this.organizationId(req, res);
+    if (!orgId) return;
+    const subscriptionId = String(req.params.id || '');
+    if (!this.agentRepo.hasWebhookSubscription(subscriptionId, orgId)) {
+      return res.status(404).json({ error: 'Webhook subscription not found.' });
+    }
+    const rawLimit = req.query.limit === undefined ? 50 : Number(req.query.limit);
+    const rawOffset = req.query.offset === undefined ? 0 : Number(req.query.offset);
+    if (!Number.isInteger(rawLimit) || rawLimit < 1 || rawLimit > 100 || !Number.isInteger(rawOffset) || rawOffset < 0) {
+      return res.status(400).json({ error: 'limit must be 1–100 and offset must be a non-negative integer.' });
+    }
+    return res.json(this.agentRepo.listWebhookDeliveries(orgId, subscriptionId, rawLimit, rawOffset));
+  };
+
   public createWebhook = (req: Request, res: Response) => {
     const orgId = this.organizationId(req, res);
     if (!orgId) return;
@@ -305,7 +343,7 @@ export class DeveloperController {
       return res.status(503).json({ error: 'Webhook secret encryption is not configured. Contact the platform administrator.' });
     }
     const sub: WebhookSubscriptionRecord = {
-      id: `whk-${Date.now().toString(36)}`,
+      id: `whk-${crypto.randomUUID()}`,
       organizationId: orgId,
       targetUrl: normalizedUrl,
       secret: encryptedSecret,
@@ -320,8 +358,30 @@ export class DeveloperController {
     res.status(201).json({ ...subscription, webhookSecret });
   };
 
+  public rotateWebhookSecret = (req: Request, res: Response) => {
+    const orgId = this.organizationId(req, res);
+    if (!orgId) return;
+    const subscriptionId = String(req.params.id || '');
+    const webhookSecret = `whsec_${crypto.randomBytes(32).toString('hex')}`;
+    let encryptedSecret: string;
+    try { encryptedSecret = encryptWebhookSecret(webhookSecret); }
+    catch { return res.status(503).json({ error: 'Webhook secret encryption is not configured.' }); }
+    const outcome = this.agentRepo.rotateWebhookSecret(subscriptionId, orgId, encryptedSecret);
+    if (outcome === 'NOT_FOUND') return res.status(404).json({ error: 'Webhook subscription not found.' });
+    if (outcome === 'IN_PROGRESS') return res.status(409).json({ error: 'Wait for active webhook attempts to finish before rotating this secret.' });
+    return res.json({ subscriptionId, webhookSecret, rotatedAt: new Date().toISOString() });
+  };
+
+  public revokeWebhook = (req: Request, res: Response) => {
+    const orgId = this.organizationId(req, res);
+    if (!orgId) return;
+    const revoked = this.agentRepo.revokeWebhookSubscription(String(req.params.id || ''), orgId);
+    if (!revoked) return res.status(404).json({ error: 'Webhook subscription not found.' });
+    return res.json({ revoked: true });
+  };
+
   public testWebhook = (req: Request, res: Response) => {
-    const supportedEvents = ['order.created', 'order.status_changed', 'payment.succeeded', 'print_job.jammed', 'spooler.offline'];
+    const supportedEvents = WEBHOOK_EVENT_TYPES;
     const requestedEvent = String(req.body?.eventType || 'order.status_changed');
     const eventType = supportedEvents.includes(requestedEvent) ? requestedEvent : 'order.status_changed';
     const testPayload = {

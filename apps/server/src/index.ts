@@ -3,7 +3,7 @@ import cors from 'cors';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import * as crypto from 'node:crypto';
-import { DatabaseService, seedDatabase } from '@inklly/db';
+import { AgentRepository, DatabaseService, seedDatabase } from '@inklly/db';
 import { createPortalRoutes } from './routes/portal-routes';
 import { createAuthRoutes } from './routes/auth-routes';
 import { createMerchantRoutes } from './routes/merchant-routes';
@@ -20,6 +20,7 @@ import { authenticate, enforceTenantIsolation, requireActiveSubscription, requir
 import { EnquiryRepository } from '@inklly/db';
 import { EnquiryController } from './controllers/enquiry-controller';
 import { createEnquiryRateLimit } from './middleware/enquiry-rate-limit';
+import { WebhookDeliveryWorker } from './services/webhook-delivery';
 
 export function createApp(db?: DatabaseService): express.Express {
   assertSessionSecretConfigured();
@@ -122,12 +123,20 @@ if (require.main === module) {
   const PORT = process.env.PORT || 4000;
   const app = createApp();
   void app.locals.privateFileStorage.verifyReady().then(() => {
-    app.listen(PORT, () => {
+    const webhookWorker = new WebhookDeliveryWorker(new AgentRepository(DatabaseService.getInstance()));
+    webhookWorker.start();
+    const server = app.listen(PORT, () => {
       console.log(`🚀 [Inklly Server] listening on port ${PORT}`);
       console.log(`📄 [QR Portal] /api/v1/portal/shop/:shop_code`);
       console.log(`⚙️  [Merchant API] /api/v1/merchant/dashboard`);
       console.log(`🔌 [Agent Poll] /api/v1/agent/poll-commands`);
     });
+    const shutdown = () => {
+      webhookWorker.stop();
+      server.close(() => process.exit(0));
+    };
+    process.once('SIGTERM', shutdown);
+    process.once('SIGINT', shutdown);
   }).catch((error: any) => {
     console.error('[Inklly Startup] Private file storage is not ready:', error.message || error);
     process.exitCode = 1;

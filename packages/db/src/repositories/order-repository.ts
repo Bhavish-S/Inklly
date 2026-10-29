@@ -1,4 +1,5 @@
 import { DatabaseService } from '../database';
+import { AgentRepository } from './agent-repository';
 import { Order, OrderFile, OrderStatus, PaymentStatus, validateOrderTransition } from '@inklly/shared';
 
 export class OrderRepository {
@@ -99,6 +100,18 @@ export class OrderRepository {
           `INSERT INTO portal_order_idempotency (shop_id, idempotency_key, request_hash, order_id, created_at) VALUES (?, ?, ?, ?, ?)`,
           [order.shopId, idempotencyKey, requestHash, order.id, order.createdAt]
         );
+        const shop = this.db.queryOne<{ organization_id: string }>(`SELECT organization_id FROM shops WHERE id = ?`, [order.shopId]);
+        if (shop) {
+          new AgentRepository(this.db).enqueueWebhookEvent(shop.organization_id, 'order.created', `order.created:${order.id}`, {
+            orderId: order.id,
+            orderNumber: order.orderNumber,
+            shopId: order.shopId,
+            status: order.status,
+            totalAmountPaise: order.totalAmountPaise,
+            currency: order.currency || 'INR',
+            createdAt: order.createdAt,
+          });
+        }
       });
       return { orderId: order.id, replayed: false, conflict: false };
     } catch (error) {
@@ -226,6 +239,17 @@ export class OrderRepository {
         [nextStatus, now, collectedAt, orderId, current.status]
       );
       if (!updated) throw new Error(`Order ${orderId} changed while its status was being updated`);
+      const shop = this.db.queryOne<{ organization_id: string }>(`SELECT organization_id FROM shops WHERE id = ?`, [current.shopId]);
+      if (shop) {
+        new AgentRepository(this.db).enqueueWebhookEvent(shop.organization_id, 'order.status_changed', `order.status_changed:${orderId}:${now}`, {
+          orderId,
+          orderNumber: current.orderNumber,
+          shopId: current.shopId,
+          previousStatus: current.status,
+          status: nextStatus,
+          updatedAt: now,
+        });
+      }
     });
   }
 

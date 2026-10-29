@@ -397,6 +397,53 @@ CREATE TABLE IF NOT EXISTS webhook_subscriptions (
     FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS webhook_events (
+    id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+    UNIQUE (organization_id, idempotency_key)
+);
+
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL,
+    subscription_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TEXT NOT NULL,
+    lease_until TEXT,
+    last_status_code INTEGER,
+    last_error TEXT,
+    delivered_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+    FOREIGN KEY (subscription_id) REFERENCES webhook_subscriptions(id) ON DELETE CASCADE,
+    FOREIGN KEY (event_id) REFERENCES webhook_events(id) ON DELETE CASCADE,
+    UNIQUE (subscription_id, event_id)
+);
+
+CREATE TABLE IF NOT EXISTS webhook_delivery_attempts (
+    id TEXT PRIMARY KEY,
+    delivery_id TEXT NOT NULL,
+    attempt_number INTEGER NOT NULL,
+    status_code INTEGER,
+    error TEXT,
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    FOREIGN KEY (delivery_id) REFERENCES webhook_deliveries(id) ON DELETE CASCADE,
+    UNIQUE (delivery_id, attempt_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_due ON webhook_deliveries(status, next_attempt_at, lease_until);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_org_created ON webhook_deliveries(organization_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_webhook_delivery_attempts_delivery ON webhook_delivery_attempts(delivery_id, attempt_number);
+
 CREATE TABLE IF NOT EXISTS bot_templates (
     id TEXT PRIMARY KEY,
     shop_id TEXT NOT NULL,

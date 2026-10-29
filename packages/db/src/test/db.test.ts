@@ -9,6 +9,7 @@ import { ShopRepository } from '../repositories/shop-repository';
 import { OrderRepository } from '../repositories/order-repository';
 import { PricingRepository } from '../repositories/pricing-repository';
 import { PrinterRepository } from '../repositories/printer-repository';
+import { AgentRepository } from '../repositories/agent-repository';
 import { seedDatabase } from '../seed';
 
 describe('Relational Database & Multi-Tenancy Tests', () => {
@@ -207,6 +208,43 @@ describe('Relational Database & Multi-Tenancy Tests', () => {
     assert.equal(pricingRepo.getRateRules('shop-campus-1').find((rule) => rule.paperSize === 'A4' && rule.colorMode === 'bw' && rule.duplexMode === 'simplex')?.pricePerPrintedSidePaise, 225);
     assert.equal(db.queryOne<any>(`SELECT version FROM inklly_schema_migrations WHERE version = 13`)?.version, 13);
     assert.ok(db.query<{ name: string }>(`PRAGMA table_info(orders)`).some((column) => column.name === 'pricing_snapshot'));
+  });
+
+  it('persists idempotent webhook events, leases retries, and scopes history by organization', () => {
+    const migration = db.queryOne<any>(`SELECT version FROM inklly_schema_migrations WHERE version = 14`);
+    assert.equal(migration?.version, 14);
+    const orgId = db.queryOne<any>(`SELECT organization_id FROM shops WHERE id = ?`, ['shop-campus-1']).organization_id as string;
+    const now = new Date().toISOString();
+    db.execute(
+      `INSERT INTO webhook_subscriptions (id, organization_id, target_url, secret, event_types, is_active, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+      ['webhook-outbox-test', orgId, 'https://example.com/hook', 'encrypted-test-secret', JSON.stringify(['order.created']), now, now]
+    );
+    const repo = new AgentRepository(db);
+    const payload = { orderId: 'order-outbox-test', status: 'AWAITING_REVIEW' };
+    const eventId = repo.enqueueWebhookEvent(orgId, 'order.created', 'order.created:order-outbox-test', payload);
+    assert.equal(repo.enqueueWebhookEvent(orgId, 'order.created', 'order.created:order-outbox-test', payload), eventId,
+      'replaying an idempotency key returns the original event');
+    assert.equal(repo.listWebhookDeliveries(orgId, 'webhook-outbox-test').length, 1,
+      'an event creates one delivery per matching subscription');
+    assert.equal(repo.listWebhookDeliveries('unrelated-org', 'webhook-outbox-test').length, 0,
+      'delivery history remains organization-scoped');
+
+    const [first] = repo.claimDueWebhookDeliveries(10, 30_000);
+    assert.equal(first.deliveryId, repo.listWebhookDeliveries(orgId, 'webhook-outbox-test')[0].deliveryId);
+    assert.equal(first.attemptCount, 1);
+    assert.equal(repo.claimDueWebhookDeliveries(10, 30_000).length, 0, 'an active lease prevents concurrent duplicate claims');
+    repo.recordWebhookDeliveryResult(first.deliveryId, false, 503, 'destination_http_503', new Date(Date.now() + 60_000).toISOString());
+    assert.equal(repo.listWebhookDeliveries(orgId, 'webhook-outbox-test')[0].attempts[0].statusCode, 503);
+
+    db.execute(`UPDATE webhook_deliveries SET next_attempt_at = ? WHERE id = ?`, [new Date(Date.now() - 1_000).toISOString(), first.deliveryId]);
+    const [retry] = repo.claimDueWebhookDeliveries(10, 30_000);
+    assert.equal(retry.attemptCount, 2);
+    repo.recordWebhookDeliveryResult(retry.deliveryId, true, 204, null, null);
+    const history = repo.listWebhookDeliveries(orgId, 'webhook-outbox-test');
+    assert.equal(history[0].status, 'DELIVERED');
+    assert.equal(history[0].attempts.length, 2);
+    assert.equal(history[0].attempts[1].statusCode, 204);
   });
 
   it('persists and updates orders with state machine validation', () => {

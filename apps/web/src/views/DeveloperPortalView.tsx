@@ -150,6 +150,10 @@ export const DeveloperPortalView: React.FC<DeveloperPortalProps> = ({ onNavigate
   const [openApiSpec, setOpenApiSpec] = useState<any>(null);
   const [keys, setKeys] = useState<any[]>([]);
   const [webhooks, setWebhooks] = useState<any[]>([]);
+  const [newWebhookUrl, setNewWebhookUrl] = useState('');
+  const [newWebhookEvents, setNewWebhookEvents] = useState<string[]>(['order.created', 'order.status_changed', 'payment.succeeded']);
+  const [creatingWebhook, setCreatingWebhook] = useState(false);
+  const [generatedWebhookSecret, setGeneratedWebhookSecret] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -201,6 +205,7 @@ export const DeveloperPortalView: React.FC<DeveloperPortalProps> = ({ onNavigate
     )
   );
   const [webhookHistory, setWebhookHistory] = useState<any[]>([]);
+  const [selectedWebhookId, setSelectedWebhookId] = useState('');
 
   // Code Snippets State
   const [snippetLanguage, setSnippetLanguage] = useState<'curl' | 'node' | 'python' | 'dotnet'>('curl');
@@ -247,7 +252,16 @@ export const DeveloperPortalView: React.FC<DeveloperPortalProps> = ({ onNavigate
       ]);
       setOpenApiSpec(spec);
       setKeys(Array.isArray(kList) ? kList : []);
-      setWebhooks(wList || []);
+      const subscriptions = Array.isArray(wList) ? wList : [];
+      setWebhooks(subscriptions);
+      const firstSubscriptionId = subscriptions[0]?.id || '';
+      setSelectedWebhookId(firstSubscriptionId);
+      if (firstSubscriptionId) {
+        const history = await api.getWebhookDeliveries(firstSubscriptionId).catch(() => []);
+        setWebhookHistory(Array.isArray(history) ? history : []);
+      } else {
+        setWebhookHistory([]);
+      }
     } catch (err: any) {
       console.warn('Developer Portal data fallback:', err);
     } finally {
@@ -389,10 +403,56 @@ export const DeveloperPortalView: React.FC<DeveloperPortalProps> = ({ onNavigate
       const result = await api.testWebhook(selectedWebhookEvent);
       const payload = result.payload || result;
       setWebhookPayloadJson(JSON.stringify(payload, null, 2));
-      setWebhookHistory((prev) => [{ id: payload.eventId || 'preview', eventType: selectedWebhookEvent, status: 'PREVIEW ONLY', timestamp: 'Not sent', signature: 'Unsigned synthetic payload preview' }, ...prev]);
       triggerToast('Synthetic payload preview created. Nothing was sent or signed.');
     } catch (err: any) {
       triggerToast(`Dispatch failed: ${err.message}`);
+    }
+  };
+
+  const handleCreateWebhook = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!newWebhookUrl.trim() || newWebhookEvents.length === 0) {
+      triggerToast('Enter an HTTPS destination and select at least one event.');
+      return;
+    }
+    setCreatingWebhook(true);
+    try {
+      const created = await api.createWebhook(newWebhookUrl.trim(), newWebhookEvents);
+      const { webhookSecret, ...subscription } = created;
+      setWebhooks((current) => [subscription, ...current]);
+      setSelectedWebhookId(subscription.id);
+      setWebhookHistory([]);
+      setGeneratedWebhookSecret(webhookSecret);
+      setNewWebhookUrl('');
+      triggerToast('Webhook destination registered. Copy its signing secret now.');
+    } catch (error: any) {
+      triggerToast(error.message || 'Could not create webhook destination');
+    } finally {
+      setCreatingWebhook(false);
+    }
+  };
+
+  const handleRotateWebhookSecret = async () => {
+    if (!selectedWebhookId) return;
+    try {
+      const result = await api.rotateWebhookSecret(selectedWebhookId);
+      setGeneratedWebhookSecret(result.webhookSecret);
+      triggerToast('Webhook signing secret rotated. Store the new secret now.');
+    } catch (error: any) {
+      triggerToast(error.message || 'Could not rotate webhook secret');
+    }
+  };
+
+  const handleRevokeWebhook = async () => {
+    if (!selectedWebhookId || !window.confirm('Revoke this webhook destination? Pending deliveries will be cancelled.')) return;
+    try {
+      await api.revokeWebhook(selectedWebhookId);
+      setWebhooks((current) => current.map((hook) => hook.id === selectedWebhookId ? { ...hook, isActive: false } : hook));
+      const history = await api.getWebhookDeliveries(selectedWebhookId).catch(() => []);
+      setWebhookHistory(Array.isArray(history) ? history : []);
+      triggerToast('Webhook destination revoked.');
+    } catch (error: any) {
+      triggerToast(error.message || 'Could not revoke webhook destination');
     }
   };
 
@@ -1009,11 +1069,72 @@ class Program
         </div>
       )}
 
+      {generatedWebhookSecret && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl">
+            <div className="flex items-center gap-3 text-amber-600">
+              <ShieldIcon size={24} />
+              <h3 className="font-extrabold text-base text-slate-900 dark:text-white">Save your webhook signing secret</h3>
+            </div>
+            <p className="text-xs text-slate-500">This secret is shown once. Store it securely and use it to verify each `X-Inklly-Signature` header.</p>
+            <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 font-mono text-xs text-slate-800 dark:text-slate-200 break-all select-all flex justify-between items-center gap-2">
+              <span>{generatedWebhookSecret}</span>
+              <button type="button" aria-label="Copy webhook secret" onClick={() => copyToClipboard(generatedWebhookSecret, 'Webhook secret')} className="text-[#4D64E6] p-1">
+                <CopyIcon size={16} />
+              </button>
+            </div>
+            <button type="button" onClick={() => setGeneratedWebhookSecret(null)} className="w-full py-2.5 bg-[#4D64E6] text-white font-bold text-xs rounded-xl">
+              I stored this secret
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ═══════════════════════════════════════════════════════════════
           TAB 3: WEBHOOK SIMULATOR & HMAC SIGNATURE
       ═══════════════════════════════════════════════════════════════ */}
       {activeTab === 'webhooks' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <form onSubmit={handleCreateWebhook} className="lg:col-span-12 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-4">
+            <div>
+              <h2 className="text-sm font-extrabold text-slate-900 dark:text-white">Register a webhook destination</h2>
+              <p className="text-xs text-slate-500 mt-1">Inklly sends signed event envelopes to HTTPS destinations with public DNS addresses. The signing secret is shown once.</p>
+            </div>
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+              Destination URL
+              <input
+                type="url"
+                value={newWebhookUrl}
+                onChange={(event) => setNewWebhookUrl(event.target.value)}
+                placeholder="https://your-domain.com/inklly/webhooks"
+                required
+                maxLength={2048}
+                className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-normal dark:border-slate-700 dark:bg-slate-800"
+              />
+            </label>
+            <fieldset>
+              <legend className="mb-2 text-xs font-bold text-slate-700 dark:text-slate-300">Events</legend>
+              <div className="flex flex-wrap gap-3">
+                {['order.created', 'order.status_changed', 'payment.succeeded'].map((eventType) => (
+                  <label key={eventType} className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs dark:border-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={newWebhookEvents.includes(eventType)}
+                      onChange={(event) => setNewWebhookEvents((current) => event.target.checked
+                        ? (current.includes(eventType) ? current : [...current, eventType])
+                        : current.filter((value) => value !== eventType))}
+                    />
+                    <span>{eventType}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <button type="submit" disabled={creatingWebhook || !externalApiAccessEnabled} className="rounded-xl bg-[#4D64E6] px-4 py-2.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
+              {creatingWebhook ? 'Registering…' : 'Register Destination'}
+            </button>
+            {!externalApiAccessEnabled && <p className="text-xs text-amber-700">Developer webhook access is disabled for this deployment.</p>}
+          </form>
+
           {/* Left Column: Dispatch Simulator (6 cols) */}
           <div className="lg:col-span-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-4">
             <div>
@@ -1056,8 +1177,6 @@ class Program
                     <option value="order.created">order.created</option>
                     <option value="order.status_changed">order.status_changed</option>
                     <option value="payment.succeeded">payment.succeeded</option>
-                    <option value="print_job.jammed">print_job.jammed</option>
-                    <option value="spooler.offline">spooler.offline</option>
                   </select>
               </div>
 
@@ -1084,24 +1203,57 @@ class Program
             </div>
           </div>
 
-          {/* Right Column: Webhook Delivery History (6 cols) */}
+          {/* Right Column: Durable Webhook Delivery History (6 cols) */}
           <div className="lg:col-span-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xs overflow-hidden">
             <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
               <div>
                 <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">
-                  Preview History
+                  Delivery History
                 </h3>
-                <p className="text-xs text-slate-400">No outbound deliveries are recorded here.</p>
+                <p className="text-xs text-slate-400">Persisted signed delivery attempts for this destination.</p>
               </div>
-              <span className="text-[10px] font-mono text-slate-400">Preview only</span>
+              <div className="flex items-center gap-2">
+              <select
+                value={selectedWebhookId}
+                onChange={async (event) => {
+                  const id = event.target.value;
+                  setSelectedWebhookId(id);
+                  try {
+                    const history = await api.getWebhookDeliveries(id);
+                    setWebhookHistory(Array.isArray(history) ? history : []);
+                  } catch (error: any) {
+                    setWebhookHistory([]);
+                    triggerToast(error.message || 'Could not load delivery history');
+                  }
+                }}
+                aria-label="Webhook destination"
+                className="max-w-48 text-[10px] rounded-lg border border-slate-200 bg-slate-50 p-2 dark:border-slate-700 dark:bg-slate-800"
+                disabled={webhooks.length === 0}
+              >
+                {webhooks.length === 0 ? <option value="">No destinations</option> : webhooks.map((hook) => <option key={hook.id} value={hook.id}>{hook.isActive ? '' : '[Revoked] '}{hook.targetUrl}</option>)}
+              </select>
+              <button
+                type="button"
+                disabled={!selectedWebhookId}
+                onClick={async () => {
+                  try {
+                    const history = await api.getWebhookDeliveries(selectedWebhookId);
+                    setWebhookHistory(Array.isArray(history) ? history : []);
+                  } catch (error: any) { triggerToast(error.message || 'Could not refresh delivery history'); }
+                }}
+                className="rounded-lg border border-slate-200 px-2.5 py-2 text-[10px] font-bold text-slate-600 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300"
+              >Refresh</button>
+              <button type="button" disabled={!webhooks.find((hook) => hook.id === selectedWebhookId)?.isActive} onClick={() => void handleRotateWebhookSecret()} className="rounded-lg border border-slate-200 px-2.5 py-2 text-[10px] font-bold text-slate-600 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300">Rotate</button>
+              <button type="button" disabled={!webhooks.find((hook) => hook.id === selectedWebhookId)?.isActive} onClick={() => void handleRevokeWebhook()} className="rounded-lg border border-rose-200 px-2.5 py-2 text-[10px] font-bold text-rose-700 disabled:opacity-40 dark:border-rose-900 dark:text-rose-300">Revoke</button>
+              </div>
             </div>
 
             <div className="divide-y divide-slate-100 dark:divide-slate-800">
               {webhookHistory.length === 0 && (
-                <p className="p-5 text-xs text-slate-500" role="status">No synthetic payload previews have been generated in this session.</p>
+                <p className="p-5 text-xs text-slate-500" role="status">No webhook deliveries have been recorded for this destination.</p>
               )}
               {webhookHistory.map((item) => (
-                <div key={item.id} className="p-4 space-y-2 hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+                <div key={item.deliveryId} className="p-4 space-y-2 hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-xs font-bold text-slate-800 dark:text-slate-200">
@@ -1111,11 +1263,12 @@ class Program
                         {item.status}
                       </span>
                     </div>
-                    <span className="text-[10px] text-slate-400">{item.timestamp}</span>
+                    <span className="text-[10px] text-slate-400">{new Date(item.createdAt).toLocaleString()}</span>
                   </div>
-                  <div className="text-[10px] font-mono text-slate-400 bg-slate-50 dark:bg-slate-800/80 p-2 rounded-lg truncate">
-                    {item.signature}
+                  <div className="text-[10px] text-slate-500">
+                    {item.attemptCount} attempt{item.attemptCount === 1 ? '' : 's'}{item.lastStatusCode ? ` · HTTP ${item.lastStatusCode}` : ''}
                   </div>
+                  {item.lastError && <div className="text-[10px] text-rose-600 break-words">{item.lastError}</div>}
                 </div>
               ))}
             </div>

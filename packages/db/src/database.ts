@@ -40,6 +40,7 @@ export class DatabaseService {
       this.ensureSqliteSubscriptionUsageMigration();
       this.ensureSqliteRateRuleUniquenessMigration();
       this.ensureSqliteOrderPricingSnapshotMigration();
+      this.ensureSqliteWebhookOutboxMigration();
     }
   }
 
@@ -147,6 +148,7 @@ export class DatabaseService {
     this.ensurePostgresSubscriptionUsageMigration();
     this.ensurePostgresRateRuleUniquenessMigration();
     this.ensurePostgresOrderPricingSnapshotMigration();
+    this.ensurePostgresWebhookOutboxMigration();
   }
 
   private ensureSqliteSubscriptionUsageMigration(): void {
@@ -275,6 +277,77 @@ export class DatabaseService {
     } catch (error) {
       try { this.queryPostgres('ROLLBACK'); } catch { /* preserve original error */ }
       throw new Error(`[Inklly DB] Order pricing snapshot migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+
+  private ensureSqliteWebhookOutboxMigration(): void {
+    if (this.db!.prepare(`SELECT version FROM inklly_schema_migrations WHERE version = 14`).get()) return;
+    this.db!.exec('BEGIN');
+    try {
+      this.db!.exec(`CREATE TABLE IF NOT EXISTS webhook_events (
+        id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, event_type TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL, payload_json TEXT NOT NULL, created_at TEXT NOT NULL,
+        FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+        UNIQUE (organization_id, idempotency_key)
+      )`);
+      this.db!.exec(`CREATE TABLE IF NOT EXISTS webhook_deliveries (
+        id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, subscription_id TEXT NOT NULL,
+        event_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'PENDING', attempt_count INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at TEXT NOT NULL, lease_until TEXT, last_status_code INTEGER, last_error TEXT,
+        delivered_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+        FOREIGN KEY (subscription_id) REFERENCES webhook_subscriptions(id) ON DELETE CASCADE,
+        FOREIGN KEY (event_id) REFERENCES webhook_events(id) ON DELETE CASCADE,
+        UNIQUE (subscription_id, event_id)
+      )`);
+      this.db!.exec(`CREATE TABLE IF NOT EXISTS webhook_delivery_attempts (
+        id TEXT PRIMARY KEY, delivery_id TEXT NOT NULL, attempt_number INTEGER NOT NULL,
+        status_code INTEGER, error TEXT, started_at TEXT NOT NULL, completed_at TEXT,
+        FOREIGN KEY (delivery_id) REFERENCES webhook_deliveries(id) ON DELETE CASCADE,
+        UNIQUE (delivery_id, attempt_number)
+      )`);
+      this.db!.exec(`CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_due ON webhook_deliveries(status, next_attempt_at, lease_until)`);
+      this.db!.exec(`CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_org_created ON webhook_deliveries(organization_id, created_at)`);
+      this.db!.exec(`CREATE INDEX IF NOT EXISTS idx_webhook_delivery_attempts_delivery ON webhook_delivery_attempts(delivery_id, attempt_number)`);
+      this.db!.prepare(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (14, ?)`).run(new Date().toISOString());
+      this.db!.exec('COMMIT');
+    } catch (error) {
+      try { this.db!.exec('ROLLBACK'); } catch { /* preserve original error */ }
+      throw error;
+    }
+  }
+
+  private ensurePostgresWebhookOutboxMigration(): void {
+    if (this.queryPostgres(`SELECT version FROM inklly_schema_migrations WHERE version = ?`, [14]).length) return;
+    this.queryPostgres('BEGIN');
+    try {
+      this.queryPostgres(`CREATE TABLE IF NOT EXISTS webhook_events (
+        id TEXT PRIMARY KEY, organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        event_type TEXT NOT NULL, idempotency_key TEXT NOT NULL, payload_json TEXT NOT NULL, created_at TEXT NOT NULL,
+        UNIQUE (organization_id, idempotency_key)
+      )`);
+      this.queryPostgres(`CREATE TABLE IF NOT EXISTS webhook_deliveries (
+        id TEXT PRIMARY KEY, organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        subscription_id TEXT NOT NULL REFERENCES webhook_subscriptions(id) ON DELETE CASCADE,
+        event_id TEXT NOT NULL REFERENCES webhook_events(id) ON DELETE CASCADE,
+        status TEXT NOT NULL DEFAULT 'PENDING', attempt_count INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at TEXT NOT NULL, lease_until TEXT, last_status_code INTEGER, last_error TEXT,
+        delivered_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        UNIQUE (subscription_id, event_id)
+      )`);
+      this.queryPostgres(`CREATE TABLE IF NOT EXISTS webhook_delivery_attempts (
+        id TEXT PRIMARY KEY, delivery_id TEXT NOT NULL REFERENCES webhook_deliveries(id) ON DELETE CASCADE,
+        attempt_number INTEGER NOT NULL, status_code INTEGER, error TEXT,
+        started_at TEXT NOT NULL, completed_at TEXT, UNIQUE (delivery_id, attempt_number)
+      )`);
+      this.queryPostgres(`CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_due ON webhook_deliveries(status, next_attempt_at, lease_until)`);
+      this.queryPostgres(`CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_org_created ON webhook_deliveries(organization_id, created_at)`);
+      this.queryPostgres(`CREATE INDEX IF NOT EXISTS idx_webhook_delivery_attempts_delivery ON webhook_delivery_attempts(delivery_id, attempt_number)`);
+      this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [14, new Date().toISOString()]);
+      this.queryPostgres('COMMIT');
+    } catch (error) {
+      try { this.queryPostgres('ROLLBACK'); } catch { /* preserve original error */ }
+      throw new Error(`[Inklly DB] Webhook outbox migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
     }
   }
 

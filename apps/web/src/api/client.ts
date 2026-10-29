@@ -712,6 +712,43 @@ export const api = {
     return res.json();
   },
 
+  async createWebhook(targetUrl: string, eventTypes: string[]) {
+    const res = await fetch(`${API_BASE}/developer/webhooks`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ targetUrl, eventTypes }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not create webhook subscription');
+    return body;
+  },
+
+  async getWebhookDeliveries(webhookId: string, limit = 50, offset = 0) {
+    const query = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    const res = await fetch(`${API_BASE}/developer/webhooks/${encodeURIComponent(webhookId)}/deliveries?${query}`, { headers: getHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not load webhook delivery history');
+    return body;
+  },
+
+  async rotateWebhookSecret(webhookId: string) {
+    const res = await fetch(`${API_BASE}/developer/webhooks/${encodeURIComponent(webhookId)}/rotate-secret`, {
+      method: 'POST', headers: getHeaders(), body: JSON.stringify({}),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not rotate webhook secret');
+    return body;
+  },
+
+  async revokeWebhook(webhookId: string) {
+    const res = await fetch(`${API_BASE}/developer/webhooks/${encodeURIComponent(webhookId)}`, {
+      method: 'DELETE', headers: getHeaders(),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not revoke webhook destination');
+    return body;
+  },
+
   async createApiKey(keyData: any) {
     const res = await fetch(`${API_BASE}/developer/keys`, {
       method: 'POST',

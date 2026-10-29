@@ -35,7 +35,10 @@ export function createDeveloperRoutes(db: DatabaseService): Router {
   router.delete('/keys/:id', ...developerAccess, externalApiGate, controller.revokeKey);
 
   router.get('/webhooks', ...developerAccess, externalApiGate, controller.getWebhooks);
+  router.get('/webhooks/:id/deliveries', ...developerAccess, externalApiGate, controller.getWebhookDeliveries);
   router.post('/webhooks', ...developerAccess, externalApiGate, controller.createWebhook);
+  router.post('/webhooks/:id/rotate-secret', ...developerAccess, externalApiGate, controller.rotateWebhookSecret);
+  router.delete('/webhooks/:id', ...developerAccess, externalApiGate, controller.revokeWebhook);
   router.post('/test-webhook', ...developerAccess, externalApiGate, controller.testWebhook);
 
   return router;

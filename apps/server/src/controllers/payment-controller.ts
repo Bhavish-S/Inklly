@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { OrderRepository, LedgerRepository, DatabaseService } from '@inklly/db';
+import { AgentRepository, OrderRepository, LedgerRepository, DatabaseService } from '@inklly/db';
 import * as crypto from 'node:crypto';
 import { ShopPaymentCredentialsService } from '../services/shop-payment-credentials';
 import { OrderStatus } from '@inklly/shared';
@@ -54,6 +54,15 @@ export class PaymentController {
           createdAt: new Date().toISOString(),
         });
       }
+
+      new AgentRepository(this.db).enqueueWebhookEvent(row.organization_id, 'payment.succeeded', `payment.succeeded:${paymentId}`, {
+        paymentId,
+        orderId: row.order_id,
+        amountPaise: Number(row.amount_paise),
+        currency: row.currency || 'INR',
+        provider: 'RAZORPAY',
+        capturedAt: new Date().toISOString(),
+      });
 
       return true;
   }
@@ -327,6 +336,17 @@ export class PaymentController {
           description: `Cash collected at counter for Order ${order.orderNumber}`,
           createdAt: now,
         });
+        const organization = this.db.queryOne<any>(`SELECT organization_id FROM shops WHERE id = ?`, [order.shopId]);
+        if (organization) {
+          new AgentRepository(this.db).enqueueWebhookEvent(organization.organization_id, 'payment.succeeded', `payment.succeeded:${paymentId}`, {
+            paymentId,
+            orderId: order.id,
+            amountPaise: order.totalAmountPaise,
+            currency: order.currency,
+            provider: 'MANUAL_CASH',
+            capturedAt: now,
+          });
+        }
         if (order.status === 'READY_FOR_COLLECTION') {
           this.orderRepo.updateOrderStatus(order.id, 'COLLECTED');
         }
