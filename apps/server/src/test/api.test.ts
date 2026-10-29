@@ -2015,6 +2015,36 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     }
   });
 
+  it('revokes paired-agent access immediately when its shop is deactivated', async () => {
+    const agentId = `agt-inactive-shop-${crypto.randomUUID()}`;
+    const secret = crypto.randomBytes(48).toString('base64url');
+    const now = new Date().toISOString();
+    db.execute(
+      `INSERT INTO agent_registrations (id, shop_id, secret_key_hash, hostname, os_platform, os_version, agent_version, is_active, last_heartbeat, created_at, updated_at)
+       VALUES (?, 'shop-campus-1', ?, 'INACTIVE-SHOP-AGENT', 'win32', 'Windows 11', 'test', 1, ?, ?, ?)`,
+      [agentId, crypto.createHash('sha256').update(secret).digest('hex'), now, now, now]
+    );
+    const headers = { 'Content-Type': 'application/json', 'X-Agent-Id': agentId, Authorization: `Bearer ${secret}` };
+    db.execute(`UPDATE shops SET is_active = 0 WHERE id = ?`, ['shop-campus-1']);
+    try {
+      const heartbeat = await fetch(`${baseUrl}/api/v1/agent/heartbeat`, {
+        method: 'POST', headers, body: JSON.stringify({ status: 'ONLINE', activePrintersCount: 0, localQueueDepth: 0, sqliteCacheHealthy: true }),
+      });
+      assert.equal(heartbeat.status, 401);
+      assert.equal(db.queryOne<any>(`SELECT last_heartbeat FROM agent_registrations WHERE id = ?`, [agentId]).last_heartbeat, now,
+        'inactive-shop agent heartbeat must not update persisted state');
+
+      const polling = await fetch(`${baseUrl}/api/v1/agent/poll-commands`, { headers });
+      assert.equal(polling.status, 401);
+
+      const fileDownload = await fetch(`${baseUrl}/api/v1/agent/files/not-a-real-file`, { headers });
+      assert.equal(fileDownload.status, 401, 'inactive-shop agents cannot probe or download order files');
+    } finally {
+      db.execute(`UPDATE shops SET is_active = 1 WHERE id = ?`, ['shop-campus-1']);
+      db.execute(`DELETE FROM agent_registrations WHERE id = ?`, [agentId]);
+    }
+  });
+
   it('Allows Platform Owner to access tenant data without isolation error', async () => {
     const adminRes = await fetch(`${baseUrl}/api/v1/merchant/dashboard?shopId=shop-campus-1`, {
       headers: {

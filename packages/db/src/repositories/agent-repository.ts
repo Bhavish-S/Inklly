@@ -118,7 +118,10 @@ export class AgentRepository {
   public authenticateAgent(agentId: string, secret: string): { agentId: string; shopId: string } | null {
     if (!agentId || typeof secret !== 'string' || secret.length < 40 || secret.length > 100) return null;
     const row = this.db.queryOne<any>(
-      `SELECT id, shop_id, secret_key_hash FROM agent_registrations WHERE id = ? AND is_active = 1`,
+      `SELECT ar.id, ar.shop_id, ar.secret_key_hash
+       FROM agent_registrations ar
+       JOIN shops s ON s.id = ar.shop_id
+       WHERE ar.id = ? AND ar.is_active = 1 AND s.is_active = 1`,
       [agentId]
     );
     if (!row) return null;
@@ -201,6 +204,7 @@ export class AgentRepository {
            SELECT pa2.id FROM print_attempts pa2 WHERE pa2.print_job_id = pj.id ORDER BY pa2.created_at DESC LIMIT 1
          )
          WHERE o.shop_id = ?
+           AND EXISTS (SELECT 1 FROM shops active_shop WHERE active_shop.id = o.shop_id AND active_shop.is_active = 1)
            AND p.id IS NOT NULL AND p.is_online = 1 AND p.agent_id = ?
            AND o.status IN ('READY_FOR_PRINT', 'IN_PROGRESS')
            AND (o.payment_method <> 'ONLINE_RAZORPAY' OR o.payment_status = 'VERIFIED')
