@@ -31,7 +31,7 @@ Use `BUILD_AND_TEST_RESULTS.md` for the latest executed checks and `REMAINING_IS
 
 ## Incomplete or unverified
 
-- Code through `9e28716` is pushed and GitHub reports Vercel deployment success. Current source validates printer capability profiles, bounds shared quote calculations, corrects platform audit-log field rendering/export, returns safe 400 errors for malformed public customer request bodies, and applies database-backed upload quotas. Render still returns health without a revision and exposes only seven OpenAPI paths, so its backend is stale relative to source.
+- Code through `dc219dc` is pushed to GitHub and the Vercel site responds HTTP 200. Current source validates printer capability profiles, bounds shared quote calculations, provides stable cursor-based platform audit pagination and complete formula-safe CSV export, returns safe 400 errors for malformed public customer request bodies, and applies database-backed upload quotas. Render still returns health without a revision and exposes only seven OpenAPI paths, so its backend is stale relative to source.
 - PostgreSQL migration/startup against the live production project and Supabase private bucket behavior remain unverified.
 - Razorpay sandbox checkout and webhook round trip, refunds/reconciliation against provider statements, recurring subscription checkout/collection, tax calculation, and quota enforcement are not verified or fully implemented. Invoice-only hybrid billing is locally implemented; it does not collect money.
 - Database migrations now install append-only ledger triggers and a unique provider-transaction index; local SQLite tests cover immutability, compensating entries, and duplicate rejection. Live Supabase migration, pre-existing duplicate review, role/owner bypass protection, and complete reconciliation remain open.
@@ -51,4 +51,4 @@ Use `BUILD_AND_TEST_RESULTS.md` for the latest executed checks and `REMAINING_IS
 
 ## Verification record
 
-For the current local snapshot, `npm run build` and `npm test` completed successfully (240 tests: database 15, shared 15, agent 14, server 196). `npm audit --audit-level=high` timed out twice at the npm registry. Render still serves a stale API. See `BUILD_AND_TEST_RESULTS.md` for the deployment checks.
+For the current local snapshot, `npm run build` and `npm test` completed successfully (241 tests: database 15, shared 15, agent 14, server 197). `npm audit --audit-level=high` timed out twice at the npm registry. Render still serves a stale API. See `BUILD_AND_TEST_RESULTS.md` for the deployment checks.
