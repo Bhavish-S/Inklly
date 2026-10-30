@@ -34,7 +34,7 @@ D:\Inkly\Source Code\
 ## 🚀 Quick Start Guide
 
 ### 1. Prerequisites
-- Node.js v20+ or v24+
+- Node.js 24 (the CI and hosted build baseline)
 - Windows, macOS, or Linux
 
 ### 2. Install Dependencies & Build All Workspaces
@@ -49,6 +49,8 @@ npm run build
 npm run test
 ```
 *Runs the current tests across `@inklly/shared`, `@inklly/db`, `@inklly/agent`, `@inklly/server`, and `@inklly/web`. See [`BUILD_AND_TEST_RESULTS.md`](./BUILD_AND_TEST_RESULTS.md) for the last verified count and deployment limits.*
+
+Pull requests and pushes to `main` run the same build and workspace tests in GitHub Actions using Node.js 24; see [the CI workflow](./.github/workflows/ci.yml).
 
 ### 4. Running the Development Services
 

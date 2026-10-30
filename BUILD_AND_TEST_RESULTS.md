@@ -5,13 +5,14 @@
 ## Current local verification
 
 - `npm run build` — passed on 2026-10-30 for database, shared, desktop agent, server, and web workspaces using Vite 6.4.5. PDF rendering is isolated in a 484.31 kB lazy-loaded chunk. Vite reports no oversized JavaScript chunk.
-- `npm test` — 286 passed, 0 failed on 2026-10-30: database 24, shared 16, agent 15, server 220, web 11. Coverage includes provider-mocked Razorpay refund processing, signed refund webhook idempotency, late failure events, stable idempotency-key retry after timeout, cash refund confirmation, partial-refund state transitions, organization-owner-only Razorpay credential management, stale-write guards, shared persistent enquiry rate limiting, bounded platform organization/subscription pages, grouped subscription summary, and stable cursor traversal. These tests do not establish a live Razorpay or production PostgreSQL round trip.
+- `npm test` — 289 passed, 0 failed on 2026-10-30: database 24, shared 16, agent 15, server 221, web 13. Coverage includes provider-mocked Razorpay refund processing, webhook idempotency, shared persistent enquiry rate limiting, bounded platform organization/subscription pages, grouped subscription summary, agent local-data cleanup, bounded storage-request latency, and customer tracker polling stop conditions. These tests do not establish live provider, Supabase, PostgreSQL, browser or hardware behavior.
 - `npm audit --audit-level=high` — attempted twice; both requests to the npm advisory endpoint timed out, so no current audit result is available.
 - `npm run lint` — no root lint script is currently configured.
+- `.github/workflows/ci.yml` — added a GitHub Actions job for pull requests, pushes to `main`, and manual dispatch. It pins the checkout and Node setup actions by commit SHA, installs with `npm ci`, and runs the same build and test commands. YAML parsing was checked locally; the hosted workflow has not run yet.
 
 ## Hosted deployment check
 
-- `https://inklly.vercel.app/` returns HTTP 200 but still references the previous `index-Chfpwpa1.js` entry bundle; the latest frontend release is not confirmed live.
+- `https://inklly.vercel.app/` returns HTTP 200 and serves `index-1ogzuGIM.js`, which references `PlatformAdminView-DjjRy9vr.js`; the admin chunk contains the new organization paging UI.
 - `https://inklly.onrender.com/health` returns HTTP 200 without a `revision`; `/api/v1/developer/openapi.json` still has 7 paths without subscription/refund paths, and unauthenticated `/api/v1/developer/keys` returns HTTP 200 with `[]` although current source and local API tests require 401.
 - Unauthenticated `/api/v1/platform/agents?limit=1` returns HTTP 401, as expected. Render Auto-Deploy settings cannot be changed or inspected from this session.
 

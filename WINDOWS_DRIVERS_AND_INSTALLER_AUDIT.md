@@ -1,6 +1,6 @@
 # Inklly Desktop Agent: Windows Installer and Printing Status
 
-**Verified against local source:** 2026-10-28
+**Verified against local source:** 2026-10-30
 **Release status:** Not ready for production installation or physical printing.
 
 This document records the behavior present in `apps/agent` and the server API. It does not certify any printer model, driver, installer, or physical output.
@@ -20,6 +20,7 @@ This document records the behavior present in `apps/agent` and the server API. I
 - The server now blocks order dispatch when any stored file requests mixed-color, manual-duplex, multiple-pages-per-sheet, or paper-size modes the current executor cannot apply. It also verifies each requested color, duplex, and supported tray paper size against the selected printer profile before assigning jobs. The public customer portal hides the agent-incompatible options and quote/order APIs reject them even if a client bypasses the UI.
 - The current executor rejects mixed-color, manual-duplex, multiple-pages-per-sheet, and unverified paper-size requests. A successful `SUBMITTED_TO_SPOOLER` result means the operating-system spooler accepted the request; it does not confirm that pages came out of the printer.
 - Interrupted or ambiguous output is recorded as `OUTPUT_UNCERTAIN`. The queue does not blindly retry it. An operator must reconcile the physical result before taking a new print action.
+- When an attempt reaches result reporting or a terminal state, the local queue removes the document locator, customer filename, printer ID, print options, and expiry. Startup also scrubs those fields from legacy terminal rows and interrupted spooler rows; minimal outcome metadata remains for reconciliation. Local regression tests cover these transitions, but deployed agent upgrades and Windows local-database behavior still need verification.
 
 ## Local development
 

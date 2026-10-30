@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../api/client';
 import { CheckCircleIcon, ClockIcon, PrinterIcon, FileTextIcon } from '../components/icons';
+import { stopCustomerOrderPollingIfFinal } from '../order-tracker-polling.mjs';
 
 interface OrderTrackerViewProps {
   orderId: string;
@@ -26,6 +27,7 @@ export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onB
   useEffect(() => {
     let active = true;
     let inFlight = false;
+    let interval: number | undefined;
     setLoading(true);
     setError(null);
     if (!orderId) {
@@ -42,6 +44,7 @@ export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onB
         if (active) {
           setOrder(data);
           setError(null);
+          if (stopCustomerOrderPollingIfFinal(data.status, interval, window.clearInterval)) interval = undefined;
         }
       } catch {
         if (active) setError('We could not refresh this order right now. Check your connection and try again.');
@@ -50,9 +53,12 @@ export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onB
         if (active) setLoading(false);
       }
     };
+    interval = window.setInterval(() => void fetchStatus(), 10000);
     void fetchStatus();
-    const interval = setInterval(() => void fetchStatus(), 10000);
-    return () => clearInterval(interval);
+    return () => {
+      active = false;
+      if (interval !== undefined) window.clearInterval(interval);
+    };
   }, [orderId, retryCount]);
 
   if (loading && !order) {

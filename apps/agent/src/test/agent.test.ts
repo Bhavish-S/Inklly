@@ -103,7 +103,8 @@ describe('Inklly Desktop Edge Print Agent Test Suite', () => {
         result_json TEXT, error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       INSERT INTO local_commands (command_id, job_id, attempt_id, printer_id, document_url, file_name, options, expires_at, status, created_at, updated_at)
-      VALUES ('cmd-legacy', 'job-legacy', 'att-legacy', 'printer-legacy', 'https://api.inklly.example/api/v1/agent/files/file-legacy', 'legacy.pdf', '{}', '2099-01-01T00:00:00.000Z', 'PENDING', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+      VALUES ('cmd-legacy', 'job-legacy', 'att-legacy', 'printer-legacy', 'https://api.inklly.example/api/v1/agent/files/file-legacy', 'legacy.pdf', '{}', '2099-01-01T00:00:00.000Z', 'PENDING', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+             ('cmd-old-complete', 'job-old-complete', 'att-old-complete', 'printer-legacy', 'https://api.inklly.example/api/v1/agent/files/old-file', 'old-customer.pdf', '{"copies":2}', '2099-01-01T00:00:00.000Z', 'COMPLETED', '2026-01-02T00:00:00.000Z', '2026-01-02T00:00:00.000Z');
     `);
     legacyDb.close();
 
@@ -113,6 +114,11 @@ describe('Inklly Desktop Edge Print Agent Test Suite', () => {
       assert.equal(migratedQueue.getNextPending(), null);
       assert.equal(migratedQueue.markServerAcknowledged('cmd-legacy', 'att-legacy'), true);
       assert.equal(migratedQueue.getNextPending()?.commandId, 'cmd-legacy');
+      const oldCompleted = migratedQueue.getRecent(1)[0];
+      assert.equal(oldCompleted.commandId, 'cmd-old-complete');
+      assert.equal(oldCompleted.documentUrl, '', 'upgrade removes locators retained by old terminal queue rows');
+      assert.equal(oldCompleted.fileName, '', 'upgrade removes filenames retained by old terminal queue rows');
+      assert.deepEqual(oldCompleted.options, {}, 'upgrade removes print metadata retained by old terminal queue rows');
     } finally {
       migratedQueue.close();
       fs.rmSync(queuePath, { force: true });
@@ -219,6 +225,9 @@ describe('Inklly Desktop Edge Print Agent Test Suite', () => {
     queue.updateStatus('cmd-test-1', 'COMPLETED');
     const recent = queue.getRecent(1);
     assert.equal(recent[0].status, 'COMPLETED');
+    assert.equal(recent[0].documentUrl, '', 'completed local history must not retain a customer document locator');
+    assert.equal(recent[0].fileName, '', 'completed local history must not retain a customer filename');
+    assert.deepEqual(recent[0].options, {}, 'completed local history must not retain customer print metadata');
   });
 
   it('persists spool outcomes for retry after the agent restarts', () => {
@@ -244,6 +253,9 @@ describe('Inklly Desktop Edge Print Agent Test Suite', () => {
       assert.equal(pending.length, 1);
       assert.equal(pending[0].result?.attemptId, ticket.attemptId);
       assert.equal(pending[0].result?.status, 'FAILED');
+      assert.equal(pending[0].documentUrl, '', 'result-pending local rows do not retain the document locator');
+      assert.equal(pending[0].fileName, '', 'result-pending local rows do not retain the customer filename');
+      assert.deepEqual(pending[0].options, {}, 'result-pending local rows do not retain print preferences');
       restartedQueue.completeReport(ticket.commandId, pending[0].result!);
       assert.equal(restartedQueue.getPendingReports().length, 0);
       assert.equal(restartedQueue.getRecent(1)[0].status, 'FAILED');
@@ -273,6 +285,9 @@ describe('Inklly Desktop Edge Print Agent Test Suite', () => {
       assert.equal(reports.length, 1);
       assert.equal(reports[0].result?.status, 'OUTPUT_UNCERTAIN');
       assert.match(reports[0].result?.errorMessage || '', /not retried/i);
+      assert.equal(reports[0].documentUrl, '', 'interrupted uncertain rows cannot be retried and must drop the document locator');
+      assert.equal(reports[0].fileName, '', 'interrupted uncertain rows must drop the customer filename');
+      assert.deepEqual(reports[0].options, {}, 'interrupted uncertain rows must drop print preferences');
       assert.equal(restartedQueue.getNextPending(), null);
     } finally {
       restartedQueue.close();

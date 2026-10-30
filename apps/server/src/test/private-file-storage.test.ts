@@ -56,6 +56,24 @@ describe('Private file storage', { concurrency: false }, () => {
     await assert.rejects(() => new PrivateFileStorage().verifyReady(), /must exist and be private/);
   });
 
+  it('aborts a Supabase upload that does not respond within the configured deadline', async () => {
+    process.env.NODE_ENV = 'test';
+    process.env.STORAGE_DRIVER = 'supabase';
+    process.env.SUPABASE_URL = 'https://project.supabase.co';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'server-only-secret';
+    process.env.SUPABASE_STORAGE_BUCKET = 'customer-print-files';
+    let observedSignal: AbortSignal | undefined;
+    globalThis.fetch = (async (_input: any, init: any = {}) => new Promise<Response>((_resolve, reject) => {
+      observedSignal = init.signal;
+      if (observedSignal?.aborted) reject(observedSignal.reason);
+      else observedSignal?.addEventListener('abort', () => reject(observedSignal?.reason), { once: true });
+    })) as typeof fetch;
+
+    const storage = new PrivateFileStorage({ requestTimeoutMs: 10 });
+    await assert.rejects(() => storage.store('shop-1', 'stalled.pdf', 'application/pdf', Buffer.from('%PDF')));
+    assert.ok(observedSignal?.aborted, 'the storage request signal must abort after the configured deadline');
+  });
+
   it('treats missing object metadata as absent while preserving authorization failures', async () => {
     process.env.NODE_ENV = 'test';
     process.env.STORAGE_DRIVER = 'supabase';

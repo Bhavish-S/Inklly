@@ -69,13 +69,22 @@ export class LocalOfflineQueue {
     // A process restart can happen after OS submission but before result persistence.
     // Preserve that ambiguity and report it; never put the command back in PENDING.
     const interrupted = this.db.prepare(`SELECT command_id, job_id, attempt_id FROM local_commands WHERE status = 'DISPATCHED_TO_SPOOLER'`).all() as any[];
-    const markUncertain = this.db.prepare(`UPDATE local_commands SET status = 'REPORT_PENDING', result_json = ?, error_message = ?, updated_at = ? WHERE command_id = ? AND status = 'DISPATCHED_TO_SPOOLER'`);
+    const markUncertain = this.db.prepare(`UPDATE local_commands
+      SET status = 'REPORT_PENDING', result_json = ?, error_message = ?, document_url = '', file_name = '',
+          printer_id = '', options = '{}', expires_at = '', updated_at = ?
+      WHERE command_id = ? AND status = 'DISPATCHED_TO_SPOOLER'`);
     const now = new Date().toISOString();
     for (const row of interrupted) {
       const errorMessage = 'The agent restarted while this job was in spooler dispatch. Physical output is uncertain; operator reconciliation is required. The job was not retried.';
       const result: SpoolerResult = { attemptId: row.attempt_id, jobId: row.job_id, status: 'OUTPUT_UNCERTAIN', errorMessage, timestamp: now };
       markUncertain.run(JSON.stringify(result), errorMessage, now, row.command_id);
     }
+    // Upgrade any terminal rows written by older agent versions. Keep minimal
+    // outcome metadata for diagnostics, but never retain old document locators
+    // or customer-selected print settings after an attempt is over.
+    this.db.prepare(`UPDATE local_commands
+      SET document_url = '', file_name = '', printer_id = '', options = '{}', expires_at = ''
+      WHERE status IN ('REPORT_PENDING', 'COMPLETED', 'OUTPUT_UNCERTAIN', 'FAILED')`).run();
   }
 
   public enqueue(ticket: PrintCommandTicket): boolean {
@@ -146,13 +155,26 @@ export class LocalOfflineQueue {
 
   public updateStatus(commandId: string, status: QueuedCommand['status'], error?: string): void {
     const now = new Date().toISOString();
+    const discardTicket = ['REPORT_PENDING', 'COMPLETED', 'OUTPUT_UNCERTAIN', 'FAILED'].includes(status);
     this.db.prepare(`
-      UPDATE local_commands SET status = ?, error_message = ?, updated_at = ? WHERE command_id = ?
-    `).run(status, error || null, now, commandId);
+      UPDATE local_commands SET status = ?, error_message = ?,
+        document_url = CASE WHEN ? THEN '' ELSE document_url END,
+        file_name = CASE WHEN ? THEN '' ELSE file_name END,
+        printer_id = CASE WHEN ? THEN '' ELSE printer_id END,
+        options = CASE WHEN ? THEN '{}' ELSE options END,
+        expires_at = CASE WHEN ? THEN '' ELSE expires_at END,
+        updated_at = ? WHERE command_id = ?
+    `).run(status, error || null, discardTicket ? 1 : 0, discardTicket ? 1 : 0,
+      discardTicket ? 1 : 0, discardTicket ? 1 : 0, discardTicket ? 1 : 0, now, commandId);
   }
 
   public saveResult(commandId: string, result: SpoolerResult): void {
-    this.db.prepare(`UPDATE local_commands SET status = 'REPORT_PENDING', result_json = ?, updated_at = ? WHERE command_id = ?`)
+    // Once a ticket has an outcome it can never be retried automatically. Drop
+    // the local document locator and customer print metadata immediately, even
+    // if reporting the result must wait for the network to return.
+    this.db.prepare(`UPDATE local_commands
+      SET status = 'REPORT_PENDING', result_json = ?, document_url = '', file_name = '',
+          printer_id = '', options = '{}', expires_at = '', updated_at = ? WHERE command_id = ?`)
       .run(JSON.stringify(result), new Date().toISOString(), commandId);
   }
 
@@ -167,7 +189,9 @@ export class LocalOfflineQueue {
     const status: QueuedCommand['status'] = result.status === 'OUTPUT_UNCERTAIN'
       ? 'OUTPUT_UNCERTAIN'
       : result.status === 'FAILED' ? 'FAILED' : 'COMPLETED';
-    this.db.prepare(`UPDATE local_commands SET status = ?, error_message = ?, result_json = NULL, updated_at = ? WHERE command_id = ?`)
+    this.db.prepare(`UPDATE local_commands
+      SET status = ?, error_message = ?, result_json = NULL, document_url = '', file_name = '',
+          printer_id = '', options = '{}', expires_at = '', updated_at = ? WHERE command_id = ?`)
       .run(status, result.errorMessage || null, new Date().toISOString(), commandId);
   }
 
