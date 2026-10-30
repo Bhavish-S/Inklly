@@ -360,6 +360,31 @@ h3 {
 }
 
 /* Inputs */
+input, select, textarea {
+  color: #0F172A;
+}
+
+.dark input, .dark select, .dark textarea {
+  color: #F8FAFC;
+}
+
+/* Any input on a light surface or explicitly with bg-white MUST always show dark high-contrast text */
+input.bg-white,
+select.bg-white,
+textarea.bg-white,
+.bg-white input,
+.bg-white select,
+.bg-white textarea {
+  color: #0F172A !important;
+}
+
+input.bg-white::placeholder,
+textarea.bg-white::placeholder,
+.bg-white input::placeholder,
+.bg-white textarea::placeholder {
+  color: #94A3B8 !important;
+}
+
 .input-field {
   width: 100%;
   padding: 0.625rem 0.875rem;

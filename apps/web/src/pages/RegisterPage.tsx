@@ -130,8 +130,8 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [address, setAddress] = useState('');
-  const [city, setCity] = useState('Pune');
-  const [state, setState] = useState('Maharashtra');
+  const [city, setCity] = useState('');
+  const [state, setState] = useState('');
   const [pinCode, setPinCode] = useState('');
   const [referralCode, setReferralCode] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -682,7 +682,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-[#172031] mb-1">
+                  <label className="block text-xs font-bold text-slate-800 mb-1">
                     Email Address <span className="text-red-500">*</span>
                   </label>
                   <input
@@ -691,13 +691,13 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="ramesh@campusprint.in"
-                    className="w-full px-3 py-2 rounded-xl border border-[#E6E9F2] focus:border-[#4D64E6] focus:ring-2 focus:ring-[#4D64E6]/20 text-xs outline-hidden transition-all bg-white"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:border-[#4D64E6] focus:ring-2 focus:ring-[#4D64E6]/20 text-xs font-semibold text-slate-900 placeholder:text-slate-400 outline-hidden transition-all bg-white"
                   />
                   <p className="text-[10px] text-slate-400 mt-0.5">Used to log in to your dashboard</p>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-[#172031] mb-1">
+                  <label className="block text-xs font-bold text-slate-800 mb-1">
                     Create Password <span className="text-red-500">*</span>
                   </label>
                   <div className="relative">
@@ -709,13 +709,13 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="At least 12 characters"
-                      className="w-full min-h-[38px] pr-9 pl-3 py-2 rounded-xl border border-[#E6E9F2] focus:border-[#4D64E6] focus:ring-2 focus:ring-[#4D64E6]/20 text-xs outline-hidden transition-all bg-white"
+                      className="w-full min-h-[38px] pr-9 pl-3 py-2 rounded-xl border border-slate-200 focus:border-[#4D64E6] focus:ring-2 focus:ring-[#4D64E6]/20 text-xs font-semibold text-slate-900 placeholder:text-slate-400 outline-hidden transition-all bg-white"
                     />
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
                       aria-label={showPassword ? "Hide password" : "Show password"}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 focus:outline-hidden min-h-[32px] min-w-[32px] flex items-center justify-center rounded-lg cursor-pointer"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 focus:outline-hidden min-h-[32px] min-w-[32px] flex items-center justify-center rounded-lg cursor-pointer"
                     >
                       {showPassword ? <EyeOffIcon size={14} /> : <EyeIcon size={14} />}
                     </button>
@@ -728,7 +728,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
             {/* Profile & Shop Information */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-bold text-[#172031] mb-1">
+                <label className="block text-xs font-bold text-slate-800 mb-1">
                   Owner / Manager Name <span className="text-red-500">*</span>
                 </label>
                 <input
@@ -737,12 +737,12 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
                   value={ownerName}
                   onChange={(e) => setOwnerName(e.target.value)}
                   placeholder="e.g. Ramesh Patil"
-                  className="w-full px-3 py-2 rounded-xl border border-[#E6E9F2] focus:border-[#4D64E6] focus:ring-2 focus:ring-[#4D64E6]/20 text-xs outline-hidden transition-all bg-white"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:border-[#4D64E6] focus:ring-2 focus:ring-[#4D64E6]/20 text-xs font-semibold text-slate-900 placeholder:text-slate-400 outline-hidden transition-all bg-white"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-[#172031] mb-1">
+                <label className="block text-xs font-bold text-slate-800 mb-1">
                   Business / Shop Name <span className="text-red-500">*</span>
                 </label>
                 <input
@@ -751,17 +751,17 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
                   value={businessName}
                   onChange={(e) => handleBusinessNameChange(e.target.value)}
                   placeholder="e.g. Metro Xerox & Digital Prints"
-                  className="w-full px-3 py-2 rounded-xl border border-[#E6E9F2] focus:border-[#4D64E6] focus:ring-2 focus:ring-[#4D64E6]/20 text-xs outline-hidden transition-all bg-white"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:border-[#4D64E6] focus:ring-2 focus:ring-[#4D64E6]/20 text-xs font-semibold text-slate-900 placeholder:text-slate-400 outline-hidden transition-all bg-white"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-[#172031] mb-1">
+              <label className="block text-xs font-bold text-slate-800 mb-1">
                 Counter QR Portal URL Slug <span className="text-red-500">*</span>
               </label>
-              <div className="flex rounded-xl shadow-2xs overflow-hidden border border-[#E6E9F2] focus-within:border-[#4D64E6] focus-within:ring-2 focus-within:ring-[#4D64E6]/20">
-                <span className="inline-flex items-center px-2.5 bg-slate-100 text-slate-500 text-xs font-medium border-r border-[#E6E9F2]">
+              <div className="flex rounded-xl shadow-2xs overflow-hidden border border-slate-200 focus-within:border-[#4D64E6] focus-within:ring-2 focus-within:ring-[#4D64E6]/20">
+                <span className="inline-flex items-center px-2.5 bg-slate-100 text-slate-600 text-xs font-medium border-r border-slate-200">
                   inklly.vercel.app/p/
                 </span>
                 <input
@@ -773,7 +773,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
                     setShopCode(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''));
                   }}
                   placeholder="metro-prints"
-                  className="flex-1 px-3 py-2 text-xs font-mono font-semibold text-slate-800 outline-hidden bg-white"
+                  className="flex-1 px-3 py-2 text-xs font-mono font-semibold text-slate-900 placeholder:text-slate-400 outline-hidden bg-white"
                 />
               </div>
               <p className="text-[11px] text-slate-400 mt-1">Customers scan this QR code at your counter to upload and order prints.</p>
@@ -781,11 +781,11 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-bold text-[#172031] mb-1">
+                <label className="block text-xs font-bold text-slate-800 mb-1">
                   Mobile Number <span className="text-red-500">*</span>
                 </label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-500">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-600">
                     +91
                   </span>
                   <input
@@ -795,13 +795,13 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
                     value={mobile}
                     onChange={(e) => setMobile(e.target.value.replace(/\D/g, '').slice(0, 10))}
                     placeholder="98765 43210"
-                    className="w-full pl-11 pr-3 py-2 rounded-xl border border-[#E6E9F2] focus:border-[#4D64E6] focus:ring-2 focus:ring-[#4D64E6]/20 text-xs outline-hidden transition-all bg-white"
+                    className="w-full pl-11 pr-3 py-2 rounded-xl border border-slate-200 focus:border-[#4D64E6] focus:ring-2 focus:ring-[#4D64E6]/20 text-xs font-semibold text-slate-900 placeholder:text-slate-400 outline-hidden transition-all bg-white"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-[#172031] mb-1">
+                <label className="block text-xs font-bold text-slate-800 mb-1">
                   Shop Address / Landmark
                 </label>
                 <input
@@ -809,36 +809,36 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
                   value={address}
                   onChange={(e) => setAddress(e.target.value)}
                   placeholder="e.g. Shop 4, FC Road Complex"
-                  className="w-full px-3 py-2 rounded-xl border border-[#E6E9F2] focus:border-[#4D64E6] focus:ring-2 focus:ring-[#4D64E6]/20 text-xs outline-hidden transition-all bg-white"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:border-[#4D64E6] focus:ring-2 focus:ring-[#4D64E6]/20 text-xs font-semibold text-slate-900 placeholder:text-slate-400 outline-hidden transition-all bg-white"
                 />
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="block text-[11px] font-bold text-[#172031] mb-1">City</label>
+                <label className="block text-[11px] font-bold text-slate-800 mb-1">City</label>
                 <input
                   type="text"
                   value={city}
                   onChange={(e) => setCity(e.target.value)}
-                  placeholder="City"
-                  className="w-full px-3 py-2 rounded-xl border border-[#E6E9F2] focus:border-[#4D64E6] text-xs outline-hidden bg-white"
+                  placeholder="e.g. Pune"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:border-[#4D64E6] text-xs font-semibold text-slate-900 placeholder:text-slate-400 outline-hidden bg-white"
                 />
               </div>
               <div>
-                <label className="block text-[11px] font-bold text-[#172031] mb-1">State</label>
+                <label className="block text-[11px] font-bold text-slate-800 mb-1">State</label>
                 <input
                   type="text"
                   value={state}
                   onChange={(e) => setState(e.target.value)}
-                  placeholder="State"
-                  className="w-full px-3 py-2 rounded-xl border border-[#E6E9F2] focus:border-[#4D64E6] text-xs outline-hidden bg-white"
+                  placeholder="e.g. Maharashtra"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:border-[#4D64E6] text-xs font-semibold text-slate-900 placeholder:text-slate-400 outline-hidden bg-white"
                 />
               </div>
             </div>
 
             <div className="pt-1">
-              <label className="flex items-start gap-2 cursor-pointer text-xs text-[#5B6475]">
+              <label className="flex items-start gap-2 cursor-pointer text-xs text-slate-700">
                 <input
                   type="checkbox"
                   checked={whatsappOptIn}
