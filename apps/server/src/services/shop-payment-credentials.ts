@@ -61,7 +61,7 @@ export class ShopPaymentCredentialsService {
   private hasInFlightPaymentsOrRefunds(shopId: string): boolean {
     const row = this.db.queryOne<any>(
       `SELECT p.id FROM payments p JOIN orders o ON o.id = p.order_id
-       WHERE o.shop_id = ? AND p.provider = 'RAZORPAY' AND p.status = 'PENDING'
+       WHERE o.shop_id = ? AND p.provider = 'RAZORPAY' AND p.status IN ('CREATING', 'PENDING')
        UNION ALL
        SELECT r.id FROM refunds r JOIN orders o ON o.id = r.order_id JOIN payments p ON p.id = r.payment_id
        WHERE o.shop_id = ? AND p.provider = 'RAZORPAY' AND r.status IN ('REQUESTED', 'PROCESSING')
@@ -69,6 +69,14 @@ export class ShopPaymentCredentialsService {
       [shopId, shopId]
     );
     return Boolean(row);
+  }
+
+  private lockShopForCredentialMutation(shopId: string): void {
+    const locked = this.db.queryOne<any>(`UPDATE shops SET updated_at = updated_at WHERE id = ? RETURNING id`, [shopId]);
+    if (!locked) throw new Error('Shop no longer exists.');
+    if (this.hasInFlightPaymentsOrRefunds(shopId)) {
+      throw new Error('Resolve pending Razorpay payments and refunds before changing this shop’s credentials.');
+    }
   }
 
   getRazorpayStatus(shopId: string) {
@@ -97,13 +105,11 @@ export class ShopPaymentCredentialsService {
   }
 
   saveRazorpay(shopId: string, keyId: string, secret: string, webhookSecret: string): void {
-    if (this.hasInFlightPaymentsOrRefunds(shopId)) {
-      throw new Error('Resolve pending Razorpay payments and refunds before changing this shop’s credentials.');
-    }
     const encryptedSecret = encryptSecret(secret);
     const encryptedWebhookSecret = encryptSecret(webhookSecret);
     const now = new Date().toISOString();
     this.db.transaction(() => {
+      this.lockShopForCredentialMutation(shopId);
       this.db.execute(
         `INSERT INTO shop_payment_credentials (shop_id, provider, key_id, encrypted_secret, updated_at)
          VALUES (?, 'RAZORPAY', ?, ?, ?)
@@ -120,10 +126,8 @@ export class ShopPaymentCredentialsService {
   }
 
   removeRazorpay(shopId: string): void {
-    if (this.hasInFlightPaymentsOrRefunds(shopId)) {
-      throw new Error('Resolve pending Razorpay payments and refunds before disconnecting this shop’s credentials.');
-    }
     this.db.transaction(() => {
+      this.lockShopForCredentialMutation(shopId);
       this.db.execute(`DELETE FROM shop_payment_webhook_secrets WHERE shop_id = ?`, [shopId]);
       this.db.execute(`DELETE FROM shop_payment_credentials WHERE shop_id = ? AND provider = 'RAZORPAY'`, [shopId]);
     });

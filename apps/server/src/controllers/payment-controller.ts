@@ -223,7 +223,7 @@ export class PaymentController {
     }
 
     try {
-      const credentials = this.paymentCredentials.getRazorpayCredentials(order.shopId);
+      let credentials = this.paymentCredentials.getRazorpayCredentials(order.shopId);
       if (!credentials || !credentials.webhookSecret) return res.status(503).json({ error: 'This shop has not completed Razorpay and webhook setup.' });
 
       const pending = this.db.queryOne<any>(
@@ -253,6 +253,8 @@ export class PaymentController {
       const paymentId = crypto.randomUUID();
       let claim: any = null;
       this.db.transaction(() => {
+        const shopLock = this.db.queryOne<any>(`UPDATE shops SET updated_at = updated_at WHERE id = ? RETURNING id`, [order.shopId]);
+        if (!shopLock) throw new Error('Shop is unavailable for payment setup.');
         claim = this.db.queryOne<any>(
           `INSERT INTO razorpay_checkout_claims (order_id, payment_id, created_at) VALUES (?, ?, ?)
            ON CONFLICT(order_id) DO NOTHING RETURNING payment_id`,
@@ -268,6 +270,19 @@ export class PaymentController {
       });
       if (!claim) return res.status(409).json({ error: 'Payment setup is already in progress. Please retry in a moment.' });
       reservation = { orderId: order.id, paymentId };
+
+      // Credential changes and payment creation serialize on the shop row.
+      // Reload after creating CREATING so a rotation that completed first is
+      // reflected in the outbound request; later rotation is blocked.
+      credentials = this.paymentCredentials.getRazorpayCredentials(order.shopId);
+      if (!credentials || !credentials.webhookSecret) {
+        this.db.transaction(() => {
+          this.db.execute(`UPDATE payments SET status = 'FAILED', updated_at = ? WHERE id = ? AND status = 'CREATING'`, [new Date().toISOString(), paymentId]);
+          this.db.execute(`DELETE FROM razorpay_checkout_claims WHERE order_id = ? AND payment_id = ?`, [order.id, paymentId]);
+        });
+        reservation = null;
+        return res.status(503).json({ error: 'This shop has not completed Razorpay and webhook setup.' });
+      }
 
       const response = await fetch('https://api.razorpay.com/v1/orders', {
         method: 'POST',
@@ -764,22 +779,30 @@ export class PaymentController {
     if (refund.payment_provider !== 'RAZORPAY') {
       return res.status(409).json({ error: 'This payment was collected in cash. Use the explicit returned-cash confirmation action; no Razorpay request was sent.' });
     }
-    const credentials = this.paymentCredentials.getRazorpayCredentials(refund.shop_id);
-    if (!credentials || !credentials.webhookSecret || !refund.razorpay_payment_id) {
-      return res.status(503).json({ error: 'Razorpay API credentials and the refund webhook secret are required. The refund request remains pending.' });
-    }
 
     let processingRefund: any;
+    const credentialResult: { value: ReturnType<ShopPaymentCredentialsService['getRazorpayCredentials']> } = { value: null };
     try {
       processingRefund = this.db.transaction(() => {
+        const shopLock = this.db.queryOne<any>(`UPDATE shops SET updated_at = updated_at WHERE id = ? RETURNING id`, [refund.shop_id]);
+        if (!shopLock) return null;
+        credentialResult.value = this.paymentCredentials.getRazorpayCredentials(refund.shop_id);
+        if (!credentialResult.value || !credentialResult.value.webhookSecret || !refund.razorpay_payment_id) return { unavailable: true };
         const locked = this.db.queryOne<any>(`UPDATE refunds SET status = status WHERE id = ? AND status IN ('REQUESTED', 'PROCESSING') RETURNING status`, [refundId]);
         if (!locked) return null;
         this.db.execute(`UPDATE refunds SET status = 'PROCESSING' WHERE id = ? AND status = 'REQUESTED'`, [refundId]);
-        return this.db.queryOne<any>(`SELECT status, provider_refund_id FROM refunds WHERE id = ?`, [refundId]);
+        return { ...(this.db.queryOne<any>(`SELECT status, provider_refund_id FROM refunds WHERE id = ?`, [refundId]) || {}), unavailable: false };
       });
       if (!processingRefund) return res.status(409).json({ error: 'Refund is no longer available for processing.' });
     } catch {
       return res.status(503).json({ error: 'Refund could not be reserved for provider processing. No request was sent.' });
+    }
+    // Credential reads and refund reservation happen under the shop-row lock
+    // shared with credential changes. A missing configuration leaves the
+    // request REQUESTED so the owner can configure keys and retry.
+    const credentials = credentialResult.value;
+    if (processingRefund.unavailable || !credentials) {
+      return res.status(503).json({ error: 'Razorpay API credentials and the refund webhook secret are required. The refund request remains pending.' });
     }
 
     const auth = `Basic ${Buffer.from(`${credentials.keyId}:${credentials.secret}`).toString('base64')}`;
