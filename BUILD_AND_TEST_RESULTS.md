@@ -5,15 +5,17 @@
 ## Current local verification
 
 - `npm run build` — passed on 2026-10-30 for database, shared, desktop agent, server, and web workspaces using Vite 6.4.5. PDF rendering is isolated in a 484.31 kB lazy-loaded chunk. Vite reports no oversized JavaScript chunk.
-- `npm test` — 291 passed, 0 failed on 2026-10-30: database 25 (including migration 28 for order tokens), shared 16, agent 15, server 222, web 13. Coverage includes tenant status update reason validation (10 to 500 characters) and audit recording, tenant-safe 404 existence handling, OpenAPI documentation expansions, Supabase private storage request timeouts, provider-mocked Razorpay refund processing, webhook idempotency, shared persistent enquiry rate limiting, bounded platform organization/subscription pages, grouped subscription summary, agent local-data cleanup, bounded storage-request latency, customer tracker polling stop conditions, and order token schema migrations. These tests do not establish live provider, Supabase, PostgreSQL, browser or hardware behavior.
+- `npm test` — 294 passed, 0 failed on 2026-10-30: database 25 (including migration 28 for order tokens), shared 16, agent 15, server 225 (including pricing plans, signup credentials setup, and Razorpay sandbox payment), web 13. Coverage includes subscription plan listing with full integer-Paise pricing, signup checkout generation, credential-verified registration with Razorpay test payments, tenant status update reason validation, audit recording, tenant-safe 404 existence handling, OpenAPI documentation expansions, Supabase private storage request timeouts, provider-mocked Razorpay refund processing, webhook idempotency, shared persistent enquiry rate limiting, bounded platform organization/subscription pages, grouped subscription summary, agent local-data cleanup, bounded storage-request latency, customer tracker polling stop conditions, and order token schema migrations.
 - `npm audit --audit-level=high` — attempted twice; both requests to the npm advisory endpoint timed out, so no current audit result is available.
 - `npm run lint` — no root lint script is currently configured.
 - `.github/workflows/ci.yml` — GitHub Actions run [40990653729](https://github.com/Bhavish-S/Inklly/actions/runs/40990653729) completed successfully on commit `6e006dd`, including `npm ci`, `npm run build`, and `npm test` on Node.js 24.
 
 ## Hosted deployment check
 
-- `https://inklly.vercel.app/` returns HTTP 200 and serves the updated bundle with class-based dark mode (`localStorage.getItem('inklly_theme')`) and resilient merchant order queue parsing.
-- `https://inklly.onrender.com/health` returns HTTP 200 with status `HEALTHY` and deployed git revision `dd6e66b41d8f625833e1497667b1e8a04f4d1e87`.
+- `https://inklly.vercel.app/` returns HTTP 200 and serves the updated bundle with full restored pricing plans (Starter ₹99/mo, Growth ₹199/mo, Pro ₹499/mo, Scale ₹899/mo, Lifetime ₹1,499), Monthly/Yearly/Lifetime cycle toggles, sign-up with credential setup, and Razorpay checkout modal / test kit.
+- `https://inklly.onrender.com/api/v1/health` returns HTTP 200 with status `HEALTHY` and deployed git revision `526cefff06742028712804f07264f966c169092f`.
+- `https://inklly.onrender.com/api/v1/subscriptions/plans` returns HTTP 200 with all 5 active plans and deterministic integer-Paise pricing.
+- `https://inklly.onrender.com/api/v1/auth/signup-checkout` returns HTTP 200 with verified sandbox order creation in test mode.
 - Live Render backend connects to Supabase PostgreSQL, successfully boots with automated platform owner bootstrapping and background private storage bucket verification, and binds immediately to the listening port.
 - Unauthenticated `/api/v1/platform/agents?limit=1` returns HTTP 401, as expected.
 
