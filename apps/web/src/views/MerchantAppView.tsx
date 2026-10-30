@@ -371,7 +371,27 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
 
 
 
-  const [darkMode, setDarkMode] = useState<boolean>(false);
+  const [darkMode, setDarkMode] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('inklly_theme');
+      if (saved) return saved === 'dark';
+      return document.documentElement.classList.contains('dark') ||
+        (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      if (darkMode) {
+        document.documentElement.classList.add('dark');
+        localStorage.setItem('inklly_theme', 'dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+        localStorage.setItem('inklly_theme', 'light');
+      }
+    }
+  }, [darkMode]);
 
   // Upgrade Plan Modal State
   const [upgradeModalOpen, setUpgradeModalOpen] = useState<boolean>(false);
@@ -1043,18 +1063,42 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       const response = await api.getOrders(statuses.length ? statuses.join(',') : 'ALL', {
         page, pageSize: queuePagination.pageSize, search: search.trim(), sortBy: 'createdAt', sortOrder: 'desc',
       });
-      if (!response || !Array.isArray(response.orders)) throw new Error('Invalid page response');
+      const rawOrders = Array.isArray(response)
+        ? response
+        : (Array.isArray(response?.orders) ? response.orders : null);
+      if (!rawOrders) throw new Error('Invalid page response');
       if (requestSequence !== queueRequestSequence.current) return;
-      setQueueOrders(response.orders.map(mapServerOrderToUiOrder));
-      setQueuePagination({
-        page: response.page, pageSize: response.pageSize, total: response.total, totalPages: response.totalPages,
-        revenuePaise: response.revenuePaise || 0, pageCount: response.pageCount || 0,
-      });
+      const mapped = rawOrders.map(mapServerOrderToUiOrder);
+      setQueueOrders(mapped);
+      if (Array.isArray(response)) {
+        setQueuePagination({
+          page: 1,
+          pageSize: Math.max(1, rawOrders.length),
+          total: rawOrders.length,
+          totalPages: 1,
+          revenuePaise: rawOrders.reduce((sum: number, o: any) => sum + (o.totalAmountPaise || 0), 0),
+          pageCount: rawOrders.reduce((sum: number, o: any) => sum + (o.files?.reduce((fSum: number, f: any) => fSum + (f.pageCount || 1), 0) || 1), 0),
+        });
+      } else {
+        setQueuePagination({
+          page: response.page || page,
+          pageSize: response.pageSize || queuePagination.pageSize,
+          total: response.total ?? rawOrders.length,
+          totalPages: response.totalPages ?? 1,
+          revenuePaise: response.revenuePaise || 0,
+          pageCount: response.pageCount || 0,
+        });
+      }
     } catch (err) {
       if (requestSequence !== queueRequestSequence.current) return;
       console.warn('[MerchantAppView] Could not fetch paginated order queue:', err);
-      setQueueOrders([]);
-      setQueuePagination((previous) => ({ ...previous, page, total: 0, totalPages: 0, revenuePaise: 0, pageCount: 0 }));
+      if (ordersList.length > 0 && (tab === 'all' || tab === 'pending')) {
+        setQueueOrders(ordersList);
+        setQueuePagination((prev) => ({ ...prev, page: 1, total: ordersList.length, totalPages: 1 }));
+      } else {
+        setQueueOrders([]);
+        setQueuePagination((previous) => ({ ...previous, page, total: 0, totalPages: 0, revenuePaise: 0, pageCount: 0 }));
+      }
     } finally {
       if (requestSequence === queueRequestSequence.current) setQueueLoading(false);
     }
@@ -1073,7 +1117,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     } catch (err) {
       console.warn('[MerchantAppView] Could not fetch live orders from API:', err);
     } finally {
-      if (activeView === 'orders') await fetchOrdersPage(queuePage);
+      void fetchOrdersPage(queuePage);
       setIsRefreshingOrders(false);
     }
   };
@@ -1105,7 +1149,8 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       const page = await api.getOrders('IN_PROGRESS,READY_FOR_PRINT,PENDING_AGENT_SPOOL', {
         page: 1, pageSize: 100, search: '', sortBy: 'createdAt', sortOrder: 'asc',
       });
-      if (page && Array.isArray(page.orders)) setLivePrintOrders(page.orders.map(mapServerOrderToUiOrder));
+      const rawOrders = Array.isArray(page) ? page : (Array.isArray(page?.orders) ? page.orders : null);
+      if (rawOrders) setLivePrintOrders(rawOrders.map(mapServerOrderToUiOrder));
     } catch (error) {
       console.warn('[MerchantAppView] Could not fetch live print queue:', error);
       setLivePrintOrders([]);
@@ -1932,7 +1977,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                               isActive ? 'bg-white text-[#4E65F6]' : 'bg-[#4E65F6] text-white'
                             }`}
                           >
-                            3
+                            {pendingOrderCount}
                           </span>
                           <span className={`text-[10px] ${isActive ? 'text-white/80' : 'text-gray-400'}`}>▾</span>
                         </div>

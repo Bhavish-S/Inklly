@@ -529,7 +529,7 @@ export function seedDatabase(db: DatabaseService, forceDemoSeed: boolean = false
     });
   }
 
-  // 7. Seed sample incoming pending order
+  // 7. Seed sample incoming orders for demonstration
   if (!orderRepo.getOrderByNumber('INK-DEMO-001')) {
     orderRepo.createOrder({
       id: 'order-demo-001',
@@ -567,6 +567,90 @@ export function seedDatabase(db: DatabaseService, forceDemoSeed: boolean = false
             collation: true,
           },
           lineSubtotalPaise: 2000,
+        },
+      ],
+    });
+  }
+
+  if (!orderRepo.getOrderByNumber('INK-DEMO-002')) {
+    orderRepo.createOrder({
+      id: 'order-demo-002',
+      shopId,
+      orderNumber: 'INK-DEMO-002',
+      tokenNumber: 'T-9182',
+      customerName: 'Priya Patel',
+      customerPhone: '+91 98220 12345',
+      channel: 'QR_PORTAL',
+      status: 'READY_FOR_PRINT',
+      paymentStatus: 'VERIFIED',
+      paymentMethod: 'ONLINE_RAZORPAY',
+      totalAmountPaise: 1500,
+      currency: 'INR',
+      quoteVersion: 'v1-demo',
+      createdAt: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+      updatedAt: now,
+      files: [
+        {
+          id: 'file-demo-002',
+          orderId: 'order-demo-002',
+          fileName: 'Resume_2026.pdf',
+          fileSizeBytes: 520000,
+          mimeType: 'application/pdf',
+          storageKey: 'uploads/demo/Resume_2026.pdf',
+          pageCount: 2,
+          printOptions: {
+            colorMode: 'color',
+            duplexMode: 'simplex',
+            paperSize: 'A4',
+            orientation: 'portrait',
+            copies: 2,
+            fitMode: 'fit',
+            pagesPerSheet: 1,
+            collation: true,
+          },
+          lineSubtotalPaise: 1500,
+        },
+      ],
+    });
+  }
+
+  if (!orderRepo.getOrderByNumber('INK-DEMO-003')) {
+    orderRepo.createOrder({
+      id: 'order-demo-003',
+      shopId,
+      orderNumber: 'INK-DEMO-003',
+      tokenNumber: 'T-3401',
+      customerName: 'Rohan Mehta',
+      customerPhone: '+91 97654 32109',
+      channel: 'QR_PORTAL',
+      status: 'READY_FOR_COLLECTION',
+      paymentStatus: 'VERIFIED',
+      paymentMethod: 'CASH_ON_COLLECTION',
+      totalAmountPaise: 3000,
+      currency: 'INR',
+      quoteVersion: 'v1-demo',
+      createdAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+      updatedAt: now,
+      files: [
+        {
+          id: 'file-demo-003',
+          orderId: 'order-demo-003',
+          fileName: 'Lab_Assignment_Module4.pdf',
+          fileSizeBytes: 1850000,
+          mimeType: 'application/pdf',
+          storageKey: 'uploads/demo/Lab_Assignment_Module4.pdf',
+          pageCount: 15,
+          printOptions: {
+            colorMode: 'bw',
+            duplexMode: 'duplex_auto',
+            paperSize: 'A4',
+            orientation: 'portrait',
+            copies: 1,
+            fitMode: 'fit',
+            pagesPerSheet: 1,
+            collation: true,
+          },
+          lineSubtotalPaise: 3000,
         },
       ],
     });

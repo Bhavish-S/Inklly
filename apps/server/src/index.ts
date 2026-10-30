@@ -75,7 +75,7 @@ export function createApp(db?: DatabaseService): express.Express {
 
   const fileStorage = new PrivateFileStorage();
   app.locals.privateFileStorage = fileStorage;
-  seedDatabase(database);
+  seedDatabase(database, process.env.NODE_ENV !== 'production');
   const retentionTimer = setInterval(() => {
     void purgeExpiredPrintFiles(database, fileStorage).catch((error) => console.error('[File retention] Cleanup pass failed', error));
   }, 15 * 60 * 1000);
