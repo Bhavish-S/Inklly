@@ -683,12 +683,16 @@ export const api = {
     return body;
   },
 
-  async getPlatformAgents() {
-    const res = await fetch(`${API_BASE}/platform/agents`, { headers: getHeaders() });
+  async getPlatformAgents(limit = 100, cursor?: string) {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (cursor) params.set('cursor', cursor);
+    const res = await fetch(`${API_BASE}/platform/agents?${params}`, { headers: getHeaders() });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || 'Failed to load registered agent fleet');
-    if (!Array.isArray(body)) throw new Error('The registered agent fleet response is invalid.');
-    return body;
+    if (!body || !Array.isArray(body.agents) || typeof body.hasMore !== 'boolean' || (body.nextCursor !== null && typeof body.nextCursor !== 'string')) {
+      throw new Error('The registered agent fleet response is invalid.');
+    }
+    return body as { agents: any[]; nextCursor: string | null; hasMore: boolean; limit: number };
   },
 
   async getPlatformRetentionStats() {

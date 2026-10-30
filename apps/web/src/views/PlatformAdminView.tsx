@@ -60,6 +60,8 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
   const [provisionedInvitationLink, setProvisionedInvitationLink] = useState('');
 
   const [agentFleet, setAgentFleet] = useState<any[]>([]);
+  const [agentFleetCursor, setAgentFleetCursor] = useState<string | null>(null);
+  const [agentFleetHasMore, setAgentFleetHasMore] = useState(false);
   const [agentFleetRefreshing, setAgentFleetRefreshing] = useState(false);
   const [agentFleetError, setAgentFleetError] = useState('');
   const [agentFleetUpdatedAt, setAgentFleetUpdatedAt] = useState<string | null>(null);
@@ -91,13 +93,34 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
     setAgentFleetRefreshing(true);
     setAgentFleetError('');
     try {
-      const refreshed = await api.getPlatformAgents();
-      setAgentFleet(refreshed);
+      const refreshed = await api.getPlatformAgents(100);
+      setAgentFleet(refreshed.agents);
+      setAgentFleetCursor(refreshed.nextCursor);
+      setAgentFleetHasMore(refreshed.hasMore);
       setAgentFleetUpdatedAt(new Date().toISOString());
-      showToast(`Refreshed ${refreshed.length} registered agents from server records.`);
+      showToast(`Loaded ${refreshed.agents.length} newest agent records from the server.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not refresh registered agent data.';
       setAgentFleetError(message);
+    } finally {
+      setAgentFleetRefreshing(false);
+    }
+  };
+
+  const loadMoreAgentFleet = async () => {
+    if (agentFleetRefreshing || !agentFleetHasMore || !agentFleetCursor) return;
+    setAgentFleetRefreshing(true);
+    setAgentFleetError('');
+    try {
+      const page = await api.getPlatformAgents(100, agentFleetCursor);
+      setAgentFleet((current) => {
+        const knownIds = new Set(current.map((agent) => agent.agentId));
+        return [...current, ...page.agents.filter((agent) => !knownIds.has(agent.agentId))];
+      });
+      setAgentFleetCursor(page.nextCursor);
+      setAgentFleetHasMore(page.hasMore);
+    } catch (error) {
+      setAgentFleetError(error instanceof Error ? error.message : 'Could not load older agent records.');
     } finally {
       setAgentFleetRefreshing(false);
     }
@@ -269,7 +292,7 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
         hasPlatformPermission('finance:view') ? api.getPlatformLedger(selectedDomain === 'ALL' ? undefined : selectedDomain) : Promise.resolve(null),
         hasPlatformPermission('security:audit') ? api.getAuditLogs() : Promise.resolve(null),
         hasPlatformPermission('support:view') ? api.getPlatformEnquiries() : Promise.resolve(null),
-        hasPlatformPermission('platform:view') ? api.getPlatformAgents() : Promise.resolve(null),
+        hasPlatformPermission('platform:view') ? api.getPlatformAgents(100) : Promise.resolve(null),
         hasPlatformPermission('platform:view') ? api.getPlatformRetentionStats() : Promise.resolve(null),
         hasPlatformPermission('platform:view') ? api.getPlatformPlans() : Promise.resolve(null),
         hasPlatformPermission('billing:view') ? api.getSubscriptions() : Promise.resolve(null),
@@ -286,7 +309,9 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
       }
       if (enquiryData) setEnquiries(enquiryData);
       if (agentData) {
-        setAgentFleet(agentData);
+        setAgentFleet(agentData.agents);
+        setAgentFleetCursor(agentData.nextCursor);
+        setAgentFleetHasMore(agentData.hasMore);
         setAgentFleetUpdatedAt(new Date().toISOString());
         setAgentFleetError('');
       }
@@ -914,6 +939,7 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
               </tbody>
             </table>
           </div>
+          {agentFleetHasMore && <div className="border-t border-slate-100 p-4 text-center dark:border-slate-800"><button type="button" onClick={() => void loadMoreAgentFleet()} disabled={agentFleetRefreshing || !agentFleetCursor} className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">{agentFleetRefreshing ? 'Loading…' : 'Load older agents'}</button></div>}
         </div>
       )}
 
@@ -1215,6 +1241,7 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
               </tbody>
             </table>
           </div>
+          {agentFleetHasMore && <div className="border-t border-slate-100 p-4 text-center dark:border-slate-800"><button type="button" onClick={() => void loadMoreAgentFleet()} disabled={agentFleetRefreshing || !agentFleetCursor} className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">{agentFleetRefreshing ? 'Loading…' : 'Load older agents'}</button></div>}
         </div>
       )}
 

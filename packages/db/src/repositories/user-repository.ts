@@ -220,12 +220,17 @@ export class UserRepository {
     permissions: StaffPermission[];
     isActive: boolean;
     updatedAt: string;
+    expectedPermissions: StaffPermission[];
+    expectedIsActive: boolean;
+    expectedUpdatedAt: string;
   }): boolean {
     const updated = this.db.queryOne<{ id: string }>(
       `UPDATE memberships SET permissions = ?, is_active = ?, updated_at = ?
        WHERE user_id = ? AND organization_id = ? AND shop_id = ? AND role = 'SHOP_STAFF'
+         AND permissions = ? AND is_active = ? AND updated_at = ?
        RETURNING id`,
-      [JSON.stringify(input.permissions), input.isActive ? 1 : 0, input.updatedAt, input.userId, input.organizationId, input.shopId]
+      [JSON.stringify(input.permissions), input.isActive ? 1 : 0, input.updatedAt, input.userId, input.organizationId, input.shopId,
+        JSON.stringify(input.expectedPermissions), input.expectedIsActive ? 1 : 0, input.expectedUpdatedAt]
     );
     return Boolean(updated);
   }

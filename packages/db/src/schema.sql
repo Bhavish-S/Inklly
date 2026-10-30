@@ -318,6 +318,8 @@ CREATE TABLE IF NOT EXISTS print_attempts (
     FOREIGN KEY (printer_id) REFERENCES printers(id) ON DELETE CASCADE
 );
 
+CREATE INDEX IF NOT EXISTS idx_print_attempts_agent_status ON print_attempts(agent_id, status);
+
 CREATE TABLE IF NOT EXISTS payments (
     id TEXT PRIMARY KEY,
     order_id TEXT NOT NULL,

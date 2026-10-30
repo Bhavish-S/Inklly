@@ -168,7 +168,30 @@ export class AdminController {
   };
 
   public getAgents = (req: Request, res: Response) => {
-    const rows = this.db.query<any>(
+    const paginationRequested = req.query.limit !== undefined || req.query.cursor !== undefined;
+    const rawLimit = req.query.limit === undefined ? 100 : typeof req.query.limit === 'string' ? Number(req.query.limit) : NaN;
+    if (paginationRequested && (!Number.isInteger(rawLimit) || rawLimit < 1 || rawLimit > 100)) {
+      return res.status(400).json({ error: 'limit must be an integer from 1 to 100.' });
+    }
+    let cursor: { createdAt: string; id: string } | null = null;
+    if (req.query.cursor !== undefined) {
+      const rawCursor = typeof req.query.cursor === 'string' ? req.query.cursor : '';
+      if (!/^[A-Za-z0-9_-]{1,512}$/.test(rawCursor)) return res.status(400).json({ error: 'Invalid agent cursor.' });
+      try {
+        const decoded = JSON.parse(Buffer.from(rawCursor, 'base64url').toString('utf8'));
+        if (!decoded || typeof decoded.createdAt !== 'string' || decoded.createdAt.length > 64 || typeof decoded.id !== 'string' || decoded.id.length < 1 || decoded.id.length > 128) {
+          return res.status(400).json({ error: 'Invalid agent cursor.' });
+        }
+        cursor = { createdAt: decoded.createdAt, id: decoded.id };
+      } catch {
+        return res.status(400).json({ error: 'Invalid agent cursor.' });
+      }
+    }
+    const where = cursor ? `WHERE (ar.created_at < ? OR (ar.created_at = ? AND ar.id < ?))` : '';
+    const params: Array<string | number> = cursor ? [cursor.createdAt, cursor.createdAt, cursor.id] : [];
+    const limitClause = paginationRequested ? 'LIMIT ?' : '';
+    if (paginationRequested) params.push(rawLimit + 1);
+    const queriedRows = this.db.query<any>(
       `SELECT ar.id, ar.shop_id, ar.hostname, ar.os_platform, ar.os_version, ar.agent_version,
               ar.is_active, ar.last_heartbeat, ar.created_at,
               s.shop_code, s.name AS shop_name,
@@ -176,10 +199,14 @@ export class AdminController {
               (SELECT COUNT(*) FROM print_attempts pa WHERE pa.agent_id = ar.id AND pa.status = 'DISPATCHED_TO_AGENT') AS pending_commands
        FROM agent_registrations ar
        LEFT JOIN shops s ON s.id = ar.shop_id
-       ORDER BY ar.created_at DESC`
+       ${where}
+       ORDER BY ar.created_at DESC, ar.id DESC ${limitClause}`,
+      params
     );
+    const hasMore = paginationRequested && queriedRows.length > rawLimit;
+    const rows = paginationRequested ? queriedRows.slice(0, rawLimit) : queriedRows;
     const now = Date.now();
-    res.json(rows.map((row) => {
+    const agents = rows.map((row) => {
       const heartbeatTime = row.last_heartbeat ? Date.parse(row.last_heartbeat) : NaN;
       const heartbeatAgeMs = now - heartbeatTime;
       const status = !row.is_active ? 'REVOKED'
@@ -205,7 +232,13 @@ export class AdminController {
         pendingCommands: Number(row.pending_commands || 0),
         createdAt: row.created_at,
       };
-    }));
+    });
+    if (!paginationRequested) return res.json(agents);
+    const last = rows[rows.length - 1];
+    const nextCursor = hasMore && last
+      ? Buffer.from(JSON.stringify({ createdAt: last.created_at, id: last.id })).toString('base64url')
+      : null;
+    return res.json({ agents, nextCursor, hasMore, limit: rawLimit });
   };
 
   public getRetentionStats = (req: Request, res: Response) => {

@@ -52,6 +52,7 @@ export class DatabaseService {
       this.ensureSqliteCopyDiscountUniquenessMigration();
       this.ensureSqliteAgentPrintReadinessMigration();
       this.ensureSqliteMerchantVaultDeletionMigration();
+      this.ensureSqliteAgentFleetIndexesMigration();
     }
   }
 
@@ -171,6 +172,35 @@ export class DatabaseService {
     this.ensurePostgresCopyDiscountUniquenessMigration();
     this.ensurePostgresAgentPrintReadinessMigration();
     this.ensurePostgresMerchantVaultDeletionMigration();
+    this.ensurePostgresAgentFleetIndexesMigration();
+  }
+
+  private ensureSqliteAgentFleetIndexesMigration(): void {
+    if (this.db!.prepare(`SELECT version FROM inklly_schema_migrations WHERE version = 26`).get()) return;
+    this.db!.exec('BEGIN');
+    try {
+      this.db!.exec(`CREATE INDEX IF NOT EXISTS idx_printers_agent_online ON printers(agent_id, is_online)`);
+      this.db!.exec(`CREATE INDEX IF NOT EXISTS idx_print_attempts_agent_status ON print_attempts(agent_id, status)`);
+      this.db!.prepare(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (26, ?)`).run(new Date().toISOString());
+      this.db!.exec('COMMIT');
+    } catch (error) {
+      try { this.db!.exec('ROLLBACK'); } catch { /* preserve the original error */ }
+      throw new Error(`[Inklly DB] Agent fleet index migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+
+  private ensurePostgresAgentFleetIndexesMigration(): void {
+    if (this.queryPostgres(`SELECT version FROM inklly_schema_migrations WHERE version = ?`, [26]).length) return;
+    this.queryPostgres('BEGIN');
+    try {
+      this.queryPostgres(`CREATE INDEX IF NOT EXISTS idx_printers_agent_online ON printers(agent_id, is_online)`);
+      this.queryPostgres(`CREATE INDEX IF NOT EXISTS idx_print_attempts_agent_status ON print_attempts(agent_id, status)`);
+      this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [26, new Date().toISOString()]);
+      this.queryPostgres('COMMIT');
+    } catch (error) {
+      try { this.queryPostgres('ROLLBACK'); } catch { /* preserve the original error */ }
+      throw new Error(`[Inklly DB] PostgreSQL agent fleet index migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
   }
 
   private ensureSqliteAgentPrintReadinessMigration(): void {

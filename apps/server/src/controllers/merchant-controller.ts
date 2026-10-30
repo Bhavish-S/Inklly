@@ -312,11 +312,19 @@ export class MerchantController {
           let from = job.status as PrintJobStatus;
           if (from === 'OUTPUT_UNCERTAIN') {
             validatePrintJobTransition(from, 'NEEDS_PHYSICAL_VERIFICATION');
-            this.db.execute(`UPDATE print_jobs SET status = 'NEEDS_PHYSICAL_VERIFICATION', updated_at = ? WHERE id = ? AND status = ?`, [now, job.id, from]);
+            const claimed = this.db.query<{ id: string }>(
+              `UPDATE print_jobs SET status = 'NEEDS_PHYSICAL_VERIFICATION', updated_at = ? WHERE id = ? AND status = ? RETURNING id`,
+              [now, job.id, from]
+            );
+            if (claimed.length !== 1) throw new Error('RECONCILIATION_CONFLICT: another operator changed a selected print job. Refresh the order and inspect its current output state.');
             from = 'NEEDS_PHYSICAL_VERIFICATION';
           }
           validatePrintJobTransition(from, 'PRINT_CONFIRMED');
-          this.db.execute(`UPDATE print_jobs SET status = 'PRINT_CONFIRMED', updated_at = ? WHERE id = ? AND status = ?`, [now, job.id, from]);
+          const confirmed = this.db.query<{ id: string }>(
+            `UPDATE print_jobs SET status = 'PRINT_CONFIRMED', updated_at = ? WHERE id = ? AND status = ? RETURNING id`,
+            [now, job.id, from]
+          );
+          if (confirmed.length !== 1) throw new Error('RECONCILIATION_CONFLICT: another operator changed a selected print job. Refresh the order and inspect its current output state.');
           changedJobs.push({ id: job.id, previousStatus: job.status });
         }
 
@@ -905,6 +913,9 @@ export class MerchantController {
         const updated = this.userRepo.updateStaffMembership({
           userId: targetUserId, organizationId, shopId, permissions: nextPermissions,
           isActive, updatedAt: now,
+          expectedPermissions: target.membership.permissions,
+          expectedIsActive: target.membership.isActive !== false,
+          expectedUpdatedAt: target.membership.updatedAt,
         });
         if (!updated) return;
         didUpdate = true;

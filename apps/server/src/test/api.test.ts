@@ -1380,6 +1380,32 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       db.execute(`INSERT INTO print_jobs (id, order_id, order_file_id, status, created_at, updated_at) VALUES (?, ?, ?, 'OUTPUT_UNCERTAIN', ?, ?)`, [pendingJobId, cashOrderId, fileId, now, now]);
       const inspectedJobIds = db.query<any>(`SELECT id FROM print_jobs WHERE order_id = ? AND id <> ? ORDER BY id`, [cashOrderId, pendingJobId]).map((job) => job.id);
 
+      // Model a competing operator winning after this request read the eligible
+      // state but before its compare-and-set update is applied.
+      const originalQuery = db.query;
+      let competingOperatorWon = false;
+      (db as any).query = function (sql: string, params?: any[]) {
+        const rows = originalQuery.call(this, sql, params);
+        if (!competingOperatorWon && /SELECT id, order_file_id, status FROM print_jobs WHERE order_id = \? ORDER BY id/i.test(sql)) {
+          competingOperatorWon = true;
+          this.execute(`UPDATE print_jobs SET status = 'PRINT_CONFIRMED' WHERE id = ? AND status = 'OUTPUT_UNCERTAIN'`, [pendingJobId]);
+        }
+        return rows;
+      };
+      try {
+        const staleReconciliation = await fetch(`${baseUrl}/api/v1/merchant/orders/${cashOrderId}/reconcile-output`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+          body: JSON.stringify({ physicalOutputConfirmed: true, confirmedJobIds: [pendingJobId], reason: 'A competing operator confirmed this output first.' }),
+        });
+        assert.equal(staleReconciliation.status, 409, await staleReconciliation.clone().text());
+        assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM audit_events WHERE action = 'MERCHANT_PRINT_OUTPUT_RECONCILED' AND target_id = ?`, [cashOrderId]).count), 0,
+          'a request that loses the compare-and-set race must not write a success audit');
+      } finally {
+        (db as any).query = originalQuery;
+      }
+      assert.equal(competingOperatorWon, true, 'race was injected between the status read and conditional update');
+      db.execute(`UPDATE print_jobs SET status = 'OUTPUT_UNCERTAIN' WHERE id = ?`, [pendingJobId]);
+
       const reconciliation = await fetch(`${baseUrl}/api/v1/merchant/orders/${cashOrderId}/reconcile-output`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
         body: JSON.stringify({ physicalOutputConfirmed: true, confirmedJobIds: inspectedJobIds, reason: 'Inspected the completed output for each selected print job.' }),
@@ -1597,6 +1623,25 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       assert.equal(agents.find((agent) => agent.agentId === staleId)?.reportedOnlinePrinters, 1, 'the stored report remains available as diagnostic context');
       assert.equal(agents.find((agent) => agent.agentId === futureId)?.status, 'UNKNOWN', 'future-dated heartbeats are not treated as fresh');
       assert.equal('secretKey' in agents.find((agent) => agent.agentId === freshId), false);
+      const pagedAgents: any[] = [];
+      let cursor: string | null = null;
+      let pageHasMore = true;
+      while (pageHasMore) {
+        const params = new URLSearchParams({ limit: '2' });
+        if (cursor) params.set('cursor', cursor);
+        const pageResponse = await fetch(`${baseUrl}/api/v1/platform/agents?${params}`, { headers: { Authorization: `Bearer ${adminToken}` } });
+        assert.equal(pageResponse.status, 200);
+        const page = await pageResponse.json() as any;
+        assert.ok(page.agents.length <= 2);
+        pagedAgents.push(...page.agents);
+        cursor = page.nextCursor;
+        pageHasMore = page.hasMore;
+        assert.ok(!pageHasMore || cursor, 'continuation pages must include a cursor');
+      }
+      assert.deepEqual(pagedAgents.map((agent) => agent.agentId), agents.map((agent) => agent.agentId),
+        'cursor pages preserve the full stable fleet order without gaps or duplicates, including tied timestamps');
+      const invalidAgentLimit = await fetch(`${baseUrl}/api/v1/platform/agents?limit=101`, { headers: { Authorization: `Bearer ${adminToken}` } });
+      assert.equal(invalidAgentLimit.status, 400);
     } finally {
       db.execute(`DELETE FROM printers WHERE id = ?`, [stalePrinterId]);
       db.execute(`DELETE FROM agent_registrations WHERE id IN (?, ?, ?)`, [freshId, staleId, futureId]);

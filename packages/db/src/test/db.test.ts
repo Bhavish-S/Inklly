@@ -10,6 +10,7 @@ import { OrderRepository } from '../repositories/order-repository';
 import { PricingRepository } from '../repositories/pricing-repository';
 import { PrinterRepository } from '../repositories/printer-repository';
 import { AgentRepository } from '../repositories/agent-repository';
+import { UserRepository } from '../repositories/user-repository';
 import { seedDatabase } from '../seed';
 
 describe('Relational Database & Multi-Tenancy Tests', () => {
@@ -299,6 +300,33 @@ describe('Relational Database & Multi-Tenancy Tests', () => {
     }
   });
 
+  it('rejects staff access updates based on stale membership state', () => {
+    const userRepo = new UserRepository(db);
+    const target = userRepo.getStaffByShop('shop-campus-1').find((entry) => entry.user.id === 'user-staff-1');
+    assert.ok(target);
+    const winningPermissions = ['settings:view'];
+    const winningUpdatedAt = new Date(Date.parse(target.membership.updatedAt) + 2000).toISOString();
+    db.execute(`UPDATE memberships SET permissions = ?, updated_at = ? WHERE id = ?`,
+      [JSON.stringify(winningPermissions), winningUpdatedAt, target.membership.id]);
+
+    const staleUpdate = userRepo.updateStaffMembership({
+      userId: target.user.id,
+      organizationId: target.membership.organizationId,
+      shopId: 'shop-campus-1',
+      permissions: ['orders:view'],
+      isActive: false,
+      updatedAt: new Date().toISOString(),
+      expectedPermissions: target.membership.permissions,
+      expectedIsActive: target.membership.isActive !== false,
+      expectedUpdatedAt: target.membership.updatedAt,
+    });
+    assert.equal(staleUpdate, false, 'a compare-and-set update must not overwrite a newer owner action');
+    const persisted = db.queryOne<any>(`SELECT permissions, is_active, updated_at FROM memberships WHERE id = ?`, [target.membership.id]);
+    assert.deepEqual(JSON.parse(persisted.permissions), winningPermissions);
+    assert.equal(Boolean(persisted.is_active), target.membership.isActive);
+    assert.equal(persisted.updated_at, winningUpdatedAt);
+  });
+
   it('attaches an agent queue to its exact saved capability profile and keeps that identity on later heartbeats', () => {
     const profile = {
       id: 'printer-profile-queue-link-test', shopId: 'shop-campus-1', name: 'Configured Queue Test',
@@ -514,6 +542,30 @@ describe('merchant vault deletion lifecycle migration', () => {
       assert.ok(column);
       assert.equal(upgraded.queryOne<any>(`SELECT deletion_requested_at FROM storage_documents WHERE id = 'vault-existing'`)?.deletion_requested_at, null);
       assert.ok(upgraded.queryOne(`SELECT version FROM inklly_schema_migrations WHERE version = 25`));
+      upgraded.close();
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('platform agent fleet index migration', () => {
+  it('restores agent fleet count indexes when opening a database that predates them', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'inklly-agent-fleet-index-migration-'));
+    const databasePath = path.join(directory, 'existing.sqlite');
+    try {
+      const initial = new DatabaseService(databasePath);
+      seedDatabase(initial);
+      initial.execute(`DROP INDEX idx_printers_agent_online`);
+      initial.execute(`DROP INDEX idx_print_attempts_agent_status`);
+      initial.execute(`DELETE FROM inklly_schema_migrations WHERE version = 26`);
+      initial.close();
+
+      const upgraded = new DatabaseService(databasePath);
+      const indexes = upgraded.query<{ name: string }>(`SELECT name FROM sqlite_master WHERE type = 'index'`);
+      assert.ok(indexes.some((index) => index.name === 'idx_printers_agent_online'));
+      assert.ok(indexes.some((index) => index.name === 'idx_print_attempts_agent_status'));
+      assert.ok(upgraded.queryOne(`SELECT version FROM inklly_schema_migrations WHERE version = 26`));
       upgraded.close();
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
