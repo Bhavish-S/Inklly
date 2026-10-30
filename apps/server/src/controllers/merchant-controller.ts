@@ -32,14 +32,29 @@ export class MerchantController {
     private fileStorage: PrivateFileStorage
   ) {}
 
-  private presentOrder(order: any) {
-    const printJobs = this.db.query<any>(
+  private presentOrder(order: any, printJobs?: any[]) {
+    const jobs = printJobs || this.db.query<any>(
       `SELECT id, order_file_id, status FROM print_jobs WHERE order_id = ? ORDER BY id`, [order.id]
     ).map((job) => ({ id: job.id, orderFileId: job.order_file_id, status: job.status }));
-    return { ...order, printJobs, files: (order.files || []).map((file: any) => {
+    return { ...order, printJobs: jobs, files: (order.files || []).map((file: any) => {
       const { storageKey: _storageKey, ...safeFile } = file;
       return { ...safeFile, fileUrl: `/api/v1/merchant/orders/${encodeURIComponent(order.id)}/files/${encodeURIComponent(file.id)}` };
     }) };
+  }
+
+  private presentOrders(orders: any[]) {
+    if (!orders.length) return [];
+    const rows = this.db.query<any>(
+      `SELECT order_id, id, order_file_id, status FROM print_jobs WHERE order_id IN (${orders.map(() => '?').join(', ')}) ORDER BY order_id, id`,
+      orders.map((order) => order.id)
+    );
+    const jobsByOrder = new Map<string, any[]>();
+    for (const row of rows) {
+      const jobs = jobsByOrder.get(row.order_id) || [];
+      jobs.push({ id: row.id, orderFileId: row.order_file_id, status: row.status });
+      jobsByOrder.set(row.order_id, jobs);
+    }
+    return orders.map((order) => this.presentOrder(order, jobsByOrder.get(order.id) || []));
   }
 
   public downloadOrderFile = async (req: Request, res: Response) => {
@@ -121,7 +136,7 @@ export class MerchantController {
         totalPrinters: printers.length,
         statusCounts,
       },
-      recentOrders: recentOrders.map((order) => this.presentOrder(order)),
+      recentOrders: this.presentOrders(recentOrders),
     });
   };
 
@@ -155,7 +170,7 @@ export class MerchantController {
         query.set('pageSize', String(pageSize));
         res.setHeader('Link', `<${req.baseUrl}${req.path}?${query.toString()}>; rel="next"`);
       }
-      return res.json(result.orders.map((order) => this.presentOrder(order)));
+      return res.json(this.presentOrders(result.orders));
     }
     const parsePositiveInteger = (value: unknown, fallback: number): number | null => {
       if (value === undefined) return fallback;
@@ -180,7 +195,7 @@ export class MerchantController {
       sortBy: sortBy as 'createdAt' | 'totalAmountPaise' | 'status' | 'orderNumber',
       sortOrder: sortOrder as 'asc' | 'desc',
     });
-    return res.json({ ...result, orders: result.orders.map((order) => this.presentOrder(order)) });
+    return res.json({ ...result, orders: this.presentOrders(result.orders) });
   };
 
   public getOrderById = (req: Request, res: Response) => {

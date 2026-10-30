@@ -39,6 +39,15 @@ describe('Decoupled State Machines & Safety Invariants', () => {
       assert.ok(canTransitionPayment('VERIFIED', 'REFUNDED'));
     });
 
+    it('allows partial refunds to proceed, complete, or return to a verified balance', () => {
+      assert.ok(canTransitionPayment('VERIFIED', 'PARTIALLY_REFUNDED'));
+      assert.ok(canTransitionPayment('PARTIALLY_REFUNDED', 'REFUND_PENDING'));
+      assert.ok(canTransitionPayment('REFUND_PENDING', 'PARTIALLY_REFUNDED'));
+      assert.ok(canTransitionPayment('PARTIALLY_REFUNDED', 'REFUNDED'));
+      assert.ok(canTransitionPayment('PARTIALLY_REFUNDED', 'RECONCILIATION_REQUIRED'));
+      assert.equal(canTransitionPayment('PARTIALLY_REFUNDED', 'NOT_STARTED'), false);
+    });
+
     it('rejects unauthorized payment jumps', () => {
       assert.equal(canTransitionPayment('NOT_STARTED', 'REFUNDED'), false);
       assert.throws(() => validatePaymentTransition('NOT_STARTED', 'REFUNDED'), /Illegal payment transition/);

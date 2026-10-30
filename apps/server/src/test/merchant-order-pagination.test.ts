@@ -35,6 +35,19 @@ describe('merchant order listing pagination', { concurrency: false }, () => {
          VALUES (?, ?, ?, ?, ?, ?, NULL, 'QR_PORTAL', ?, 'PENDING', 'CASH_ON_COLLECTION', ?, 'INR', 'test-v1', ?, ?)`,
         [`page-order-${suffix}`, shopId, `PAGEFIX-${suffix}`, `T-PAGE-${suffix}`, `Pagination Customer`, '+919000000000', status, amount, createdAt, createdAt]
       );
+      if (suffix === 'A' || suffix === 'B') {
+        const fileId = `page-file-${suffix}`;
+        db.execute(
+          `INSERT INTO order_files (id, order_id, file_name, file_size_bytes, mime_type, storage_key, page_count, print_options, line_subtotal_paise, created_at)
+           VALUES (?, ?, ?, 128, 'application/pdf', ?, 1, '{}', 100, ?)`,
+          [fileId, `page-order-${suffix}`, `page-${suffix}.pdf`, `private-key-${suffix}`, createdAt]
+        );
+        db.execute(
+          `INSERT INTO print_jobs (id, order_id, order_file_id, status, created_at, updated_at)
+           VALUES (?, ?, ?, 'RECEIVED', ?, ?)`,
+          [`page-job-${suffix}`, `page-order-${suffix}`, fileId, createdAt, createdAt]
+        );
+      }
     }
     const bulkBase = Date.UTC(2026, 9, 2);
     for (let index = 1; index <= 105; index++) {
@@ -58,6 +71,8 @@ describe('merchant order listing pagination', { concurrency: false }, () => {
     assert.equal(pageOne.status, 200);
     const first = await pageOne.json() as any;
     assert.deepEqual(first.orders.map((order: any) => order.orderNumber), ['PAGEFIX-A', 'PAGEFIX-B']);
+    assert.deepEqual(first.orders.map((order: any) => order.printJobs[0]?.id), ['page-job-A', 'page-job-B']);
+    assert.ok(first.orders.every((order: any) => !('storageKey' in order.files[0]) && order.files[0].fileUrl));
     assert.equal(first.total, 3);
     assert.equal(first.page, 1);
     assert.equal(first.pageSize, 2);

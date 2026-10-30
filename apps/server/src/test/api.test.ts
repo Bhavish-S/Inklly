@@ -3191,6 +3191,107 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM ledger_entries WHERE provider = 'MANUAL_CASH' AND provider_transaction_id = ? AND amount_paise = -100`, [`manual-cash-refund:${refundId}`]).count), 1);
   });
 
+  it('reconciles Razorpay refunds idempotently and records money only after provider confirmation', async () => {
+    const shopId = 'shop-campus-1';
+    const suffix = crypto.randomUUID();
+    const orderId = `refund-razorpay-${suffix}`;
+    const orderNumber = `RZRF-${suffix.slice(0, 10)}`;
+    const paymentId = `pay_refund_${suffix}`;
+    const webhookSecret = 'refund_webhook_secret_test_value';
+    const oldEncryptionKey = process.env.RAZORPAY_CREDENTIALS_ENCRYPTION_KEY;
+    const originalFetch = globalThis.fetch;
+    const credentials = new ShopPaymentCredentialsService(db);
+    const providerCalls: Array<{ url: string; idempotencyKey: string | null; body: string }> = [];
+    const now = new Date().toISOString();
+    process.env.RAZORPAY_CREDENTIALS_ENCRYPTION_KEY = Buffer.alloc(32, 9).toString('base64');
+    credentials.saveRazorpay(shopId, 'rzp_test_refund123', 'refund_api_secret_test_value', webhookSecret);
+    db.execute(
+      `INSERT INTO orders (id, shop_id, order_number, token_number, customer_name, channel, status, payment_status, payment_method, total_amount_paise, currency, quote_version, created_at, updated_at)
+       VALUES (?, ?, ?, 'T-RZRF', 'Refund Test', 'QR_PORTAL', 'COLLECTED', 'VERIFIED', 'ONLINE_RAZORPAY', 1200, 'INR', 'test-v1', ?, ?)`,
+      [orderId, shopId, orderNumber, now, now]
+    );
+    db.execute(
+      `INSERT INTO payments (id, order_id, provider, provider_transaction_id, provider_event_id, amount_paise, currency, status, created_at, updated_at)
+       VALUES (?, ?, 'RAZORPAY', ?, ?, 1200, 'INR', 'VERIFIED', ?, ?)`,
+      [`payment-${suffix}`, orderId, paymentId, paymentId, now, now]
+    );
+    const createRequest = async (amountPaise: number) => {
+      const response = await fetch(`${baseUrl}/api/v1/payments/orders/${orderId}/refunds`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+        body: JSON.stringify({ amountPaise, reason: 'Customer requested a partial refund' }),
+      });
+      assert.equal(response.status, 201, await response.clone().text());
+      return (await response.json() as any).refundId as string;
+    };
+    const processRefund = (refundId: string) => fetch(`${baseUrl}/api/v1/payments/refunds/${refundId}/process`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` },
+      body: JSON.stringify({ action: 'APPROVE' }),
+    });
+    const webhook = async (event: any, eventId: string) => {
+      const raw = JSON.stringify(event);
+      const signature = crypto.createHmac('sha256', webhookSecret).update(raw).digest('hex');
+      return fetch(`${baseUrl}/api/v1/payments/webhook/razorpay/${shopId}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-razorpay-signature': signature, 'x-razorpay-event-id': eventId }, body: raw,
+      });
+    };
+    const event = (refundId: string, providerRefundId: string, amount: number, status: string) => ({
+      event: `refund.${status}`, payload: { refund: { entity: { id: providerRefundId, payment_id: paymentId, amount, status, receipt: refundId, notes: { inklly_refund_id: refundId } } } },
+    });
+
+    try {
+      let mode: 'pending' | 'timeout' | 'processed' = 'pending';
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes('/payments/') && url.endsWith('/refund')) {
+          providerCalls.push({ url, idempotencyKey: new Headers(init?.headers).get('X-Refund-Idempotency'), body: String(init?.body || '') });
+          if (mode === 'timeout') throw new Error('simulated timeout after request submission');
+          const body = JSON.parse(String(init?.body || '{}'));
+          return Response.json({ id: body.amount === 300 ? 'rfnd_test_partial_01' : 'rfnd_test_partial_02', payment_id: paymentId, amount: body.amount, status: mode });
+        }
+        if (url.endsWith('/refunds/rfnd_test_partial_01')) {
+          return Response.json({ id: 'rfnd_test_partial_01', payment_id: paymentId, amount: 300, status: 'processed' });
+        }
+        return originalFetch(input, init);
+      }) as typeof globalThis.fetch;
+
+      const firstId = await createRequest(300);
+      const pending = await processRefund(firstId);
+      assert.equal(pending.status, 202);
+      assert.equal((await pending.json() as any).status, 'PROCESSING');
+      assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM ledger_entries WHERE order_id = ? AND amount_paise < 0`, [orderId]).count), 0);
+
+      const processed = await webhook(event(firstId, 'rfnd_test_partial_01', 300, 'processed'), 'evt_refund_processed_01');
+      assert.equal(processed.status, 200, await processed.clone().text());
+      const duplicate = await webhook(event(firstId, 'rfnd_test_partial_01', 300, 'processed'), 'evt_refund_processed_01');
+      assert.equal((await duplicate.json() as any).duplicate, true);
+      const lateFailure = await webhook(event(firstId, 'rfnd_test_partial_01', 300, 'failed'), 'evt_refund_late_failed_01');
+      assert.equal(lateFailure.status, 200);
+      assert.equal(db.queryOne<any>(`SELECT status FROM refunds WHERE id = ?`, [firstId]).status, 'COMPLETED');
+      assert.equal(db.queryOne<any>(`SELECT payment_status FROM orders WHERE id = ?`, [orderId]).payment_status, 'PARTIALLY_REFUNDED');
+      assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM ledger_entries WHERE provider = 'RAZORPAY' AND provider_transaction_id = 'rfnd_test_partial_01' AND amount_paise = -300`).count), 1);
+
+      const retryId = await createRequest(200);
+      mode = 'timeout';
+      const timedOut = await processRefund(retryId);
+      assert.equal(timedOut.status, 503);
+      assert.equal(db.queryOne<any>(`SELECT status FROM refunds WHERE id = ?`, [retryId]).status, 'PROCESSING');
+      mode = 'processed';
+      const retry = await processRefund(retryId);
+      assert.equal(retry.status, 200, await retry.clone().text());
+      assert.equal((await retry.json() as any).status, 'COMPLETED');
+      assert.equal(providerCalls.length, 3);
+      assert.notEqual(providerCalls[0].idempotencyKey, providerCalls[1].idempotencyKey);
+      assert.equal(providerCalls[1].idempotencyKey, providerCalls[2].idempotencyKey);
+      assert.equal(providerCalls[1].body, providerCalls[2].body);
+      assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM ledger_entries WHERE order_id = ? AND amount_paise < 0`, [orderId]).count), 2);
+    } finally {
+      globalThis.fetch = originalFetch;
+      credentials.removeRazorpay(shopId);
+      if (oldEncryptionKey === undefined) delete process.env.RAZORPAY_CREDENTIALS_ENCRYPTION_KEY;
+      else process.env.RAZORPAY_CREDENTIALS_ENCRYPTION_KEY = oldEncryptionKey;
+    }
+  });
+
   it('Rejects a refund request without moving money and releases its reserved balance', async () => {
     const createRes = await fetch(`${baseUrl}/api/v1/payments/orders/${cashOrderId}/refunds`, {
       method: 'POST',

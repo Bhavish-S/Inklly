@@ -1,11 +1,11 @@
 # Inkly Build and Test Evidence
 
-**Last verified:** 2026-10-29 (local workspace, Asia/Kolkata)
+**Last verified:** 2026-10-30 (local workspace, Asia/Kolkata)
 
 ## Current local verification
 
-- `npm run build` — passed on 2026-10-29 for database, shared, desktop agent, server, and web workspaces using Vite 6.4.5. The initial JavaScript bundle is 219.25 kB minified (61.61 kB gzip); PDF rendering is isolated in a 484.31 kB lazy-loaded chunk. Vite reports no oversized JavaScript chunk.
-- `npm test` — 275 passed, 0 failed on 2026-10-29: database 19, shared 15, agent 15, server 215, web 11. New coverage includes bounded vault cursor pagination, invalid-query handling, deletion tombstone migration, retry after storage failure, preservation of objects still referenced by orders, platform fleet freshness that excludes stale printer reports, and persisted portal service defaults/updates; printer capability profile matching across agent heartbeats; fail-closed per-file print dispatch validation for color, duplex, paper size, mixed-color, manual-duplex, multi-up, and photo paper; customer quote metadata filtering and rejection for agent-incompatible modes; unique copy-discount migration/upsert; atomic merchant discount and shop-setting writes; physical-print readiness migration and disabled-agent dispatch/poll denial; two-process local print-job claiming; real local-agent/shop-printer connection checks; and strict integer-Paise UI input parsing. Existing coverage includes platform-admin merchant-route and financial-operation denial, account profile persistence, password session revocation, tenant isolation, private files, and payment/print safety.
+- `npm run build` — passed on 2026-10-30 for database, shared, desktop agent, server, and web workspaces using Vite 6.4.5. The initial JavaScript bundle is 219.30 kB minified (61.67 kB gzip); PDF rendering is isolated in a 484.31 kB lazy-loaded chunk. Vite reports no oversized JavaScript chunk.
+- `npm test` — 279 passed, 0 failed on 2026-10-30: database 19, shared 16, agent 15, server 218, web 11. New coverage includes provider-mocked Razorpay refund processing, signed refund webhook idempotency, late failure events, stable idempotency-key retry after timeout, cash refund confirmation, partial-refund state transitions, and batched merchant order/file/print-job hydration. These tests do not establish a live Razorpay or production PostgreSQL round trip.
 - `npm audit --audit-level=high` — attempted twice; both requests to the npm advisory endpoint timed out, so no current audit result is available.
 - `npm run lint` — no root lint script is currently configured.
 

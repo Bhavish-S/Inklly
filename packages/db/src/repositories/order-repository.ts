@@ -18,7 +18,7 @@ export class OrderRepository {
       `SELECT * FROM orders WHERE shop_id = ? ORDER BY created_at DESC, id DESC LIMIT 5`,
       [shopId]
     );
-    return { statusCounts, recentOrders: recentRows.map((row) => this.hydrateOrder(row)) };
+    return { statusCounts, recentOrders: this.hydrateOrders(recentRows) };
   }
 
   public getOrdersPageByShop(
@@ -60,7 +60,7 @@ export class OrderRepository {
     );
     const total = Number(count?.total || 0);
     return {
-      orders: rows.map((row) => this.hydrateOrder(row)),
+      orders: this.hydrateOrders(rows),
       total,
       page: options.page,
       pageSize: options.pageSize,
@@ -280,6 +280,27 @@ export class OrderRepository {
       `SELECT * FROM order_files WHERE order_id = ?`,
       [row.id]
     );
+
+    return this.hydrateOrderWithFiles(row, fileRows);
+  }
+
+  /** Hydrate a bounded result page with one file query instead of one query per order. */
+  private hydrateOrders(rows: any[]): Order[] {
+    if (!rows.length) return [];
+    const files = this.db.query<any>(
+      `SELECT * FROM order_files WHERE order_id IN (${rows.map(() => '?').join(', ')}) ORDER BY order_id, id`,
+      rows.map((row) => row.id)
+    );
+    const filesByOrder = new Map<string, any[]>();
+    for (const file of files) {
+      const group = filesByOrder.get(file.order_id) || [];
+      group.push(file);
+      filesByOrder.set(file.order_id, group);
+    }
+    return rows.map((row) => this.hydrateOrderWithFiles(row, filesByOrder.get(row.id) || []));
+  }
+
+  private hydrateOrderWithFiles(row: any, fileRows: any[]): Order {
 
     const files: OrderFile[] = fileRows.map((f) => ({
       id: f.id,
