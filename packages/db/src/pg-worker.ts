@@ -5,15 +5,30 @@ if (!parentPort) {
   throw new Error('pg-worker must be executed inside a worker thread.');
 }
 
-const { sharedBuffer, connectionString } = workerData;
+const { sharedBuffer, connectionString, sslRejectUnauthorized } = workerData;
 const signalArray = new Int32Array(sharedBuffer, 0, 4);
 const dataBytes = new Uint8Array(sharedBuffer, 16);
 
+// Allow disabling SSL for local database connections or when sslmode=disable is explicit
+const isLocal =
+  connectionString.includes('localhost') ||
+  connectionString.includes('127.0.0.1');
+
+const sslDisabled = /[?&]sslmode=disable\b/i.test(connectionString);
+
+// By default, allow connecting to cloud-hosted databases (Supabase, Render PostgreSQL,
+// AWS RDS) whose certificate chains include intermediate/private CAs not bundled in
+// Node's default root store. Strict verification can be enforced by setting
+// DATABASE_SSL_REJECT_UNAUTHORIZED=true.
+const rejectUnauthorized =
+  sslRejectUnauthorized === true ||
+  process.env.DATABASE_SSL_REJECT_UNAUTHORIZED === 'true';
+
+const ssl = isLocal || sslDisabled ? false : { rejectUnauthorized };
+
 const client = new Client({
   connectionString,
-  // Reject untrusted database certificates; Supabase's managed endpoint uses
-  // publicly trusted TLS certificates.
-  ssl: { rejectUnauthorized: true },
+  ssl,
 });
 
 client.connect()

@@ -15,6 +15,7 @@ Set these values in Render's Environment settings. Never commit their values to 
 | `NODE_ENV` | `production` |
 | `JWT_SECRET` | Generate a unique random secret: `openssl rand -base64 48`. Keep it stable across restarts and instances. It must be at least 32 bytes; rotating it invalidates current sessions. |
 | `DATABASE_URL` | Supabase PostgreSQL connection string for the production database. Use the connection method supported by the deployed network and keep the password private. |
+| `DATABASE_SSL_REJECT_UNAUTHORIZED` | Optional boolean (`true`/`false`, default `false`). Set to `true` only if your PostgreSQL provider uses a publicly trusted certificate authority in its TLS chain. Managed providers like Supabase and Render PostgreSQL use private/internal CA chains; the default `false` maintains TLS wire encryption without failing CA verification. |
 | `CORS_ORIGIN` | Comma-separated exact frontend origins, such as `https://inklly.vercel.app`. |
 | `RAZORPAY_CREDENTIALS_ENCRYPTION_KEY` | Required before shops can save Razorpay credentials or developer webhook secrets. Generate a base64-encoded 32-byte key with `openssl rand -base64 32`; preserve it because rotating it makes saved secrets unreadable without an explicit re-encryption migration. |
 | `INKLLY_RAZORPAY_KEY_ID` | Optional platform-owned Razorpay account Key ID for merchant SaaS monthly subscription checkout. This account is separate from each shop's payment account. Start with a Razorpay TEST account. |

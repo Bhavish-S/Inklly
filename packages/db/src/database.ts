@@ -99,6 +99,7 @@ export class DatabaseService {
       workerData: {
         sharedBuffer: this.sharedBuffer,
         connectionString,
+        sslRejectUnauthorized: process.env.DATABASE_SSL_REJECT_UNAUTHORIZED === 'true',
       },
     });
 
