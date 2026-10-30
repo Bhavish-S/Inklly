@@ -12,9 +12,9 @@
 
 ## Hosted deployment check
 
-- `https://inklly.vercel.app/` returns HTTP 200 and serves the updated bundle with full restored pricing plans (Starter ₹99/mo, Growth ₹199/mo, Pro ₹499/mo, Scale ₹899/mo, Lifetime ₹1,499), Monthly/Yearly/Lifetime cycle toggles, sign-up with credential setup, and Razorpay checkout modal / test kit.
-- `https://inklly.onrender.com/api/v1/health` returns HTTP 200 with status `HEALTHY` and deployed git revision `526cefff06742028712804f07264f966c169092f`.
-- `https://inklly.onrender.com/api/v1/subscriptions/plans` returns HTTP 200 with all 5 active plans and deterministic integer-Paise pricing.
+- `https://inklly.vercel.app/` returns HTTP 200 and serves the complete redesigned bundle (`assets/index-CvmSIy3Z.js`, `assets/index-DxDlAk-3.css`) with Inklly master design system tokens (brand indigo `#4D64E6`, dark `#0D1422`, ink surfaces, accessible 44px targets, status tokens), translucent glass navbar, 4-column responsive footer, full pricing plans with Razorpay sandbox integration, grouped merchant navigation, and mobile-first customer ordering portal.
+- `https://inklly.onrender.com/api/v1/health` returns HTTP 200 with status `HEALTHY` and deployed git revision `3fcf6fcb1b23d8a3c1f211e41b7a7556ca1e104b`.
+- `https://inklly.onrender.com/api/v1/subscriptions/plans` returns HTTP 200 with all 5 active plans (Starter ₹99/mo, Growth ₹199/mo, Pro ₹499/mo, Scale ₹899/mo, Lifetime ₹1,499) and deterministic integer-Paise pricing.
 - `https://inklly.onrender.com/api/v1/auth/signup-checkout` returns HTTP 200 with verified sandbox order creation in test mode.
 - Live Render backend connects to Supabase PostgreSQL, successfully boots with automated platform owner bootstrapping and background private storage bucket verification, and binds immediately to the listening port.
 - Unauthenticated `/api/v1/platform/agents?limit=1` returns HTTP 401, as expected.
