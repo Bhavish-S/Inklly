@@ -130,6 +130,14 @@ export class UserRepository {
     ]);
   }
 
+  public setUserRole(id: string, role: UserRole): void {
+    this.db.execute('UPDATE users SET role = ?, updated_at = ? WHERE id = ?', [
+      role,
+      new Date().toISOString(),
+      id,
+    ]);
+  }
+
   public getActivePlatformOwner(): User | null {
     const row = this.db.queryOne<any>(
       `SELECT * FROM users WHERE role = 'PLATFORM_OWNER' AND is_active = 1 ORDER BY created_at ASC LIMIT 1`
