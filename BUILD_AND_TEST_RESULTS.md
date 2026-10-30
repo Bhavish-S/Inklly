@@ -8,7 +8,7 @@
 - `npm test` — 289 passed, 0 failed on 2026-10-30: database 24, shared 16, agent 15, server 221, web 13. Coverage includes provider-mocked Razorpay refund processing, webhook idempotency, shared persistent enquiry rate limiting, bounded platform organization/subscription pages, grouped subscription summary, agent local-data cleanup, bounded storage-request latency, and customer tracker polling stop conditions. These tests do not establish live provider, Supabase, PostgreSQL, browser or hardware behavior.
 - `npm audit --audit-level=high` — attempted twice; both requests to the npm advisory endpoint timed out, so no current audit result is available.
 - `npm run lint` — no root lint script is currently configured.
-- `.github/workflows/ci.yml` — GitHub Actions run [40990246716](https://github.com/Bhavish-S/Inklly/actions/runs/40990246716) completed successfully on commit `c1c74ee`, including `npm ci`, `npm run build`, and `npm test` on Node.js 24.
+- `.github/workflows/ci.yml` — GitHub Actions run [40990653729](https://github.com/Bhavish-S/Inklly/actions/runs/40990653729) completed successfully on commit `6e006dd`, including `npm ci`, `npm run build`, and `npm test` on Node.js 24.
 
 ## Hosted deployment check
 
