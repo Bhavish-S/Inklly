@@ -192,6 +192,63 @@ function buildSubscriptionOpenApiPaths(): Record<string, Record<string, unknown>
   };
 }
 
+function buildPaymentOpenApiPaths(): Record<string, Record<string, unknown>> {
+  return {
+    '/payments/create-intent': {
+      post: {
+        summary: 'Create or resume a shop-owned Razorpay checkout for an order',
+        description: 'Uses the order and authenticated shop-owned Razorpay credentials. Payment amount and currency come from the persisted server quote; an existing checkout reservation is returned on retry.',
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['orderId'], properties: { orderId: { type: 'string' } } } } } },
+        responses: { 200: { description: 'Checkout order created or returned for retry.' }, 404: { description: 'Payable order not found.' }, 409: { description: 'Checkout is already being created.' }, 503: { description: 'Shop credentials or provider are unavailable.' } },
+      },
+    },
+    '/payments/verify': {
+      post: {
+        summary: 'Verify a customer Razorpay payment',
+        description: 'Verifies the checkout signature and fetches payment status from Razorpay. The payment and append-only ledger are updated only for a matching captured payment.',
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['razorpay_order_id', 'razorpay_payment_id', 'razorpay_signature'], properties: { razorpay_order_id: { type: 'string' }, razorpay_payment_id: { type: 'string' }, razorpay_signature: { type: 'string' } } } } } },
+        responses: { 200: { description: 'Captured payment confirmed or idempotent result returned.' }, 400: { description: 'Invalid checkout signature.' }, 404: { description: 'Pending payment order not found.' }, 409: { description: 'Provider capture does not match the persisted order.' }, 503: { description: 'Provider verification unavailable.' } },
+      },
+    },
+    '/payments/webhook/razorpay/{shopId}': {
+      parameters: [{ name: 'shopId', in: 'path', required: true, schema: { type: 'string' } }],
+      post: {
+        summary: 'Receive shop-owned Razorpay payment and refund events',
+        description: 'Public provider endpoint. Verifies X-Razorpay-Signature over exact raw bytes, scopes credentials by shop, and deduplicates X-Razorpay-Event-Id. Supports captured payment events plus refund.created, refund.processed, and refund.failed; refund ledger entries are recorded only after a matching processed confirmation.',
+        parameters: [{ name: 'X-Razorpay-Signature', in: 'header', required: true, schema: { type: 'string' } }, { name: 'X-Razorpay-Event-Id', in: 'header', required: false, schema: { type: 'string' } }],
+        responses: { 200: { description: 'Event accepted, ignored, or recognized as duplicate.' }, 400: { description: 'Malformed body or invalid event.' }, 401: { description: 'Invalid provider signature.' }, 404: { description: 'Shop webhook is not configured.' }, 409: { description: 'Refund event does not match a reserved request.' }, 500: { description: 'Event could not be persisted; provider may retry.' } },
+      },
+    },
+    '/payments/orders/{id}/collect-cash': {
+      parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+      post: { summary: 'Record counter cash collection', description: 'Requires finance:manage and an order that has reached READY_FOR_COLLECTION through output reconciliation. Payment, ledger, order, and webhook outbox mutations are atomic.', security: [{ bearerAuth: [] }], responses: { 200: { description: 'Cash collection recorded or idempotent result returned.' }, 403: { description: 'Shop or finance permission required.' }, 409: { description: 'Order is not eligible for collection.' } } },
+    },
+    '/payments/orders/{id}/refunds': {
+      parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+      post: {
+        summary: 'Request a full or partial customer payment refund',
+        description: 'Requires finance:manage. Reserves balance from the verified payment under a transaction lock. New refunds remain pending until the shop owner processes them.',
+        security: [{ bearerAuth: [] }],
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: false, required: ['amountPaise', 'reason'], properties: { amountPaise: { type: 'integer', minimum: 1 }, reason: { type: 'string', minLength: 3, maxLength: 500 } } } } } },
+        responses: { 201: { description: 'Refund request created and amount reserved.' }, 400: { description: 'Invalid refund amount or reason.' }, 403: { description: 'Shop or finance permission required.' }, 409: { description: 'Refund exceeds the remaining refundable balance.' } },
+      },
+    },
+    '/payments/refunds': {
+      get: { summary: 'List refunds for the authenticated shop', description: 'Requires finance:view. Returns tenant-scoped request status without payment secrets.', security: [{ bearerAuth: [] }], responses: { 200: { description: 'Shop-scoped refund list.' }, 403: { description: 'Shop or finance permission required.' } } },
+    },
+    '/payments/refunds/{id}/process': {
+      parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+      post: {
+        summary: 'Process, reject, or record a refund request',
+        description: 'Owner-only and finance:manage. APPROVE sends or reconciles the same idempotent refund at the shop Razorpay account; ledger posting waits for provider confirmation. REJECT records a reason without moving money. RECORD_OFFLINE is only for manual-cash payments and requires explicit cashReturned confirmation plus an audit note.',
+        security: [{ bearerAuth: [] }],
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: false, required: ['action'], properties: { action: { type: 'string', enum: ['APPROVE', 'REJECT', 'RECORD_OFFLINE'] }, reason: { type: 'string', maxLength: 500 }, cashReturned: { type: 'boolean' } } } } } },
+        responses: { 200: { description: 'Request rejected, cash return recorded, or provider-confirmed refund completed.' }, 202: { description: 'Provider accepted refund; final confirmation is pending.' }, 400: { description: 'Invalid action or missing cash-return audit confirmation.' }, 403: { description: 'Shop owner and finance permission required.' }, 409: { description: 'Refund state or payment method does not allow this action.' }, 503: { description: 'Provider outcome is uncertain; the same request must be reconciled.' } },
+      },
+    },
+  };
+}
+
 function normalizeWebhookUrl(value: unknown): string | null {
   if (typeof value !== 'string' || value.length > 2048) return null;
   let url: URL;
@@ -235,7 +292,7 @@ export class DeveloperController {
             type: 'http',
             scheme: 'bearer',
             bearerFormat: 'JWT',
-            description: 'Signed Inklly user session token. Merchant API calls are tenant-scoped to the session membership.',
+            description: 'Bearer credential. Browser users use a signed Inklly session token; external integrations use a shop-bound TEST/LIVE API key when ENABLE_EXTERNAL_API_ACCESS is enabled. API-key scopes remain below owner privileges.',
           },
         },
       },
@@ -388,6 +445,7 @@ export class DeveloperController {
           },
         },
         ...buildMerchantOpenApiPaths(),
+        ...buildPaymentOpenApiPaths(),
         ...buildSubscriptionOpenApiPaths(),
       },
     });
