@@ -8,11 +8,11 @@
 - `npm test` — 289 passed, 0 failed on 2026-10-30: database 24, shared 16, agent 15, server 221, web 13. Coverage includes provider-mocked Razorpay refund processing, webhook idempotency, shared persistent enquiry rate limiting, bounded platform organization/subscription pages, grouped subscription summary, agent local-data cleanup, bounded storage-request latency, and customer tracker polling stop conditions. These tests do not establish live provider, Supabase, PostgreSQL, browser or hardware behavior.
 - `npm audit --audit-level=high` — attempted twice; both requests to the npm advisory endpoint timed out, so no current audit result is available.
 - `npm run lint` — no root lint script is currently configured.
-- `.github/workflows/ci.yml` — added a GitHub Actions job for pull requests, pushes to `main`, and manual dispatch. It pins the checkout and Node setup actions by commit SHA, installs with `npm ci`, and runs the same build and test commands. YAML parsing was checked locally; the hosted workflow has not run yet.
+- `.github/workflows/ci.yml` — GitHub Actions run [40990246716](https://github.com/Bhavish-S/Inklly/actions/runs/40990246716) completed successfully on commit `c1c74ee`, including `npm ci`, `npm run build`, and `npm test` on Node.js 24.
 
 ## Hosted deployment check
 
-- `https://inklly.vercel.app/` returns HTTP 200 and serves `index-1ogzuGIM.js`, which references `PlatformAdminView-DjjRy9vr.js`; the admin chunk contains the new organization paging UI.
+- `https://inklly.vercel.app/` returns HTTP 200 and serves `index-D8IMzzzK.js`, which references `OrderTrackerView-DI4NO3cb.js`; the deployed tracker chunk includes the polling stop behavior.
 - `https://inklly.onrender.com/health` returns HTTP 200 without a `revision`; `/api/v1/developer/openapi.json` still has 7 paths without subscription/refund paths, and unauthenticated `/api/v1/developer/keys` returns HTTP 200 with `[]` although current source and local API tests require 401.
 - Unauthenticated `/api/v1/platform/agents?limit=1` returns HTTP 401, as expected. Render Auto-Deploy settings cannot be changed or inspected from this session.
 
