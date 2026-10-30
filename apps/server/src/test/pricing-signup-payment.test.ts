@@ -27,36 +27,41 @@ describe('Pricing, Signup Credentials & Razorpay Sandbox Payment', { concurrency
     await db.close();
   });
 
-  it('lists all 4 subscription plans with full monthly and annual Paise pricing', async () => {
+  it('lists all subscription plans with full monthly, annual and lifetime Paise pricing', async () => {
     const res = await fetch(`${baseUrl}/api/v1/subscriptions/plans`);
     assert.equal(res.status, 200);
     const plans = await res.json() as any[];
     assert.equal(Array.isArray(plans), true);
-    assert.equal(plans.length, 4);
+    assert.equal(plans.length, 5);
 
     const starter = plans.find((p) => p.id === 'plan-starter');
     assert.ok(starter);
     assert.equal(starter.tier, 'STARTER');
-    assert.equal(starter.monthlyPricePaise, 49900);
-    assert.equal(starter.annualPricePaise, 499000);
+    assert.equal(starter.monthlyPricePaise, 9900);
+    assert.equal(starter.annualPricePaise, 99900);
 
     const growth = plans.find((p) => p.id === 'plan-growth');
     assert.ok(growth);
     assert.equal(growth.tier, 'GROWTH');
-    assert.equal(growth.monthlyPricePaise, 119900);
-    assert.equal(growth.annualPricePaise, 1199000);
+    assert.equal(growth.monthlyPricePaise, 19900);
+    assert.equal(growth.annualPricePaise, 199900);
 
     const pro = plans.find((p) => p.id === 'plan-pro');
     assert.ok(pro);
     assert.equal(pro.tier, 'PRO');
-    assert.equal(pro.monthlyPricePaise, 249900);
-    assert.equal(pro.annualPricePaise, 2499000);
+    assert.equal(pro.monthlyPricePaise, 49900);
+    assert.equal(pro.annualPricePaise, 499900);
 
     const scale = plans.find((p) => p.id === 'plan-scale');
     assert.ok(scale);
     assert.equal(scale.tier, 'SCALE');
-    assert.equal(scale.monthlyPricePaise, 699900);
-    assert.equal(scale.annualPricePaise, 6999000);
+    assert.equal(scale.monthlyPricePaise, 89900);
+    assert.equal(scale.annualPricePaise, 899900);
+
+    const lifetime = plans.find((p) => p.id === 'plan-lifetime');
+    assert.ok(lifetime);
+    assert.equal(lifetime.monthlyPricePaise, 149900);
+    assert.equal(lifetime.annualPricePaise, 149900);
   });
 
   it('creates a signup checkout order in sandbox test mode', async () => {
@@ -74,7 +79,7 @@ describe('Pricing, Signup Credentials & Razorpay Sandbox Payment', { concurrency
     assert.equal(body.mode, 'TEST');
     assert.equal(body.isSandbox, true);
     assert.ok(body.razorpayOrderId.startsWith('order_test_'));
-    assert.equal(body.amount, 119900);
+    assert.equal(body.amount, 19900);
     assert.equal(body.currency, 'INR');
     assert.equal(body.plan.id, 'plan-growth');
     assert.equal(body.plan.tier, 'GROWTH');
@@ -129,7 +134,7 @@ describe('Pricing, Signup Credentials & Razorpay Sandbox Payment', { concurrency
     assert.equal(regData.organization.planStatus, 'ACTIVE');
     assert.equal(regData.organization.planTier, 'GROWTH');
     assert.equal(regData.subscription.status, 'ACTIVE');
-    assert.equal(regData.subscription.amountPaise, 119900);
+    assert.equal(regData.subscription.amountPaise, 19900);
 
     // Verify user can immediately sign in with their credentials
     const loginRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
@@ -147,7 +152,7 @@ describe('Pricing, Signup Credentials & Razorpay Sandbox Payment', { concurrency
     const ledger = db.query<any>(`SELECT * FROM ledger_entries WHERE organization_id = ?`, [regData.organizationId]);
     assert.equal(ledger.length, 1);
     assert.equal(ledger[0].domain, 'SAAS_SUBSCRIPTION');
-    assert.equal(Number(ledger[0].amount_paise), 119900);
+    assert.equal(Number(ledger[0].amount_paise), 19900);
     assert.equal(ledger[0].provider, 'RAZORPAY');
 
     // Verify billing attempt was recorded
@@ -155,6 +160,6 @@ describe('Pricing, Signup Credentials & Razorpay Sandbox Payment', { concurrency
     assert.equal(attempt.length, 1);
     assert.equal(attempt[0].status, 'VERIFIED');
     assert.equal(attempt[0].plan_tier, 'GROWTH');
-    assert.equal(Number(attempt[0].amount_paise), 119900);
+    assert.equal(Number(attempt[0].amount_paise), 19900);
   });
 });

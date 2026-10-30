@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Accordion, AccordionItemData } from '../components/Accordion';
 import { RelatedLinks } from '../components/RelatedLinks';
-import { CheckIcon } from '../components/icons';
+import { ChevronDownIcon } from '../components/icons';
 
 interface PricingPageProps {
   onNavigate: (path: string) => void;
@@ -9,37 +9,29 @@ interface PricingPageProps {
 
 export const PricingPage: React.FC<PricingPageProps> = ({ onNavigate }) => {
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly' | 'lifetime'>('monthly');
-  const [currency, setCurrency] = useState<'INR' | 'USD'>('INR');
-  const [showAllLimits, setShowAllLimits] = useState<boolean>(false);
+  const [expandedCard, setExpandedCard] = useState<string | null>(null);
 
   const isYearly = billingCycle === 'yearly';
   const isLifetime = billingCycle === 'lifetime';
 
-  const currencySymbol = currency === 'INR' ? '₹' : '$';
-  const currencyMultiplier = currency === 'INR' ? 1 : 0.012;
-
-  const formatPrice = (inrPrice: number) => {
-    if (currency === 'INR') {
-      return `₹${inrPrice.toLocaleString('en-IN')}`;
-    }
-    const usd = Math.round(inrPrice * currencyMultiplier);
-    return `$${usd}`;
+  const toggleLimits = (cardId: string) => {
+    setExpandedCard(expandedCard === cardId ? null : cardId);
   };
 
-  const handlePlanSelect = (planId: string) => {
-    onNavigate(`/register?plan=${encodeURIComponent(planId)}&cycle=${encodeURIComponent(isYearly ? 'yearly' : 'monthly')}`);
+  const handleGetStarted = (planId: string) => {
+    onNavigate(`/register?plan=${encodeURIComponent(planId)}&cycle=${encodeURIComponent(isLifetime ? 'lifetime' : isYearly ? 'yearly' : 'monthly')}`);
   };
 
   const faqs: AccordionItemData[] = [
     {
       question: 'Is there a free trial, and do I need to enter credit card details?',
       answer:
-        'Yes! The Growth plan includes a 7-day trial with full feature access. You can test your counter and workflow immediately, or pay upfront using Razorpay Sandbox/Test Mode to activate a production subscription.',
+        'Yes! The Growth plan includes a completely free 7-day trial with full feature access. You can test customer QR ordering, WhatsApp automation, and counter printing with zero risk.',
     },
     {
       question: 'Do you charge any per-page commission or transaction percentage?',
       answer:
-        'No. Inklly charges 0% commission on your customer print orders. You keep 100% of your counter revenue. Payments settle directly into your own bank account via your connected payment gateway or cash at collection.',
+        'No. Inklly charges 0% commission on your print orders. You keep 100% of your revenue. UPI payments settle directly into your own bank account via your connected payment gateway or cash at collection.',
     },
     {
       question: 'Can I upgrade, downgrade or cancel my plan at any time?',
@@ -66,445 +58,352 @@ export const PricingPage: React.FC<PricingPageProps> = ({ onNavigate }) => {
   return (
     <div className="flex flex-col min-h-screen bg-[#FBFCFE]">
       {/* ─────────────────────────────────────────────────────────────
-          HERO: Pricing
+          HERO & BILLING TOGGLE
       ───────────────────────────────────────────────────────────── */}
-      <section className="bg-[#172031] text-white pt-16 pb-20 md:pt-20 md:pb-24 relative overflow-hidden">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[550px] h-[300px] bg-[#4D64E6]/20 rounded-full blur-3xl pointer-events-none" />
-
-        <div className="relative max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <span className="inline-block px-3 py-1 bg-white/10 text-[#A9B6FF] rounded-full text-xs font-bold uppercase tracking-wider mb-4 border border-white/15">
-            TRANSPARENT PRICING
-          </span>
-          <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold tracking-tight leading-[1.15] mb-6">
-            Simple, predictable pricing for every size of print shop
-          </h1>
-          <p className="text-sm sm:text-base md:text-lg text-gray-300 max-w-2xl mx-auto mb-8 leading-relaxed">
-            No hidden fees, no per-page commissions. Pick a plan that fits your counter volume, set up your credentials, and pay securely via Razorpay.
-          </p>
-
-          {/* Controls: Billing Cycle & Currency Switchers */}
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 max-w-md mx-auto">
-            {/* Cycle Toggle */}
-            <div className="bg-white/10 p-1 rounded-xl flex items-center border border-white/15 w-full sm:w-auto" role="tablist" aria-label="Subscription billing cycle">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={billingCycle === 'monthly'}
-                onClick={() => setBillingCycle('monthly')}
-                className={`flex-1 sm:flex-initial min-h-[44px] px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center cursor-pointer ${
-                  billingCycle === 'monthly'
-                    ? 'bg-[#4D64E6] text-white shadow-xs'
-                    : 'text-gray-300 hover:text-white'
-                }`}
-              >
-                Monthly
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={billingCycle === 'yearly'}
-                onClick={() => setBillingCycle('yearly')}
-                className={`flex-1 sm:flex-initial min-h-[44px] px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                  billingCycle === 'yearly'
-                    ? 'bg-[#4D64E6] text-white shadow-xs'
-                    : 'text-gray-300 hover:text-white'
-                }`}
-              >
-                Yearly
-                <span className="px-1.5 py-0.5 rounded-full bg-[#1F8A4C] text-white text-[9px]">
-                  -17%
-                </span>
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={billingCycle === 'lifetime'}
-                onClick={() => setBillingCycle('lifetime')}
-                className={`flex-1 sm:flex-initial min-h-[44px] px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center cursor-pointer ${
-                  billingCycle === 'lifetime'
-                    ? 'bg-[#4D64E6] text-white shadow-xs'
-                    : 'text-gray-300 hover:text-white'
-                }`}
-              >
-                Lifetime
-              </button>
-            </div>
-
-            {/* Currency Selector */}
-            <div className="bg-white/10 p-1 rounded-xl flex items-center border border-white/15" role="tablist" aria-label="Currency selection">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={currency === 'INR'}
-                onClick={() => setCurrency('INR')}
-                className={`min-h-[44px] px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center justify-center cursor-pointer ${
-                  currency === 'INR' ? 'bg-white text-[#172031]' : 'text-gray-300 hover:text-white'
-                }`}
-              >
-                INR (₹)
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={currency === 'USD'}
-                onClick={() => setCurrency('USD')}
-                className={`min-h-[44px] px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center justify-center cursor-pointer ${
-                  currency === 'USD' ? 'bg-white text-[#172031]' : 'text-gray-300 hover:text-white'
-                }`}
-              >
-                USD ($)
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ─────────────────────────────────────────────────────────────
-          SECTION 2: 4 PLAN CARDS GRID
-      ───────────────────────────────────────────────────────────── */}
-      <section className="py-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full -mt-10 relative z-10">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-stretch">
-          {/* Plan 1: Starter */}
-          <div className="bg-white rounded-3xl p-6 border border-[#E6E9F2] shadow-sm flex flex-col justify-between">
-            <div>
-              <div className="text-xs font-bold uppercase tracking-wider text-[#5B6475] mb-2">
-                Starter
-              </div>
-              <div className="flex items-baseline gap-1 mb-2">
-                <span className="text-3xl sm:text-4xl font-extrabold text-[#172031]">
-                  {isLifetime ? formatPrice(4999) : isYearly ? formatPrice(4990) : formatPrice(499)}
-                </span>
-                <span className="text-xs text-[#5B6475]">
-                  {isLifetime ? 'one-time' : isYearly ? '/year' : '/month'}
-                </span>
-              </div>
-              <p className="text-xs text-[#5B6475] mb-6">
-                For small stationery shops & single-printer counters.
-              </p>
-
-              <div className="space-y-3 pb-6 border-t border-[#E6E9F2] pt-6 text-xs text-[#172031]">
-                <div className="flex items-center gap-2">
-                  <CheckIcon size={14} className="text-[#1F8A4C] shrink-0" />
-                  <span><strong>1-2 Printers</strong> connected</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CheckIcon size={14} className="text-[#1F8A4C] shrink-0" />
-                  <span>Up to <strong>500 orders/mo</strong></span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CheckIcon size={14} className="text-[#1F8A4C] shrink-0" />
-                  <span>QR code self-service portal</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CheckIcon size={14} className="text-[#1F8A4C] shrink-0" />
-                  <span>Basic queue & Cash on collection</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CheckIcon size={14} className="text-[#1F8A4C] shrink-0" />
-                  <span>Standard email support</span>
-                </div>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => handlePlanSelect('plan-starter')}
-              className="w-full py-3 bg-[#F3F5FF] hover:bg-[#E6EBFD] text-[#4D64E6] font-bold text-xs rounded-xl transition-all cursor-pointer mt-4"
-            >
-              Start Sign Up →
-            </button>
-          </div>
-
-          {/* Plan 2: Growth (MOST POPULAR) */}
-          <div className="bg-white rounded-3xl p-6 border-2 border-[#4D64E6] shadow-xl flex flex-col justify-between relative transform lg:-translate-y-2">
-            {/* Badges */}
-            <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 bg-[#4D64E6] text-white px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider shadow-md">
-              MOST POPULAR
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold uppercase tracking-wider text-[#4D64E6]">
-                  Growth
-                </span>
-                <span className="bg-[#EAFBF0] text-[#1F8A4C] text-[10px] font-bold px-2 py-0.5 rounded-full">
-                  7-Day Free Trial
-                </span>
-              </div>
-
-              <div className="flex items-baseline gap-1 mb-2">
-                <span className="text-3xl sm:text-4xl font-extrabold text-[#172031]">
-                  {isLifetime ? formatPrice(11990) : isYearly ? formatPrice(11990) : formatPrice(1199)}
-                </span>
-                <span className="text-xs text-[#5B6475]">
-                  {isLifetime ? 'one-time' : isYearly ? '/year' : '/month'}
-                </span>
-              </div>
-              <p className="text-xs text-[#5B6475] mb-6">
-                For busy photocopy shops near colleges & campuses.
-              </p>
-
-              <div className="space-y-3 pb-6 border-t border-[#E6E9F2] pt-6 text-xs text-[#172031]">
-                <div className="flex items-center gap-2">
-                  <CheckIcon size={14} className="text-[#1F8A4C] shrink-0" />
-                  <span>Up to <strong>5 Printers</strong> connected</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CheckIcon size={14} className="text-[#1F8A4C] shrink-0" />
-                  <span>Up to <strong>2,000 orders/mo</strong></span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CheckIcon size={14} className="text-[#1F8A4C] shrink-0" />
-                  <span><strong>Dedicated WhatsApp Bot</strong></span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CheckIcon size={14} className="text-[#1F8A4C] shrink-0" />
-                  <span>Multi-printer smart routing</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CheckIcon size={14} className="text-[#1F8A4C] shrink-0" />
-                  <span>Custom rates & bulk discounts</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CheckIcon size={14} className="text-[#1F8A4C] shrink-0" />
-                  <span>Digital counter token display</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CheckIcon size={14} className="text-[#1F8A4C] shrink-0" />
-                  <span>Priority WhatsApp support</span>
-                </div>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => handlePlanSelect('plan-growth')}
-              className="w-full py-3.5 bg-[#4D64E6] hover:bg-[#3F54D1] text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer mt-4"
-            >
-              Start Sign Up (Growth) →
-            </button>
-          </div>
-
-          {/* Plan 3: Pro */}
-          <div className="bg-white rounded-3xl p-6 border border-[#E6E9F2] shadow-sm flex flex-col justify-between">
-            <div>
-              <div className="text-xs font-bold uppercase tracking-wider text-[#5B6475] mb-2">
-                Pro
-              </div>
-              <div className="flex items-baseline gap-1 mb-2">
-                <span className="text-3xl sm:text-4xl font-extrabold text-[#172031]">
-                  {isLifetime ? formatPrice(24990) : isYearly ? formatPrice(24990) : formatPrice(2499)}
-                </span>
-                <span className="text-xs text-[#5B6475]">
-                  {isLifetime ? 'one-time' : isYearly ? '/year' : '/month'}
-                </span>
-              </div>
-              <p className="text-xs text-[#5B6475] mb-6">
-                For high-volume multi-counter photocopy centers.
-              </p>
-
-              <div className="space-y-3 pb-6 border-t border-[#E6E9F2] pt-6 text-xs text-[#172031]">
-                <div className="flex items-center gap-2">
-                  <CheckIcon size={14} className="text-[#1F8A4C] shrink-0" />
-                  <span>Up to <strong>15 Printers</strong> connected</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CheckIcon size={14} className="text-[#1F8A4C] shrink-0" />
-                  <span>Up to <strong>10,000 monthly orders</strong></span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CheckIcon size={14} className="text-[#1F8A4C] shrink-0" />
-                  <span>Desktop Agent Fast Spooling</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CheckIcon size={14} className="text-[#1F8A4C] shrink-0" />
-                  <span>Staff Role & Operator Management</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CheckIcon size={14} className="text-[#1F8A4C] shrink-0" />
-                  <span>Developer API & Webhooks Access</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CheckIcon size={14} className="text-[#1F8A4C] shrink-0" />
-                  <span>Shift cash reconciliation reports</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CheckIcon size={14} className="text-[#1F8A4C] shrink-0" />
-                  <span>Priority SLA assistance</span>
-                </div>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => handlePlanSelect('plan-pro')}
-              className="w-full py-3 bg-[#F3F5FF] hover:bg-[#E6EBFD] text-[#4D64E6] font-bold text-xs rounded-xl transition-all cursor-pointer mt-4"
-            >
-              Start Sign Up (Pro) →
-            </button>
-          </div>
-
-          {/* Plan 4: Scale */}
-          <div className="bg-white rounded-3xl p-6 border border-[#E6E9F2] shadow-sm flex flex-col justify-between">
-            <div>
-              <div className="text-xs font-bold uppercase tracking-wider text-[#5B6475] mb-2">
-                Scale
-              </div>
-              <div className="flex items-baseline gap-1 mb-2">
-                <span className="text-3xl sm:text-4xl font-extrabold text-[#172031]">
-                  {isLifetime ? formatPrice(69990) : isYearly ? formatPrice(69990) : formatPrice(6999)}
-                </span>
-                <span className="text-xs text-[#5B6475]">
-                  {isLifetime ? 'one-time' : isYearly ? '/year' : '/month'}
-                </span>
-              </div>
-              <p className="text-xs text-[#5B6475] mb-6">
-                For commercial digital printers, chains & campuses.
-              </p>
-
-              <div className="space-y-3 pb-6 border-t border-[#E6E9F2] pt-6 text-xs text-[#172031]">
-                <div className="flex items-center gap-2">
-                  <CheckIcon size={14} className="text-[#1F8A4C] shrink-0" />
-                  <span><strong>100+ printers</strong> & multiple branches</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CheckIcon size={14} className="text-[#1F8A4C] shrink-0" />
-                  <span><strong>Unlimited orders</strong> monthly</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CheckIcon size={14} className="text-[#1F8A4C] shrink-0" />
-                  <span>Dedicated hardware spooler queue</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CheckIcon size={14} className="text-[#1F8A4C] shrink-0" />
-                  <span>Unmanned Kiosk integration</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CheckIcon size={14} className="text-[#1F8A4C] shrink-0" />
-                  <span>Custom domain branding</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CheckIcon size={14} className="text-[#1F8A4C] shrink-0" />
-                  <span>Dedicated account manager</span>
-                </div>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => handlePlanSelect('plan-scale')}
-              className="w-full py-3 bg-[#172031] hover:bg-[#1E2A44] text-white font-bold text-xs rounded-xl transition-all cursor-pointer mt-4"
-            >
-              Start Sign Up (Scale) →
-            </button>
-          </div>
-        </div>
-
-        {/* Expandable Comparison Details */}
-        <div className="mt-12 text-center">
+      <section className="pt-12 pb-8 px-4 sm:px-6 lg:px-8 text-center max-w-4xl mx-auto">
+        {/* Cycle Toggle Pill */}
+        <div className="inline-flex p-1 bg-white border border-[#E6E9F2] rounded-2xl shadow-xs">
           <button
             type="button"
-            onClick={() => setShowAllLimits(!showAllLimits)}
-            className="inline-flex items-center gap-2 px-6 py-2.5 rounded-full border border-[#E6E9F2] bg-white text-xs font-bold text-[#172031] hover:bg-gray-50 shadow-2xs cursor-pointer"
+            onClick={() => setBillingCycle('monthly')}
+            className={`min-w-[90px] py-2 px-5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              billingCycle === 'monthly'
+                ? 'bg-[#3B5BFE] text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
           >
-            <span>{showAllLimits ? 'Hide feature breakdown' : 'Compare all plan limits & features'}</span>
-            <span>{showAllLimits ? '▲' : '⌄'}</span>
+            Monthly
           </button>
-
-          {showAllLimits && (
-            <div className="mt-8 bg-white border border-[#E6E9F2] rounded-3xl p-6 sm:p-8 overflow-x-auto text-left shadow-sm">
-              <table className="w-full text-xs text-[#172031]">
-                <thead>
-                  <tr className="border-b border-[#E6E9F2] text-[#5B6475] uppercase tracking-wider text-[11px]">
-                    <th className="pb-3 text-left">Feature / Capability</th>
-                    <th className="pb-3 text-center">Starter</th>
-                    <th className="pb-3 text-center text-[#4D64E6] font-bold">Growth</th>
-                    <th className="pb-3 text-center">Pro</th>
-                    <th className="pb-3 text-center">Scale</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  <tr>
-                    <td className="py-3 font-semibold">Monthly Order Allowance</td>
-                    <td className="py-3 text-center text-[#5B6475]">500</td>
-                    <td className="py-3 text-center font-bold text-[#4D64E6]">2,000</td>
-                    <td className="py-3 text-center text-[#5B6475]">10,000</td>
-                    <td className="py-3 text-center font-bold">Unlimited (100k)</td>
-                  </tr>
-                  <tr>
-                    <td className="py-3 font-semibold">Max Connected Printers</td>
-                    <td className="py-3 text-center text-[#5B6475]">2</td>
-                    <td className="py-3 text-center font-bold text-[#4D64E6]">5</td>
-                    <td className="py-3 text-center text-[#5B6475]">15</td>
-                    <td className="py-3 text-center font-bold">100</td>
-                  </tr>
-                  <tr>
-                    <td className="py-3 font-semibold">WhatsApp Bot Ordering</td>
-                    <td className="py-3 text-center text-gray-400">✕</td>
-                    <td className="py-3 text-center text-[#1F8A4C] font-bold">✓ Included</td>
-                    <td className="py-3 text-center text-[#1F8A4C] font-bold">✓ Included</td>
-                    <td className="py-3 text-center text-[#1F8A4C] font-bold">✓ Included</td>
-                  </tr>
-                  <tr>
-                    <td className="py-3 font-semibold">Desktop Fast Spooler Agent</td>
-                    <td className="py-3 text-center text-gray-400">✕</td>
-                    <td className="py-3 text-center text-[#1F8A4C] font-bold">✓ Included</td>
-                    <td className="py-3 text-center text-[#1F8A4C] font-bold">✓ Included</td>
-                    <td className="py-3 text-center text-[#1F8A4C] font-bold">✓ Included</td>
-                  </tr>
-                  <tr>
-                    <td className="py-3 font-semibold">Multi-Counter Staff Accounts</td>
-                    <td className="py-3 text-center text-gray-400">✕</td>
-                    <td className="py-3 text-center text-gray-400">✕</td>
-                    <td className="py-3 text-center text-[#1F8A4C] font-bold">✓ Included</td>
-                    <td className="py-3 text-center text-[#1F8A4C] font-bold">✓ Included</td>
-                  </tr>
-                  <tr>
-                    <td className="py-3 font-semibold">Developer API & Webhooks Access</td>
-                    <td className="py-3 text-center text-gray-400">✕</td>
-                    <td className="py-3 text-center text-gray-400">✕</td>
-                    <td className="py-3 text-center text-[#1F8A4C] font-bold">✓ Included</td>
-                    <td className="py-3 text-center text-[#1F8A4C] font-bold">✓ Included</td>
-                  </tr>
-                  <tr>
-                    <td className="py-3 font-semibold">Deterministic Paise Pricing & Quotes</td>
-                    <td className="py-3 text-center text-[#1F8A4C]">✓</td>
-                    <td className="py-3 text-center text-[#1F8A4C]">✓</td>
-                    <td className="py-3 text-center text-[#1F8A4C]">✓</td>
-                    <td className="py-3 text-center text-[#1F8A4C]">✓</td>
-                  </tr>
-                  <tr>
-                    <td className="py-3 font-semibold">Razorpay Online Customer Checkout</td>
-                    <td className="py-3 text-center text-[#1F8A4C]">✓</td>
-                    <td className="py-3 text-center text-[#1F8A4C]">✓</td>
-                    <td className="py-3 text-center text-[#1F8A4C]">✓</td>
-                    <td className="py-3 text-center text-[#1F8A4C]">✓</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          )}
+          <button
+            type="button"
+            onClick={() => setBillingCycle('yearly')}
+            className={`min-w-[90px] py-2 px-5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              billingCycle === 'yearly'
+                ? 'bg-[#3B5BFE] text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            Yearly
+          </button>
+          <button
+            type="button"
+            onClick={() => setBillingCycle('lifetime')}
+            className={`min-w-[90px] py-2 px-5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              billingCycle === 'lifetime'
+                ? 'bg-[#3B5BFE] text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            Lifetime
+          </button>
         </div>
       </section>
 
       {/* ─────────────────────────────────────────────────────────────
-          SECTION 3: FAQS & RELATED
+          PLANS CARDS
       ───────────────────────────────────────────────────────────── */}
-      <section className="py-20 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 w-full">
-        <div className="text-center mb-12">
+      <section className="py-8 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full">
+        {/* LIFETIME VIEW */}
+        {isLifetime ? (
+          <div className="max-w-md mx-auto">
+            <div className="bg-white rounded-3xl p-8 border-2 border-[#3B5BFE] shadow-xl flex flex-col justify-between relative">
+              {/* Badge */}
+              <div className="absolute -top-3 left-6 bg-[#3B5BFE] text-white px-3 py-0.5 rounded-full text-[11px] font-black uppercase tracking-wider shadow-sm">
+                90% OFF
+              </div>
+
+              <div>
+                <h3 className="text-2xl font-extrabold text-[#172031] mb-1">Lifetime</h3>
+                <p className="text-xs text-[#5B6475] leading-relaxed mb-6">
+                  One payment. Permanent access to every Inklly feature.
+                </p>
+
+                {/* Strikethrough + Big Price */}
+                <div className="mb-1 text-slate-400 font-bold text-sm line-through">
+                  ₹14,999
+                </div>
+                <div className="flex items-baseline gap-1.5 mb-2">
+                  <span className="text-4xl sm:text-5xl font-black text-[#172031]">₹1,499</span>
+                  <span className="text-xs font-medium text-[#5B6475]">one time</span>
+                </div>
+                <div className="text-xs font-bold text-[#10B981] mb-6">
+                  You save ₹13,500 • 90% discount
+                </div>
+
+                {/* Features */}
+                <div className="space-y-3 pb-6 border-t border-[#F0F2F7] pt-6 text-xs text-[#172031] font-medium">
+                  <div>Unlimited orders/month</div>
+                  <div>Unlimited printers</div>
+                  <div>All-document auto print</div>
+                </div>
+
+                {/* All plan limits dropdown */}
+                <button
+                  type="button"
+                  onClick={() => toggleLimits('lifetime')}
+                  className="flex items-center gap-1 text-xs font-bold text-[#3B5BFE] hover:underline mb-6 cursor-pointer"
+                >
+                  <span>All plan limits</span>
+                  <span className={`text-[10px] transform transition-transform ${expandedCard === 'lifetime' ? 'rotate-180' : ''}`}>▼</span>
+                </button>
+
+                {expandedCard === 'lifetime' && (
+                  <div className="bg-[#F8F9FD] p-4 rounded-2xl mb-6 text-xs text-slate-600 space-y-2 border border-[#E6E9F2]">
+                    <div className="flex justify-between"><span>Multi-Branch Kiosk Mode:</span><strong className="text-slate-800">Included</strong></div>
+                    <div className="flex justify-between"><span>WhatsApp Bot:</span><strong className="text-slate-800">Included</strong></div>
+                    <div className="flex justify-between"><span>Developer API & Webhooks:</span><strong className="text-slate-800">Included</strong></div>
+                    <div className="flex justify-between"><span>Updates & Maintenance:</span><strong className="text-slate-800">Lifetime Free</strong></div>
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => handleGetStarted('plan-lifetime')}
+                className="w-full py-3.5 bg-[#3B5BFE] hover:bg-[#2C4AEE] text-white font-bold text-sm rounded-xl shadow-md transition-all cursor-pointer"
+              >
+                Get started
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* MONTHLY / YEARLY 4-GRID VIEW */
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-stretch">
+            {/* 1. STARTER */}
+            <div className="bg-white rounded-3xl p-7 border border-[#E6E9F2] shadow-xs flex flex-col justify-between">
+              <div>
+                <h3 className="text-2xl font-extrabold text-[#172031] mb-1">Starter</h3>
+                <p className="text-xs text-[#5B6475] leading-relaxed mb-6 min-h-[32px]">
+                  QR and WhatsApp portal for a small single-printer shop.
+                </p>
+
+                <div className="flex items-baseline gap-1 mb-6">
+                  <span className="text-4xl font-black text-[#172031]">
+                    {isYearly ? '₹999' : '₹99'}
+                  </span>
+                  <span className="text-xs font-medium text-[#5B6475]">
+                    {isYearly ? '/year' : '/month'}
+                  </span>
+                </div>
+
+                <div className="space-y-3 pb-6 border-t border-[#F0F2F7] pt-6 text-xs text-[#172031] font-medium">
+                  <div>300 orders/month</div>
+                  <div>1 printer</div>
+                  <div>Manual print release</div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => toggleLimits('starter')}
+                  className="flex items-center gap-1 text-xs font-bold text-[#3B5BFE] hover:underline mb-6 cursor-pointer"
+                >
+                  <span>All plan limits</span>
+                  <span className={`text-[10px] transform transition-transform ${expandedCard === 'starter' ? 'rotate-180' : ''}`}>▼</span>
+                </button>
+
+                {expandedCard === 'starter' && (
+                  <div className="bg-[#F8F9FD] p-3.5 rounded-2xl mb-6 text-xs text-slate-600 space-y-1.5 border border-[#E6E9F2]">
+                    <div className="flex justify-between"><span>Portal QR:</span><strong className="text-slate-800">Yes</strong></div>
+                    <div className="flex justify-between"><span>Cash Collection:</span><strong className="text-slate-800">Yes</strong></div>
+                    <div className="flex justify-between"><span>WhatsApp Orders:</span><strong className="text-slate-800">Basic</strong></div>
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => handleGetStarted('plan-starter')}
+                className="w-full py-3.5 bg-[#3B5BFE] hover:bg-[#2C4AEE] text-white font-bold text-sm rounded-xl shadow-xs transition-all cursor-pointer"
+              >
+                Get started
+              </button>
+            </div>
+
+            {/* 2. GROWTH (MOST POPULAR) */}
+            <div className="bg-white rounded-3xl p-7 border-2 border-[#3B5BFE] shadow-xl flex flex-col justify-between relative">
+              {/* Badge */}
+              <div className="absolute -top-3 left-6 bg-[#3B5BFE] text-white px-3 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider shadow-sm">
+                MOST POPULAR
+              </div>
+
+              <div>
+                <div className="mb-2">
+                  <h3 className="text-2xl font-extrabold text-[#172031]">Growth</h3>
+                </div>
+
+                <div className="mb-3">
+                  <span className="inline-block bg-[#EAFBF0] text-[#10B981] text-[11px] font-bold px-3 py-1 rounded-full">
+                    7-day free trial available
+                  </span>
+                </div>
+
+                <p className="text-xs text-[#5B6475] leading-relaxed mb-6 min-h-[32px]">
+                  Payment-triggered automation for growing shops.
+                </p>
+
+                <div className="flex items-baseline gap-1 mb-6">
+                  <span className="text-4xl font-black text-[#172031]">
+                    {isYearly ? '₹1,999' : '₹199'}
+                  </span>
+                  <span className="text-xs font-medium text-[#5B6475]">
+                    {isYearly ? '/year' : '/month'}
+                  </span>
+                </div>
+
+                <div className="space-y-3 pb-6 border-t border-[#F0F2F7] pt-6 text-xs text-[#172031] font-medium">
+                  <div>1,500 orders/month</div>
+                  <div>2 printers</div>
+                  <div>Payment-received auto print</div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => toggleLimits('growth')}
+                  className="flex items-center gap-1 text-xs font-bold text-[#3B5BFE] hover:underline mb-6 cursor-pointer"
+                >
+                  <span>All plan limits</span>
+                  <span className={`text-[10px] transform transition-transform ${expandedCard === 'growth' ? 'rotate-180' : ''}`}>▼</span>
+                </button>
+
+                {expandedCard === 'growth' && (
+                  <div className="bg-[#F8F9FD] p-3.5 rounded-2xl mb-6 text-xs text-slate-600 space-y-1.5 border border-[#E6E9F2]">
+                    <div className="flex justify-between"><span>WhatsApp Bot:</span><strong className="text-slate-800">Included</strong></div>
+                    <div className="flex justify-between"><span>Multi-Printer Routing:</span><strong className="text-slate-800">Included</strong></div>
+                    <div className="flex justify-between"><span>Digital Token Display:</span><strong className="text-slate-800">Included</strong></div>
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => handleGetStarted('plan-growth')}
+                className="w-full py-3.5 bg-[#3B5BFE] hover:bg-[#2C4AEE] text-white font-bold text-sm rounded-xl shadow-md transition-all cursor-pointer"
+              >
+                Get started
+              </button>
+            </div>
+
+            {/* 3. PRO */}
+            <div className="bg-white rounded-3xl p-7 border border-[#E6E9F2] shadow-xs flex flex-col justify-between">
+              <div>
+                <h3 className="text-2xl font-extrabold text-[#172031] mb-1">Pro</h3>
+                <p className="text-xs text-[#5B6475] leading-relaxed mb-6 min-h-[32px]">
+                  Full automatic printing with multiple printers and staff.
+                </p>
+
+                <div className="flex items-baseline gap-1 mb-6">
+                  <span className="text-4xl font-black text-[#172031]">
+                    {isYearly ? '₹4,999' : '₹499'}
+                  </span>
+                  <span className="text-xs font-medium text-[#5B6475]">
+                    {isYearly ? '/year' : '/month'}
+                  </span>
+                </div>
+
+                <div className="space-y-3 pb-6 border-t border-[#F0F2F7] pt-6 text-xs text-[#172031] font-medium">
+                  <div>6,000 orders/month</div>
+                  <div>5 printers</div>
+                  <div>All-document auto print</div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => toggleLimits('pro')}
+                  className="flex items-center gap-1 text-xs font-bold text-[#3B5BFE] hover:underline mb-6 cursor-pointer"
+                >
+                  <span>All plan limits</span>
+                  <span className={`text-[10px] transform transition-transform ${expandedCard === 'pro' ? 'rotate-180' : ''}`}>▼</span>
+                </button>
+
+                {expandedCard === 'pro' && (
+                  <div className="bg-[#F8F9FD] p-3.5 rounded-2xl mb-6 text-xs text-slate-600 space-y-1.5 border border-[#E6E9F2]">
+                    <div className="flex justify-between"><span>Fast Spooler Agent:</span><strong className="text-slate-800">Included</strong></div>
+                    <div className="flex justify-between"><span>Staff Permissions:</span><strong className="text-slate-800">Included</strong></div>
+                    <div className="flex justify-between"><span>Cash Reconciliation:</span><strong className="text-slate-800">Included</strong></div>
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => handleGetStarted('plan-pro')}
+                className="w-full py-3.5 bg-[#3B5BFE] hover:bg-[#2C4AEE] text-white font-bold text-sm rounded-xl shadow-xs transition-all cursor-pointer"
+              >
+                Get started
+              </button>
+            </div>
+
+            {/* 4. SCALE */}
+            <div className="bg-white rounded-3xl p-7 border border-[#E6E9F2] shadow-xs flex flex-col justify-between">
+              <div>
+                <h3 className="text-2xl font-extrabold text-[#172031] mb-1">Scale</h3>
+                <p className="text-xs text-[#5B6475] leading-relaxed mb-6 min-h-[32px]">
+                  High-volume automation for busy shops and branches.
+                </p>
+
+                <div className="flex items-baseline gap-1 mb-6">
+                  <span className="text-4xl font-black text-[#172031]">
+                    {isYearly ? '₹8,999' : '₹899'}
+                  </span>
+                  <span className="text-xs font-medium text-[#5B6475]">
+                    {isYearly ? '/year' : '/month'}
+                  </span>
+                </div>
+
+                <div className="space-y-3 pb-6 border-t border-[#F0F2F7] pt-6 text-xs text-[#172031] font-medium">
+                  <div>50,000 orders/month</div>
+                  <div>10 printers</div>
+                  <div>All-document auto print</div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => toggleLimits('scale')}
+                  className="flex items-center gap-1 text-xs font-bold text-[#3B5BFE] hover:underline mb-6 cursor-pointer"
+                >
+                  <span>All plan limits</span>
+                  <span className={`text-[10px] transform transition-transform ${expandedCard === 'scale' ? 'rotate-180' : ''}`}>▼</span>
+                </button>
+
+                {expandedCard === 'scale' && (
+                  <div className="bg-[#F8F9FD] p-3.5 rounded-2xl mb-6 text-xs text-slate-600 space-y-1.5 border border-[#E6E9F2]">
+                    <div className="flex justify-between"><span>Kiosk Integration:</span><strong className="text-slate-800">Included</strong></div>
+                    <div className="flex justify-between"><span>Hardware Spool Queue:</span><strong className="text-slate-800">Dedicated</strong></div>
+                    <div className="flex justify-between"><span>Developer Webhooks:</span><strong className="text-slate-800">Full API</strong></div>
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => handleGetStarted('plan-scale')}
+                className="w-full py-3.5 bg-[#3B5BFE] hover:bg-[#2C4AEE] text-white font-bold text-sm rounded-xl shadow-xs transition-all cursor-pointer"
+              >
+                Get started
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* ─────────────────────────────────────────────────────────────
+          SECTION: FAQS & RELATED
+      ───────────────────────────────────────────────────────────── */}
+      <section className="py-16 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 w-full">
+        <div className="text-center mb-10">
           <h2 className="text-2xl sm:text-3xl font-extrabold text-[#172031] tracking-tight">
             Frequently Asked Questions
           </h2>
         </div>
         <Accordion items={faqs} defaultOpenIndex={0} />
 
-        <div className="mt-16">
+        <div className="mt-14">
           <RelatedLinks
             heading="Explore related pages"
             links={[
-              { label: 'Explore Kiosk Franchise Model', href: '/franchise' },
               { label: 'Print Shop Automation Software', href: '/print-shop-automation-software' },
               { label: 'WhatsApp Printing Software', href: '/whatsapp-printing-software' },
+              { label: 'QR Code Printing System', href: '/qr-code-printing-system' },
             ]}
             onNavigate={onNavigate}
           />
