@@ -754,7 +754,7 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
       </div>
 
       {/* Navigation Tabs */}
-      <div className="flex flex-wrap gap-1.5 bg-slate-100 dark:bg-slate-800/60 p-1.5 rounded-2xl border border-slate-200/80 dark:border-slate-800 text-xs font-bold">
+      <div className="flex flex-wrap gap-1.5 bg-ink-surface-muted dark:bg-ink-dark-elevated p-1.5 rounded-2xl border border-ink-border dark:border-ink-dark-border text-xs font-semibold">
         {[
           ...(hasPlatformPermission('platform:view') ? [
             { id: 'overview', label: '📊 Fleet Overview' },
@@ -775,10 +775,10 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
             key={tab.id}
             type="button"
             onClick={() => setActiveTab(tab.id as AdminTab)}
-            className={`px-4 py-2 rounded-xl transition-all cursor-pointer ${
+            className={`px-3.5 py-2 rounded-xl transition-all cursor-pointer ${
               activeTab === tab.id
-                ? 'bg-white dark:bg-slate-900 text-[#4D64E6] shadow-xs'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                ? 'bg-brand text-white shadow-brand font-bold'
+                : 'text-ink-text-secondary dark:text-ink-dark-text-secondary hover:text-ink-text dark:hover:text-ink-dark-text hover:bg-ink-surface dark:hover:bg-ink-dark-hover'
             }`}
           >
             {tab.label}

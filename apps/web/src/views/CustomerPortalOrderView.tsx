@@ -950,8 +950,8 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
   // SUCCESS / CONFIRMATION VIEW
   if (orderResult) {
     return (
-      <div className="min-h-screen bg-[#F5F6FA] flex flex-col items-center justify-center p-4">
-        <div className="w-full max-w-md bg-white rounded-3xl shadow-xl border border-slate-100 overflow-hidden text-center p-6 sm:p-8 animate-fadeIn">
+      <div className="min-h-screen bg-ink-app dark:bg-ink-dark-app text-ink-text dark:text-ink-dark-text flex flex-col items-center justify-center p-4">
+        <div className="w-full max-w-md bg-ink-surface dark:bg-ink-dark-surface rounded-3xl shadow-xl border border-ink-border dark:border-ink-dark-border overflow-hidden text-center p-6 sm:p-8 animate-fadeIn">
           {/* Top Green Pulse */}
           <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 shadow-inner">
             <CheckIcon size={32} />
@@ -1115,11 +1115,11 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
   }
 
   return (
-    <div className="min-h-screen bg-[#F5F6FA] text-slate-800 pb-28">
+    <div className="min-h-screen bg-ink-app dark:bg-ink-dark-app text-ink-text dark:text-ink-dark-text pb-28">
       {/* 1. TOP HEADER BAR WITH GRADIENT (Matching Part 2 Video) */}
       <header
-        className="w-full py-3.5 px-4 sticky top-0 z-30 shadow-sm"
-        style={{ background: 'linear-gradient(135deg, #475DE7 0%, #7A86F2 100%)' }}
+        className="w-full py-3.5 px-4 sticky top-0 z-30 shadow-xs border-b border-white/10"
+        style={{ background: 'linear-gradient(135deg, #4D64E6 0%, #3B50D4 100%)' }}
       >
         <div className="max-w-md mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2.5">

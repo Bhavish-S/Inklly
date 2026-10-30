@@ -30,8 +30,8 @@ export const Accordion: React.FC<AccordionProps> = ({
         return (
           <div
             key={idx}
-            className={`border rounded-xl transition-all duration-200 bg-white overflow-hidden ${
-              isOpen ? 'border-[#4D64E6]/50 shadow-xs ring-1 ring-[#4D64E6]/20' : 'border-[#E6E9F2]'
+            className={`border rounded-xl transition-all duration-200 bg-ink-surface dark:bg-ink-dark-surface overflow-hidden ${
+              isOpen ? 'border-brand/50 shadow-xs ring-1 ring-brand/20' : 'border-ink-border dark:border-ink-dark-border'
             }`}
           >
             <button
@@ -44,19 +44,19 @@ export const Accordion: React.FC<AccordionProps> = ({
                 }
               }}
               aria-expanded={isOpen}
-              className="w-full text-left px-5 py-4 flex items-center justify-between gap-4 font-semibold text-sm sm:text-base text-[#172031] hover:text-[#4D64E6] focus:outline-hidden transition-colors"
+              className="w-full text-left px-5 py-4 flex items-center justify-between gap-4 font-semibold text-sm sm:text-base text-ink-text dark:text-ink-dark-text hover:text-brand dark:hover:text-brand-dark focus:outline-hidden transition-colors cursor-pointer"
             >
               <span>{item.question}</span>
               <span
-                className={`text-[#5B6475] shrink-0 transition-transform duration-200 ${
-                  isOpen ? 'rotate-180 text-[#4D64E6]' : ''
+                className={`text-ink-text-muted dark:text-ink-dark-text-muted shrink-0 transition-transform duration-200 ${
+                  isOpen ? 'rotate-180 text-brand dark:text-brand-dark' : ''
                 }`}
               >
                 <ChevronDownIcon size={18} />
               </span>
             </button>
             {isOpen && (
-              <div className="px-5 pb-4 text-xs sm:text-sm text-[#5B6475] leading-relaxed border-t border-[#F1F3F9] pt-3">
+              <div className="px-5 pb-4 text-xs sm:text-sm text-ink-text-secondary dark:text-ink-dark-text-secondary leading-relaxed border-t border-ink-border dark:border-ink-dark-border pt-3">
                 {item.answer}
               </div>
             )}

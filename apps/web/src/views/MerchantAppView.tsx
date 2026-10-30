@@ -1880,24 +1880,59 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const totalRevenueNumber = (Number(dashboardMetrics.totalRevenuePaise || 0) / 100).toFixed(2);
 
 
-  const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: <PackageIcon size={18} /> },
-    { id: 'orders', label: 'Orders', icon: <InboxIcon size={18} /> },
-    { id: 'live_print', label: 'Live Print', icon: <WifiIcon size={18} /> },
-    { id: 'whatsapp_setup', label: 'WhatsApp Setup', icon: <WhatsAppIcon size={18} /> },
-    { id: 'storage', label: 'Storage', icon: <StoreIcon size={18} /> },
-    { id: 'credits', label: 'Billing & usage', icon: <DollarSignIcon size={18} /> },
-    { id: 'withdraw', label: 'Settlements', icon: <IndianRupeeIcon size={18} /> },
-    { id: 'refunds', label: 'Refunds', icon: <IndianRupeeIcon size={18} /> },
-    { id: 'referrals', label: 'Referral program', icon: <UsersIcon size={18} /> },
-    { id: 'employees', label: 'Employees', icon: <UsersIcon size={18} /> },
-    { id: 'train_bot', label: 'Train Bot', icon: <SlidersIcon size={18} /> },
-    { id: 'business_setup', label: 'Business Setup', icon: <StoreIcon size={18} /> },
-    { id: 'shop_qr', label: 'Shop QR', icon: <QrCodeIcon size={18} /> },
+  const navGroups = [
+    {
+      title: 'OVERVIEW',
+      items: [
+        { id: 'dashboard', label: 'Dashboard', icon: <PackageIcon size={18} /> },
+      ],
+    },
+    {
+      title: 'OPERATIONS',
+      items: [
+        { id: 'orders', label: 'Orders', icon: <InboxIcon size={18} /> },
+        { id: 'live_print', label: 'Live Print', icon: <WifiIcon size={18} /> },
+      ],
+    },
+    {
+      title: 'CUSTOMER EXPERIENCE',
+      items: [
+        { id: 'shop_qr', label: 'Shop QR', icon: <QrCodeIcon size={18} /> },
+        { id: 'whatsapp_setup', label: 'WhatsApp Setup', icon: <WhatsAppIcon size={18} /> },
+      ],
+    },
+    {
+      title: 'DOCUMENTS',
+      items: [
+        { id: 'storage', label: 'Storage', icon: <StoreIcon size={18} /> },
+      ],
+    },
+    {
+      title: 'FINANCE',
+      items: [
+        { id: 'credits', label: 'Billing & usage', icon: <DollarSignIcon size={18} /> },
+        { id: 'withdraw', label: 'Settlements', icon: <IndianRupeeIcon size={18} /> },
+        { id: 'refunds', label: 'Refunds', icon: <IndianRupeeIcon size={18} /> },
+        { id: 'referrals', label: 'Referral program', icon: <UsersIcon size={18} /> },
+      ],
+    },
+    {
+      title: 'TEAM',
+      items: [
+        { id: 'employees', label: 'Employees', icon: <UsersIcon size={18} /> },
+      ],
+    },
+    {
+      title: 'CONFIGURATION',
+      items: [
+        { id: 'train_bot', label: 'Train Bot', icon: <SlidersIcon size={18} /> },
+        { id: 'business_setup', label: 'Business Setup', icon: <StoreIcon size={18} /> },
+      ],
+    },
   ];
 
   return (
-    <div className={`min-h-screen flex ${darkMode ? 'dark bg-[#0F172A] text-white' : 'bg-[#F4F6FC] text-[#172031]'}`}>
+    <div className={`min-h-screen flex ${darkMode ? 'dark bg-ink-dark-app text-ink-dark-text' : 'bg-ink-app text-ink-text'}`}>
       {/* ─────────────────────────────────────────────────────────────
           2.1 LEFT SIDEBAR (Expanded w-64 or Collapsed w-20)
       ───────────────────────────────────────────────────────────── */}
@@ -1910,15 +1945,15 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       )}
 
       <aside
-        className={`bg-white dark:bg-[#1E293B] border-r border-[#E8EAF3] dark:border-gray-800 flex flex-col justify-between transition-all duration-300 z-50 select-none ${
+        className={`bg-ink-surface dark:bg-ink-dark-surface border-r border-ink-border dark:border-ink-dark-border flex flex-col justify-between transition-all duration-200 z-50 select-none ${
           sidebarExpanded
-            ? 'fixed inset-y-0 left-0 w-72 p-4 shadow-2xl md:static md:w-64 md:shadow-none translate-x-0'
+            ? 'fixed inset-y-0 left-0 w-64 p-4 shadow-xl md:static md:w-64 md:shadow-none translate-x-0'
             : 'hidden md:flex md:w-20 p-3 items-center'
         }`}
       >
-        <div>
+        <div className="w-full">
           {/* Logo & Collapse Header */}
-          <div className="flex items-center justify-between pb-4 mb-3 border-b border-gray-100 dark:border-gray-800">
+          <div className="flex items-center justify-between pb-4 mb-3 border-b border-ink-border dark:border-ink-dark-border">
             {sidebarExpanded ? (
               <div
                 onClick={() => onNavigate && onNavigate('/')}
@@ -1939,63 +1974,69 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
             <button
               type="button"
               onClick={() => setSidebarExpanded(!sidebarExpanded)}
-              className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+              className="text-ink-text-muted hover:text-ink-text dark:hover:text-ink-dark-text p-1.5 rounded-lg hover:bg-ink-surface-muted dark:hover:bg-ink-dark-hover transition-colors"
               title={sidebarExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
             >
               <ChevronRightIcon size={16} className={`transition-transform duration-200 ${sidebarExpanded ? 'rotate-180' : ''}`} />
             </button>
           </div>
 
-          {/* Nav Items List */}
-          <nav className="space-y-1">
-            {navItems.map((item) => {
-              const isActive = activeView === item.id;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setActiveView(item.id as any)}
-                  className={`w-full flex items-center rounded-xl text-xs font-semibold transition-all duration-150 ${
-                    sidebarExpanded ? 'gap-3 px-3.5 py-2.5 text-left' : 'p-2.5 justify-center'
-                  } ${
-                    isActive
-                      ? 'bg-[#4E65F6] text-white shadow-xs font-bold'
-                      : 'text-[#5B6475] dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-[#172031]'
-                  }`}
-                  title={!sidebarExpanded ? item.label : undefined}
-                >
-                  <span className={isActive ? 'text-white' : 'text-slate-500 dark:text-gray-400'}>
-                    {item.icon}
-                  </span>
-                  {sidebarExpanded && (
-                    <div className="flex items-center justify-between flex-1 min-w-0">
-                      <span className="truncate">{item.label}</span>
-                      {item.id === 'orders' && (
-                        <div className="flex items-center gap-1.5 ml-auto">
-                          <span
-                            className={`w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center ${
-                              isActive ? 'bg-white text-[#4E65F6]' : 'bg-[#4E65F6] text-white'
-                            }`}
-                          >
-                            {pendingOrderCount}
-                          </span>
-                          <span className={`text-[10px] ${isActive ? 'text-white/80' : 'text-gray-400'}`}>▾</span>
+          {/* Nav Items Grouped List */}
+          <nav className="space-y-3.5 overflow-y-auto max-h-[calc(100vh-140px)] pr-1 scrollbar-none">
+            {navGroups.map((group) => (
+              <div key={group.title} className="space-y-0.5">
+                {sidebarExpanded && (
+                  <p className="px-3 pt-1 pb-1 text-[10px] font-bold uppercase tracking-wider text-ink-text-muted dark:text-ink-dark-text-muted">
+                    {group.title}
+                  </p>
+                )}
+                {group.items.map((item) => {
+                  const isActive = activeView === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setActiveView(item.id as any)}
+                      className={`w-full flex items-center rounded-xl text-xs font-semibold transition-all duration-150 cursor-pointer ${
+                        sidebarExpanded ? 'gap-3 px-3 py-2 text-left' : 'p-2.5 justify-center'
+                      } ${
+                        isActive
+                          ? 'bg-brand text-white shadow-brand font-bold'
+                          : 'text-ink-text-secondary dark:text-ink-dark-text-secondary hover:bg-ink-surface-muted dark:hover:bg-ink-dark-hover hover:text-ink-text dark:hover:text-ink-dark-text'
+                      }`}
+                      title={!sidebarExpanded ? item.label : undefined}
+                    >
+                      <span className={isActive ? 'text-white' : 'text-ink-text-muted dark:text-ink-dark-text-muted'}>
+                        {item.icon}
+                      </span>
+                      {sidebarExpanded && (
+                        <div className="flex items-center justify-between flex-1 min-w-0">
+                          <span className="truncate">{item.label}</span>
+                          {item.id === 'orders' && pendingOrderCount > 0 && (
+                            <span
+                              className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                                isActive ? 'bg-white text-brand' : 'bg-brand text-white'
+                              }`}
+                            >
+                              {pendingOrderCount}
+                            </span>
+                          )}
                         </div>
                       )}
-                    </div>
-                  )}
-                </button>
-              );
-            })}
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
           </nav>
         </div>
 
         {/* Sidebar Bottom: Dark Mode Toggle & Log Out */}
-        <div className="pt-3 border-t border-gray-100 dark:border-gray-800 space-y-2">
+        <div className="pt-3 border-t border-ink-border dark:border-ink-dark-border space-y-2 w-full">
           <button
             type="button"
             onClick={() => setDarkMode(!darkMode)}
-            className={`w-full flex items-center gap-2 text-xs font-semibold text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white rounded-xl p-2.5 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors ${
+            className={`w-full flex items-center gap-2 text-xs font-semibold text-ink-text-secondary hover:text-ink-text dark:text-ink-dark-text-secondary dark:hover:text-ink-dark-text rounded-xl p-2.5 hover:bg-ink-surface-muted dark:hover:bg-ink-dark-hover transition-colors cursor-pointer ${
               sidebarExpanded ? '' : 'justify-center'
             }`}
           >
@@ -2012,7 +2053,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                 window.location.href = '/login';
               }
             }}
-            className={`w-full flex items-center gap-2.5 text-xs font-bold text-red-600 bg-[#FEE2E2] hover:bg-[#FECACA] dark:bg-red-950/40 dark:text-red-400 rounded-xl p-2.5 transition-colors ${
+            className={`w-full flex items-center gap-2.5 text-xs font-bold text-status-danger bg-status-danger-bg hover:bg-red-100 dark:bg-status-dark-danger-bg dark:text-status-dark-danger rounded-xl p-2.5 transition-colors cursor-pointer ${
               sidebarExpanded ? 'justify-start' : 'justify-center'
             }`}
           >
@@ -2027,22 +2068,22 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       ───────────────────────────────────────────────────────────── */}
       <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
         {/* 2.2 TOP BAR */}
-        <header className="bg-white dark:bg-[#1E293B] border-b border-[#E8EAF3] dark:border-gray-800 min-h-16 py-2 px-4 sm:px-6 flex flex-col md:flex-row md:items-center justify-between gap-3 sticky top-0 z-30 shadow-2xs">
+        <header className="bg-ink-surface dark:bg-ink-dark-surface border-b border-ink-border dark:border-ink-dark-border min-h-16 py-2 px-4 sm:px-6 flex flex-col md:flex-row md:items-center justify-between gap-3 sticky top-0 z-30 shadow-2xs">
           {/* Left section: Toggle & Merchant Title */}
           <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={() => setSidebarExpanded(!sidebarExpanded)}
-              className="w-9 h-9 rounded-full bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 transition-colors shrink-0"
+              className="w-9 h-9 rounded-full bg-ink-surface-muted hover:bg-ink-border dark:bg-ink-dark-elevated flex items-center justify-center text-ink-text-secondary dark:text-ink-dark-text-secondary transition-colors shrink-0 cursor-pointer"
               title="Toggle sidebar"
             >
               <MenuIcon size={18} />
             </button>
             <div className="min-w-0">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block leading-tight">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-ink-text-muted dark:text-ink-dark-text-muted block leading-tight">
                 MERCHANT COUNTER OS
               </span>
-              <h2 className="text-sm sm:text-base font-extrabold text-[#172031] dark:text-white leading-tight truncate">
+              <h2 className="text-sm sm:text-base font-bold text-ink-text dark:text-ink-dark-text leading-tight truncate">
                 {currentMerchant.name}
               </h2>
             </div>
@@ -2070,11 +2111,11 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
             )}
 
             {/* Real Merchant Shop Identity & Plan Badge */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-linear-to-r from-indigo-50 to-purple-50 dark:from-indigo-950/60 dark:to-purple-950/60 shadow-xs text-xs">
-              <span className="font-extrabold text-indigo-950 dark:text-indigo-200 truncate max-w-[150px]">
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-brand/20 bg-brand-soft dark:bg-brand-dark-soft shadow-xs text-xs">
+              <span className="font-bold text-brand dark:text-brand-dark truncate max-w-[150px]">
                 {currentMerchant.name}
               </span>
-              <span className="px-1.5 py-0.5 rounded-md text-[10px] font-black bg-indigo-600 text-white uppercase shrink-0">
+              <span className="px-1.5 py-0.5 rounded-md text-[10px] font-black bg-brand text-white uppercase shrink-0">
                 {currentMerchant.planBadge || 'Pilot pricing'}
               </span>
             </div>
@@ -2083,14 +2124,14 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
             <button
               type="button"
               onClick={() => checkAgentHealth(true)}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer shadow-xs ${
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer shadow-xs ${
                 agentOnline
-                  ? 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300'
-                  : 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-300'
+                  ? 'border-status-success/30 bg-status-success-bg text-status-success'
+                  : 'border-status-warning/30 bg-status-warning-bg text-status-warning'
               }`}
               title={agentOnline ? 'Edge Print Agent Online on http://127.0.0.1:8765 (Click to re-check)' : 'Edge Agent Offline (Click to test local connection)'}
             >
-              <span className={`w-2 h-2 rounded-full shrink-0 ${agentOnline ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+              <span className={`w-2 h-2 rounded-full shrink-0 ${agentOnline ? 'bg-status-success animate-pulse' : 'bg-status-warning'}`} />
               <span>{agentOnline ? 'Agent Online' : 'Agent Offline'}</span>
             </button>
 
@@ -2098,7 +2139,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
             <button
               type="button"
               onClick={() => setActiveView('shop_qr')}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-white dark:bg-slate-900 text-indigo-700 dark:text-indigo-300 font-bold text-xs hover:bg-indigo-50 transition-colors shadow-xs cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-ink-border dark:border-ink-dark-border bg-ink-surface dark:bg-ink-dark-elevated text-ink-text dark:text-ink-dark-text font-semibold text-xs hover:bg-ink-surface-subtle transition-colors shadow-xs cursor-pointer"
               title="Open Counter QR Standee view"
             >
               <span>📱</span>
@@ -2109,7 +2150,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
             <button
               type="button"
               onClick={handleStartTour}
-              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/70 dark:bg-indigo-950/40 text-[#4D64E6] dark:text-indigo-300 font-bold text-xs hover:bg-indigo-100 transition-colors cursor-pointer shadow-xs"
+              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-brand/20 bg-brand-soft/70 dark:bg-brand-dark-soft/40 text-brand dark:text-brand-dark font-semibold text-xs hover:bg-brand-soft transition-colors cursor-pointer shadow-xs"
               title="Take interactive product tour"
             >
               <span>✨</span>
@@ -2120,7 +2161,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
             <button
               type="button"
               onClick={() => onNavigate?.('/pricing')}
-              className="px-3.5 py-1.5 bg-[#4F46E5] hover:bg-indigo-600 text-white rounded-full text-xs font-bold shadow-xs cursor-pointer flex items-center gap-1 transition-all"
+              className="px-3.5 py-1.5 bg-brand hover:bg-brand-hover text-white rounded-full text-xs font-bold shadow-xs cursor-pointer flex items-center gap-1 transition-all"
               title="View pilot pricing"
             >
               <span>Pilot pricing</span>
@@ -2130,7 +2171,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
             <button
               type="button"
               onClick={() => setDarkMode(!darkMode)}
-              className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 flex items-center justify-center text-slate-500 transition-colors"
+              className="w-8 h-8 rounded-full bg-ink-surface-muted hover:bg-ink-border dark:bg-ink-dark-elevated flex items-center justify-center text-ink-text-secondary transition-colors cursor-pointer"
               title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
             >
               {darkMode ? <SunIcon size={15} /> : <MoonIcon size={15} />}
@@ -2141,19 +2182,19 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
               <button
                 type="button"
                 onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
-                className="flex items-center gap-1.5 p-1 pl-1.5 pr-2.5 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+                className="flex items-center gap-1.5 p-1 pl-1.5 pr-2.5 rounded-full border border-ink-border dark:border-ink-dark-border hover:bg-ink-surface-subtle dark:hover:bg-ink-dark-hover cursor-pointer transition-colors"
               >
-                <div className="w-6 h-6 rounded-full bg-[#4E65F6] text-white flex items-center justify-center font-bold text-xs">
+                <div className="w-6 h-6 rounded-full bg-brand text-white flex items-center justify-center font-bold text-xs">
                   {currentMerchant.name.charAt(0)}
                 </div>
                 <div className="text-left text-xs leading-tight hidden lg:block">
-                  <div className="font-bold text-[#172031] dark:text-white truncate max-w-28">{currentMerchant.ownerName}</div>
+                  <div className="font-bold text-ink-text dark:text-ink-dark-text truncate max-w-28">{currentMerchant.ownerName}</div>
                 </div>
-                <ChevronDownIcon size={12} className="text-slate-400" />
+                <ChevronDownIcon size={12} className="text-ink-text-muted" />
               </button>
 
               {profileDropdownOpen && (
-                <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-[#1E293B] border border-[#E8EAF3] dark:border-gray-800 rounded-xl shadow-xl py-1 text-xs z-50">
+                <div className="absolute right-0 mt-2 w-48 bg-ink-surface dark:bg-ink-dark-surface border border-ink-border dark:border-ink-dark-border rounded-xl shadow-xl py-1 text-xs z-50">
                   <button
                     type="button"
                     onClick={() => {

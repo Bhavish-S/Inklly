@@ -19,8 +19,8 @@ export const RelatedLinks: React.FC<RelatedLinksProps> = ({
   className = '',
 }) => {
   return (
-    <div className={`pt-8 border-t border-[#E6E9F2] ${className}`}>
-      <p className="text-xs font-bold uppercase tracking-wider text-[#5B6475] mb-3">
+    <div className={`pt-8 border-t border-ink-border dark:border-ink-dark-border ${className}`}>
+      <p className="text-xs font-bold uppercase tracking-wider text-ink-text-muted dark:text-ink-dark-text-muted mb-3">
         {heading}
       </p>
       <div className="flex flex-wrap gap-2.5">
@@ -34,10 +34,10 @@ export const RelatedLinks: React.FC<RelatedLinksProps> = ({
                 onNavigate(link.href);
               }
             }}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full border border-[#E6E9F2] bg-white text-xs font-semibold text-[#172031] hover:text-[#4D64E6] hover:border-[#4D64E6]/50 hover:bg-[#F3F5FF] transition-all shadow-2xs"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full border border-ink-border dark:border-ink-dark-border bg-ink-surface dark:bg-ink-dark-surface text-xs font-semibold text-ink-text dark:text-ink-dark-text hover:text-brand dark:hover:text-brand-dark hover:border-brand/50 hover:bg-brand-soft dark:hover:bg-brand-dark-soft transition-all shadow-2xs"
           >
             <span>{link.label}</span>
-            <span className="text-[#4D64E6]">→</span>
+            <span className="text-brand dark:text-brand-dark">→</span>
           </a>
         ))}
       </div>

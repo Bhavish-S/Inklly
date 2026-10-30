@@ -63,21 +63,21 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, onLoginSuccess
 
 
   return (
-    <div className="min-h-screen bg-[#FBFCFE] flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-4xl w-full bg-white border border-[#E6E9F2] rounded-3xl shadow-xl overflow-hidden grid grid-cols-1 md:grid-cols-12">
+    <div className="min-h-screen bg-ink-app dark:bg-ink-dark-app flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8 motion-safe:transition-colors motion-safe:duration-200">
+      <div className="max-w-4xl w-full bg-ink-surface dark:bg-ink-dark-surface border border-ink-border dark:border-ink-dark-border rounded-2xl shadow-lg overflow-hidden grid grid-cols-1 md:grid-cols-12">
         {/* Left Panel: Brand & Testimonial Graphic */}
-        <div className="md:col-span-5 bg-[#172031] text-white p-8 md:p-10 flex flex-col justify-between relative overflow-hidden">
-          <div className="absolute -top-12 -left-12 w-48 h-48 bg-[#4D64E6]/25 rounded-full blur-2xl pointer-events-none" />
+        <div className="md:col-span-5 bg-[#172033] dark:bg-[#0D1422] text-white p-8 md:p-10 flex flex-col justify-between relative overflow-hidden">
+          <div className="absolute -top-12 -left-12 w-48 h-48 bg-brand/20 rounded-full blur-2xl pointer-events-none" />
 
           <div className="relative z-10">
             <div className="mb-6 cursor-pointer" onClick={() => onNavigate('/')}>
               <Logo size={22} variant="white" />
             </div>
 
-            <h3 className="text-xl font-extrabold tracking-tight mb-3">
+            <h3 className="text-xl font-bold tracking-tight mb-3">
               {selectedRole === 'owner' ? 'Platform Owner Console' : selectedRole === 'developer' ? 'Developer API Portal' : 'Merchant POS Workspace'}
             </h3>
-            <p className="text-xs text-gray-300 leading-relaxed mb-6">
+            <p className="text-xs text-gray-300/90 leading-relaxed mb-6">
               {selectedRole === 'owner'
                 ? 'High-privilege console to audit active Indian print shops, GMV, fee collection, and hardware telemetry.'
                 : selectedRole === 'developer'
@@ -86,23 +86,26 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, onLoginSuccess
             </p>
 
             <div className="space-y-2 text-xs">
-              <div className="p-2.5 rounded-xl bg-white/10 border border-white/10 flex items-center gap-2">
-                <span className="text-green-400 font-bold">✓</span> Paired agent dispatch with audited output review
+              <div className="p-2.5 rounded-xl bg-white/[0.07] border border-white/[0.08] flex items-center gap-2.5">
+                <span className="text-status-success font-bold flex-shrink-0">✓</span>
+                <span className="text-gray-200/90">Paired agent dispatch with audited output review</span>
               </div>
-              <div className="p-2.5 rounded-xl bg-white/10 border border-white/10 flex items-center gap-2">
-                <span className="text-green-400 font-bold">✓</span> Shop Razorpay checkout and ledger-backed cash collection
+              <div className="p-2.5 rounded-xl bg-white/[0.07] border border-white/[0.08] flex items-center gap-2.5">
+                <span className="text-status-success font-bold flex-shrink-0">✓</span>
+                <span className="text-gray-200/90">Shop Razorpay checkout and ledger-backed cash collection</span>
               </div>
-              <div className="p-2.5 rounded-xl bg-white/10 border border-white/10 flex items-center gap-2">
-                <span className="text-green-400 font-bold">✓</span> Multi-Tenant Isolation
+              <div className="p-2.5 rounded-xl bg-white/[0.07] border border-white/[0.08] flex items-center gap-2.5">
+                <span className="text-status-success font-bold flex-shrink-0">✓</span>
+                <span className="text-gray-200/90">Multi-Tenant Isolation</span>
               </div>
             </div>
           </div>
 
-          <div className="relative z-10 mt-8 pt-6 border-t border-white/15">
-            <p className="text-xs italic text-gray-300 mb-1">
+          <div className="relative z-10 mt-8 pt-6 border-t border-white/10">
+            <p className="text-xs italic text-gray-300/80 mb-1.5 leading-relaxed">
               "Replaced pen drives and messy WhatsApp queues across our shop in 10 minutes."
             </p>
-            <span className="text-[11px] text-[#A9B6FF] font-semibold block">
+            <span className="text-[11px] text-brand-soft/70 font-semibold block">
               — Metro Xerox & Digital Prints, Pune
             </span>
           </div>
@@ -111,14 +114,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, onLoginSuccess
         {/* Right Panel: Sign In Form */}
         <div className="md:col-span-7 p-8 md:p-12 flex flex-col justify-center">
           {/* Role Switcher Tabs */}
-          <div className="flex bg-slate-100 p-1 rounded-2xl mb-6" role="tablist" aria-label="Select login role">
+          <div className="flex bg-ink-muted dark:bg-ink-dark-elevated p-1 rounded-2xl mb-6" role="tablist" aria-label="Select login role">
             <button
               type="button"
               role="tab"
               aria-selected={selectedRole === 'merchant'}
               onClick={() => setSelectedRole('merchant')}
-              className={`flex-1 min-h-[44px] py-2 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                selectedRole === 'merchant' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+              className={`flex-1 min-h-[44px] py-2 text-xs font-semibold rounded-xl motion-safe:transition-all motion-safe:duration-200 flex items-center justify-center gap-1.5 cursor-pointer ${
+                selectedRole === 'merchant'
+                  ? 'bg-ink-surface dark:bg-ink-dark-surface text-ink-text dark:text-ink-dark-text shadow-xs'
+                  : 'text-ink-text-secondary dark:text-ink-dark-text-secondary hover:text-ink-text dark:hover:text-ink-dark-text'
               }`}
             >
               <PrinterIcon size={14} />
@@ -129,8 +134,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, onLoginSuccess
               role="tab"
               aria-selected={selectedRole === 'owner'}
               onClick={() => setSelectedRole('owner')}
-              className={`flex-1 min-h-[44px] py-2 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                selectedRole === 'owner' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+              className={`flex-1 min-h-[44px] py-2 text-xs font-semibold rounded-xl motion-safe:transition-all motion-safe:duration-200 flex items-center justify-center gap-1.5 cursor-pointer ${
+                selectedRole === 'owner'
+                  ? 'bg-ink-surface dark:bg-ink-dark-surface text-ink-text dark:text-ink-dark-text shadow-xs'
+                  : 'text-ink-text-secondary dark:text-ink-dark-text-secondary hover:text-ink-text dark:hover:text-ink-dark-text'
               }`}
             >
               <ShieldIcon size={14} />
@@ -141,8 +148,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, onLoginSuccess
               role="tab"
               aria-selected={selectedRole === 'developer'}
               onClick={() => setSelectedRole('developer')}
-              className={`flex-1 min-h-[44px] py-2 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                selectedRole === 'developer' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+              className={`flex-1 min-h-[44px] py-2 text-xs font-semibold rounded-xl motion-safe:transition-all motion-safe:duration-200 flex items-center justify-center gap-1.5 cursor-pointer ${
+                selectedRole === 'developer'
+                  ? 'bg-ink-surface dark:bg-ink-dark-surface text-ink-text dark:text-ink-dark-text shadow-xs'
+                  : 'text-ink-text-secondary dark:text-ink-dark-text-secondary hover:text-ink-text dark:hover:text-ink-dark-text'
               }`}
             >
               <CodeIcon size={14} />
@@ -150,28 +159,28 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, onLoginSuccess
             </button>
           </div>
 
-          <div className="mb-4">
-            <h2 className="text-2xl font-extrabold text-[#172031] tracking-tight mb-1">
+          <div className="mb-5">
+            <h2 className="text-2xl font-bold text-ink-text dark:text-ink-dark-text tracking-tight mb-1">
               {selectedRole === 'owner' ? 'Sign in as Platform Admin' : selectedRole === 'developer' ? 'Sign in to Developer Hub' : 'Sign in to your shop'}
             </h2>
-            <p className="text-xs text-[#475467]">
+            <p className="text-sm text-ink-text-secondary dark:text-ink-dark-text-secondary">
               Enter the email address on your Inklly account.
             </p>
           </div>
 
           {error && (
-            <div role="alert" aria-live="polite" className="p-3 mb-4 rounded-xl bg-red-50 text-red-700 text-xs font-semibold border border-red-200 flex items-center gap-2">
+            <div role="alert" aria-live="polite" className="p-3 mb-4 rounded-[10px] bg-status-danger-bg dark:bg-status-danger/10 text-status-danger text-xs font-medium border border-status-danger/20 flex items-center gap-2">
               <span>⚠️</span> {error}
             </div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-xs font-bold text-[#172031] mb-1.5">
+              <label className="block text-sm font-medium text-ink-text dark:text-ink-dark-text mb-1.5">
                 Email address
               </label>
               <div className="relative">
-                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400">
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-text-muted dark:text-ink-dark-text-muted">
                   <UserIcon size={16} />
                 </span>
                 <input
@@ -180,17 +189,17 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, onLoginSuccess
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
                   placeholder={selectedRole === 'owner' ? 'admin@example.com' : selectedRole === 'developer' ? 'developer@example.com' : 'you@yourprintshop.in'}
-                  className="w-full min-h-[44px] pl-10 pr-3.5 py-2.5 rounded-xl border border-[#E6E9F2] focus:border-[#4D64E6] focus:ring-2 focus:ring-[#4D64E6]/20 text-sm outline-hidden transition-all bg-white"
+                  className="w-full min-h-[44px] pl-10 pr-3.5 py-2.5 rounded-[10px] border border-ink-border dark:border-ink-dark-border focus:border-brand focus:ring-2 focus:ring-brand/20 text-sm text-ink-text dark:text-ink-dark-text placeholder:text-ink-text-muted dark:placeholder:text-ink-dark-text-muted outline-hidden motion-safe:transition-all motion-safe:duration-150 bg-ink-surface dark:bg-ink-dark-elevated"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-[#172031] mb-1.5">
+              <label className="block text-sm font-medium text-ink-text dark:text-ink-dark-text mb-1.5">
                 Password
               </label>
               <div className="relative">
-                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400">
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-text-muted dark:text-ink-dark-text-muted">
                   <LockIcon size={16} />
                 </span>
                 <input
@@ -199,13 +208,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, onLoginSuccess
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter account password"
-                  className="w-full min-h-[44px] pl-10 pr-12 py-2.5 rounded-xl border border-[#E6E9F2] focus:border-[#4D64E6] focus:ring-2 focus:ring-[#4D64E6]/20 text-sm outline-hidden transition-all bg-white"
+                  className="w-full min-h-[44px] pl-10 pr-12 py-2.5 rounded-[10px] border border-ink-border dark:border-ink-dark-border focus:border-brand focus:ring-2 focus:ring-brand/20 text-sm text-ink-text dark:text-ink-dark-text placeholder:text-ink-text-muted dark:placeholder:text-ink-dark-text-muted outline-hidden motion-safe:transition-all motion-safe:duration-150 bg-ink-surface dark:bg-ink-dark-elevated"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   aria-label={showPassword ? "Hide password" : "Show password"}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 focus:outline-hidden min-h-[40px] min-w-[40px] flex items-center justify-center rounded-lg"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-text-muted dark:text-ink-dark-text-muted hover:text-ink-text-secondary dark:hover:text-ink-dark-text-secondary focus:outline-hidden min-h-[40px] min-w-[40px] flex items-center justify-center rounded-lg motion-safe:transition-colors motion-safe:duration-150"
                 >
                   {showPassword ? <EyeOffIcon size={16} /> : <EyeIcon size={16} />}
                 </button>
@@ -215,19 +224,25 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, onLoginSuccess
             <button
               type="submit"
               disabled={loading}
-              className="w-full min-h-[48px] py-3 bg-[#4D64E6] hover:bg-[#3B50D4] text-white rounded-xl font-bold text-sm shadow-md transition-all cursor-pointer flex items-center justify-center gap-2"
+              className="w-full min-h-[48px] py-3 bg-brand hover:bg-brand-hover disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-[10px] font-semibold text-sm shadow-brand motion-safe:transition-all motion-safe:duration-200 cursor-pointer flex items-center justify-center gap-2"
             >
+              {loading && (
+                <svg className="animate-spin h-4 w-4 text-white/80" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+              )}
               {loading ? 'Authenticating...' : `Sign in to ${selectedRole === 'owner' ? 'Platform Console' : selectedRole === 'developer' ? 'Developer Hub' : 'Merchant Dashboard'} →`}
             </button>
           </form>
 
 
-          <div className="mt-6 pt-4 border-t border-[#E6E9F2] text-center text-xs text-[#5B6475]">
+          <div className="mt-6 pt-5 border-t border-ink-border dark:border-ink-dark-border text-center text-sm text-ink-text-secondary dark:text-ink-dark-text-secondary">
             Want to register a new print shop?{' '}
             <button
               type="button"
               onClick={() => onNavigate('/register')}
-              className="text-[#4D64E6] font-bold hover:underline cursor-pointer"
+              className="text-brand hover:text-brand-hover dark:text-[#8293FF] dark:hover:text-brand font-semibold hover:underline cursor-pointer motion-safe:transition-colors motion-safe:duration-150"
             >
               Sign up for free
             </button>

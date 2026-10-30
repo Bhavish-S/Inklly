@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../api/client';
-import { CheckCircleIcon, ClockIcon, PrinterIcon, FileTextIcon } from '../components/icons';
+import { CheckCircleIcon, ClockIcon, PrinterIcon, FileTextIcon, ArrowRightIcon } from '../components/icons';
 import { stopCustomerOrderPollingIfFinal } from '../order-tracker-polling.mjs';
 
 interface OrderTrackerViewProps {
@@ -9,13 +9,13 @@ interface OrderTrackerViewProps {
 }
 
 const ORDER_STEPS = [
-  { key: 'SUBMITTED', label: 'Order Submitted', icon: FileTextIcon },
-  { key: 'AWAITING_PAYMENT', label: 'Payment', icon: ClockIcon },
-  { key: 'AWAITING_REVIEW', label: 'Counter Review', icon: ClockIcon },
-  { key: 'READY_FOR_PRINT', label: 'Queued for Spooler', icon: PrinterIcon },
-  { key: 'IN_PROGRESS', label: 'Printing & Collation', icon: PrinterIcon },
-  { key: 'READY_FOR_COLLECTION', label: 'Ready for Pickup', icon: CheckCircleIcon },
-  { key: 'COLLECTED', label: 'Completed', icon: CheckCircleIcon },
+  { key: 'SUBMITTED', label: 'Submitted', description: 'Order received by system', icon: FileTextIcon },
+  { key: 'AWAITING_PAYMENT', label: 'Payment', description: 'Counter or UPI checkout', icon: ClockIcon },
+  { key: 'AWAITING_REVIEW', label: 'Review', description: 'Counter staff verification', icon: ClockIcon },
+  { key: 'READY_FOR_PRINT', label: 'Queued', description: 'Assigned to spooler', icon: PrinterIcon },
+  { key: 'IN_PROGRESS', label: 'Printing', description: 'Hardware spooling active', icon: PrinterIcon },
+  { key: 'READY_FOR_COLLECTION', label: 'Ready', description: 'Available at pickup counter', icon: CheckCircleIcon },
+  { key: 'COLLECTED', label: 'Completed', description: 'Handed over to customer', icon: CheckCircleIcon },
 ];
 
 export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onBackToPortal }) => {
@@ -63,23 +63,40 @@ export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onB
 
   if (loading && !order) {
     return (
-      <div style={{ padding: '4rem', textAlign: 'center', color: '#667085' }}>
-        Loading order details...
+      <div className="min-h-[60vh] flex flex-col items-center justify-center p-6 text-center">
+        <div className="w-10 h-10 border-2 border-brand/20 border-t-brand rounded-full animate-spin mb-4" />
+        <p className="text-sm font-medium text-ink-text-secondary dark:text-ink-dark-text-secondary">Loading live order status…</p>
       </div>
     );
   }
 
   if (!order) {
     return (
-      <div style={{ padding: '4rem', textAlign: 'center', color: '#B42318' }}>
-        <h3>{error ? 'Order details unavailable' : 'Order not found'}</h3>
-        <p style={{ marginTop: '0.5rem' }}>{error || 'Check the order link and try again.'}</p>
-        <button onClick={() => { setLoading(true); setRetryCount((count) => count + 1); }} className="btn btn-primary" style={{ marginTop: '1rem' }} disabled={loading || !orderId}>
-          {loading ? 'Checking…' : 'Try again'}
-        </button>
-        <button onClick={onBackToPortal} className="btn btn-secondary" style={{ marginTop: '1rem' }}>
-          Back to Shop Portal
-        </button>
+      <div className="max-w-md mx-auto my-12 p-6 sm:p-8 rounded-2xl bg-ink-surface dark:bg-ink-dark-surface border border-ink-border dark:border-ink-dark-border text-center shadow-sm">
+        <div className="w-12 h-12 rounded-xl bg-status-danger-bg text-status-danger flex items-center justify-center mx-auto mb-4 font-bold text-lg">
+          !
+        </div>
+        <h3 className="text-lg font-bold text-ink-text dark:text-ink-dark-text">
+          {error ? 'Order details unavailable' : 'Order not found'}
+        </h3>
+        <p className="mt-2 text-sm text-ink-text-secondary dark:text-ink-dark-text-secondary leading-relaxed">
+          {error || 'Check the order link and try again.'}
+        </p>
+        <div className="mt-6 flex flex-col gap-2.5">
+          <button
+            onClick={() => { setLoading(true); setRetryCount((count) => count + 1); }}
+            className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-brand hover:bg-brand-hover text-white text-sm font-semibold transition-all cursor-pointer disabled:opacity-50"
+            disabled={loading || !orderId}
+          >
+            {loading ? 'Checking…' : 'Try again'}
+          </button>
+          <button
+            onClick={onBackToPortal}
+            className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-ink-surface-subtle dark:bg-ink-dark-elevated text-ink-text dark:text-ink-dark-text hover:bg-ink-surface-muted border border-ink-border dark:border-ink-dark-border text-sm font-medium transition-all cursor-pointer"
+          >
+            Back to Shop Portal
+          </button>
+        </div>
       </div>
     );
   }
@@ -97,31 +114,33 @@ export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onB
 
   const currentStep = getStepIndex(order.status);
   const terminalIssue = ['CANCELLED', 'REJECTED', 'PRINT_FAILED', 'PRINT_UNCONFIRMED', 'FAILED_REQUIRES_SUPPORT', 'ON_HOLD'].includes(order.status);
+
   const statusTitle = order.status === 'AWAITING_PAYMENT'
     ? 'Payment required to continue'
     : order.status === 'CANCELLED' || order.status === 'REJECTED'
       ? 'This order was cancelled'
       : ['PRINT_FAILED', 'PRINT_UNCONFIRMED', 'FAILED_REQUIRES_SUPPORT', 'ON_HOLD'].includes(order.status)
-        ? 'This order needs the shop’s attention'
+        ? 'This order needs shop attention'
         : order.status === 'COLLECTED'
-          ? 'Your order has been collected'
+          ? 'Order collected'
           : order.status === 'READY_FOR_COLLECTION'
-            ? 'Your order is ready for pickup'
-            : 'Your order is being processed';
+            ? 'Ready for pickup'
+            : 'Processing print job';
+
   const statusDescription = order.status === 'AWAITING_PAYMENT'
-    ? 'Complete payment to send this order to the shop. The shop has not started processing it yet.'
+    ? 'Complete payment at counter or online to send this order to the printer.'
     : order.status === 'CANCELLED' || order.status === 'REJECTED'
-      ? 'Contact the shop if you need help with this order.'
+      ? 'Contact the shop counter if you need assistance with this order.'
       : ['PRINT_FAILED', 'PRINT_UNCONFIRMED', 'FAILED_REQUIRES_SUPPORT', 'ON_HOLD'].includes(order.status)
-        ? 'Please contact the shop before collecting or placing this order again.'
+        ? 'Please contact counter staff before collecting or re-submitting this print job.'
         : order.status === 'COLLECTED'
-          ? 'This order has been marked as collected.'
+          ? 'This order has been verified and marked as collected.'
           : order.status === 'READY_FOR_COLLECTION'
-            ? 'Show your pickup token at the counter to collect your order.'
-            : `Hello ${order.customerName || 'there'}, we’ll update this page as the shop processes your order.`;
+            ? 'Show your pickup token at the counter to collect your printed documents.'
+            : `Hello ${order.customerName || 'there'}, this page will automatically update as your documents are printed.`;
 
   return (
-    <div style={{ maxWidth: '800px', margin: '2rem auto', padding: '0 1rem' }}>
+    <div className="max-w-2xl mx-auto my-8 sm:my-12 px-4">
       {/* Screen Reader Live Region for Order Transitions (WCAG 2.2 SC 4.1.3) */}
       <div 
         role="status" 
@@ -136,90 +155,176 @@ export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onB
           : `Order status: ${ORDER_STEPS[currentStep]?.label || order.status}`}
       </div>
 
-      {/* Order Status Header */}
-      <div className="card" style={{ marginBottom: '1.5rem', textAlign: 'center', padding: '2.5rem 1.5rem' }}>
-        {error && <p role="status" className="mb-3 text-sm text-amber-700">{error} Showing the last status we received.</p>}
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', backgroundColor: '#EEF2FF', padding: '0.375rem 0.875rem', borderRadius: '9999px', color: '#4A69ED', fontWeight: 600, fontSize: '0.875rem', marginBottom: '1rem' }}>
-          <span>Order #{order.orderNumber}</span>
+      {/* Main Order Card */}
+      <div className="rounded-2xl border border-ink-border dark:border-ink-dark-border bg-ink-surface dark:bg-ink-dark-surface p-6 sm:p-8 shadow-xs mb-6 text-center">
+        {error && (
+          <div role="status" className="mb-4 p-3 rounded-xl bg-status-warning-bg text-status-warning text-xs font-medium border border-status-warning/20">
+            {error} Showing last known status.
+          </div>
+        )}
+
+        {/* Order Identifier Pill */}
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand-soft dark:bg-brand-dark-soft text-brand dark:text-brand-dark text-xs font-semibold mb-4">
+          <span className="font-mono">Order #{order.orderNumber}</span>
+          {order.status === 'IN_PROGRESS' && (
+            <span className="w-1.5 h-1.5 rounded-full bg-status-teal animate-pulse" />
+          )}
         </div>
 
-        <h1 style={{ fontSize: '1.875rem', fontWeight: 800, marginBottom: '0.5rem', color: '#182230' }}>
+        {/* Status Headline */}
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-ink-text dark:text-ink-dark-text mb-2">
           {statusTitle}
         </h1>
 
-        <p style={{ color: '#667085', fontSize: '0.9375rem', maxWidth: '480px', margin: '0 auto 1.5rem' }}>
+        <p className="text-sm text-ink-text-secondary dark:text-ink-dark-text-secondary max-w-md mx-auto mb-6 leading-relaxed">
           {statusDescription}
         </p>
 
-        {/* Pickup Token Card */}
-        {order.tokenNumber && !terminalIssue && <div style={{ display: 'inline-block', backgroundColor: '#F7F8FA', border: '2px dashed #4A69ED', borderRadius: '12px', padding: '1rem 2rem', marginBottom: '2rem' }}>
-          <div style={{ fontSize: '0.75rem', color: '#667085', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Counter Pickup Token</div>
-          <div style={{ fontSize: '2.25rem', fontWeight: 800, color: '#182230', letterSpacing: '0.1em' }}>
-            {order.tokenNumber || '—'}
+        {/* Counter Pickup Token Card */}
+        {order.tokenNumber && !terminalIssue && (
+          <div className="inline-block bg-ink-surface-subtle dark:bg-ink-dark-elevated border-2 border-dashed border-brand/40 rounded-2xl px-8 py-4 mb-8">
+            <span className="text-[11px] font-semibold text-ink-text-muted dark:text-ink-dark-text-muted uppercase tracking-wider block mb-1">
+              Counter Pickup Token
+            </span>
+            <div className="text-3xl sm:text-4xl font-extrabold font-mono text-brand dark:text-brand-dark tracking-widest">
+              {order.tokenNumber}
+            </div>
           </div>
-        </div>}
+        )}
 
-        {/* Visual Stepper */}
-        {!terminalIssue && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '0.5rem', marginTop: '1rem', position: 'relative' }}>
-          {ORDER_STEPS.map((step, idx) => {
-            const isCompleted = idx < currentStep;
-            const isCurrent = idx === currentStep;
-            return (
-              <div key={step.key} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
-                <div
-                  style={{
-                    width: '36px',
-                    height: '36px',
-                    borderRadius: '50%',
-                    backgroundColor: isCompleted ? '#12B76A' : isCurrent ? '#4A69ED' : '#EAECF0',
-                    color: isCompleted || isCurrent ? '#FFFFFF' : '#98A2B3',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    marginBottom: '0.5rem',
-                    transition: 'all 0.3s ease',
-                  }}
-                >
-                  <step.icon size={18} />
-                </div>
-                <span style={{ fontSize: '0.6875rem', fontWeight: isCurrent ? 700 : 500, color: isCurrent ? '#182230' : '#667085' }}>
-                  {step.label}
-                </span>
-              </div>
-            );
-          })}
-        </div>}
+        {/* Linear Stepper Progress Bar */}
+        {!terminalIssue && (
+          <div className="mt-2 pt-6 border-t border-ink-border dark:border-ink-dark-border">
+            <div className="hidden sm:grid grid-cols-7 gap-2">
+              {ORDER_STEPS.map((step, idx) => {
+                const isCompleted = idx < currentStep;
+                const isCurrent = idx === currentStep;
+                const IconComponent = step.icon;
+
+                return (
+                  <div key={step.key} className="flex flex-col items-center text-center">
+                    <div
+                      className={`w-9 h-9 rounded-full flex items-center justify-center mb-2 transition-all duration-200 ${
+                        isCompleted
+                          ? 'bg-status-success text-white'
+                          : isCurrent
+                          ? 'bg-brand text-white shadow-brand ring-4 ring-brand/15'
+                          : 'bg-ink-surface-muted dark:bg-ink-dark-hover text-ink-text-muted dark:text-ink-dark-text-muted'
+                      }`}
+                    >
+                      <IconComponent size={16} />
+                    </div>
+                    <span
+                      className={`text-[11px] font-medium leading-tight ${
+                        isCurrent
+                          ? 'font-bold text-ink-text dark:text-ink-dark-text'
+                          : isCompleted
+                          ? 'text-status-success font-semibold'
+                          : 'text-ink-text-muted dark:text-ink-dark-text-muted'
+                      }`}
+                    >
+                      {step.label}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Mobile Vertical Stepper View */}
+            <div className="sm:hidden text-left space-y-3">
+              {ORDER_STEPS.map((step, idx) => {
+                const isCompleted = idx < currentStep;
+                const isCurrent = idx === currentStep;
+                const IconComponent = step.icon;
+
+                // Show past, current, and next immediate step on mobile
+                if (Math.abs(idx - currentStep) > 1 && !isCurrent) return null;
+
+                return (
+                  <div key={step.key} className="flex items-center gap-3">
+                    <div
+                      className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
+                        isCompleted
+                          ? 'bg-status-success text-white'
+                          : isCurrent
+                          ? 'bg-brand text-white ring-2 ring-brand/20'
+                          : 'bg-ink-surface-muted dark:bg-ink-dark-hover text-ink-text-muted'
+                      }`}
+                    >
+                      <IconComponent size={15} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-xs font-semibold ${isCurrent ? 'text-brand' : 'text-ink-text dark:text-ink-dark-text'}`}>
+                        {step.label}
+                      </p>
+                      <p className="text-[11px] text-ink-text-muted dark:text-ink-dark-text-muted truncate">
+                        {step.description}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Order Details & Summary Card */}
-      <div className="card">
-        <h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '1rem', borderBottom: '1px solid #E4E7EC', paddingBottom: '0.5rem' }}>
+      <div className="rounded-2xl border border-ink-border dark:border-ink-dark-border bg-ink-surface dark:bg-ink-dark-surface p-6 sm:p-7 shadow-xs">
+        <h3 className="text-sm font-bold uppercase tracking-wider text-ink-text-muted dark:text-ink-dark-text-muted mb-4 pb-3 border-b border-ink-border dark:border-ink-dark-border">
           Order Summary & Payment
         </h3>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', fontSize: '0.875rem', marginBottom: '1.25rem' }}>
-          <div>
-            <span style={{ color: '#667085', display: 'block', fontSize: '0.75rem' }}>Files Count</span>
-            <strong>{order.filesCount ?? 0} file(s)</strong>
+        <div className="grid grid-cols-2 gap-4 text-sm mb-6">
+          <div className="p-3 rounded-xl bg-ink-surface-subtle dark:bg-ink-dark-elevated">
+            <span className="text-[11px] font-medium text-ink-text-muted dark:text-ink-dark-text-muted block mb-1">
+              Documents
+            </span>
+            <strong className="text-ink-text dark:text-ink-dark-text font-semibold">
+              {order.filesCount ?? 0} file(s)
+            </strong>
           </div>
-          <div>
-            <span style={{ color: '#667085', display: 'block', fontSize: '0.75rem' }}>Payment Status</span>
-            <span className={`badge ${order.paymentStatus === 'VERIFIED' ? 'badge-success' : 'badge-warning'}`}>
+
+          <div className="p-3 rounded-xl bg-ink-surface-subtle dark:bg-ink-dark-elevated">
+            <span className="text-[11px] font-medium text-ink-text-muted dark:text-ink-dark-text-muted block mb-1">
+              Payment State
+            </span>
+            <span
+              className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
+                order.paymentStatus === 'VERIFIED'
+                  ? 'bg-status-success-bg text-status-success'
+                  : 'bg-status-warning-bg text-status-warning'
+              }`}
+            >
               {order.paymentStatus}
             </span>
           </div>
-          <div>
-            <span style={{ color: '#667085', display: 'block', fontSize: '0.75rem' }}>Total Amount</span>
-            <strong style={{ fontSize: '1.125rem', color: '#4A69ED' }}>₹{(order.totalAmountPaise / 100).toFixed(2)}</strong>
+
+          <div className="p-3 rounded-xl bg-ink-surface-subtle dark:bg-ink-dark-elevated">
+            <span className="text-[11px] font-medium text-ink-text-muted dark:text-ink-dark-text-muted block mb-1">
+              Total Amount
+            </span>
+            <strong className="text-base text-brand dark:text-brand-dark font-mono font-bold">
+              ₹{(order.totalAmountPaise / 100).toFixed(2)}
+            </strong>
           </div>
-          <div>
-            <span style={{ color: '#667085', display: 'block', fontSize: '0.75rem' }}>Submitted At</span>
-            <span>{new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+
+          <div className="p-3 rounded-xl bg-ink-surface-subtle dark:bg-ink-dark-elevated">
+            <span className="text-[11px] font-medium text-ink-text-muted dark:text-ink-dark-text-muted block mb-1">
+              Submitted Time
+            </span>
+            <span className="text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary font-mono">
+              {new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
           </div>
         </div>
 
-        <button onClick={onBackToPortal} className="btn btn-secondary" style={{ width: '100%' }}>
-          Print Another Document
+        <button
+          onClick={onBackToPortal}
+          className="w-full min-h-[44px] py-3 px-4 rounded-xl bg-ink-surface-subtle dark:bg-ink-dark-elevated text-ink-text dark:text-ink-dark-text hover:bg-ink-surface-muted border border-ink-border dark:border-ink-dark-border text-sm font-semibold transition-all cursor-pointer flex items-center justify-center gap-2"
+        >
+          <span>Print Another Document</span>
+          <ArrowRightIcon size={14} />
         </button>
       </div>
     </div>

@@ -12,6 +12,7 @@ import {
   SlidersIcon,
   StoreIcon,
   CheckIcon,
+  ArrowRightIcon,
 } from '../components/icons';
 
 interface HomePageProps {
@@ -33,7 +34,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
     {
       question: 'How do customers pay, and when do I receive the money?',
       answer:
-        'A shop can offer Razorpay checkout after its owner configures valid shop credentials and a webhook secret. Cash on collection remains available. Payment availability and settlement timing depend on the shop’s provider setup; the hosted payment flow still needs production verification.',
+        "A shop can offer Razorpay checkout after its owner configures valid shop credentials and a webhook secret. Cash on collection remains available. Payment availability and settlement timing depend on the shop's provider setup; the hosted payment flow still needs production verification.",
     },
     {
       question: 'Can I set custom pricing for single-sided, back-to-back, and color prints?',
@@ -55,73 +56,78 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
   return (
     <div className="flex flex-col min-h-screen">
       {/* ─────────────────────────────────────────────────────────────
-          SECTION 1: HERO (Dark #172031, Dotted Grid, Pixel-Faithful)
+          SECTION 1: HERO
       ───────────────────────────────────────────────────────────── */}
-      <section className="relative bg-[#172031] text-white pt-16 pb-20 md:pt-24 md:pb-28 overflow-hidden">
+      <section className="relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #0D1422 0%, #172033 50%, #19263A 100%)' }}>
         {/* Subtle Background Dotted Pattern */}
-        <div className="absolute inset-0 opacity-15 pointer-events-none">
+        <div className="absolute inset-0 opacity-[0.08] pointer-events-none">
           <svg width="100%" height="100%">
             <defs>
-              <pattern id="hero-dots" width="24" height="24" patternUnits="userSpaceOnUse">
-                <circle cx="2" cy="2" r="1.5" fill="#A9B6FF" />
+              <pattern id="hero-dots" width="28" height="28" patternUnits="userSpaceOnUse">
+                <circle cx="2" cy="2" r="1" fill="#8293FF" />
               </pattern>
             </defs>
             <rect width="100%" height="100%" fill="url(#hero-dots)" />
           </svg>
         </div>
 
-        {/* Ambient Gradient Glows */}
-        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[300px] bg-[#4D64E6]/25 rounded-full blur-3xl pointer-events-none" />
+        {/* Ambient Gradient Glow */}
+        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[350px] bg-[#4D64E6]/20 rounded-full blur-[100px] pointer-events-none" />
+        <div className="absolute bottom-0 right-0 w-[400px] h-[250px] bg-[#20A6A8]/10 rounded-full blur-[80px] pointer-events-none" />
 
-        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
+        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-20 pb-24 md:pt-28 md:pb-32">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-16 items-center">
             {/* Left Column: Copy & Actions */}
             <div className="lg:col-span-7 text-center lg:text-left">
               {/* Eyebrow Chip */}
-              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/10 border border-white/15 text-[#A9B6FF] text-xs font-semibold uppercase tracking-wider mb-6">
-                <span className="w-2 h-2 rounded-full bg-[#4D64E6] animate-pulse" />
-                Print Shop & Xerox Counter Automation
+              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/[0.07] border border-white/[0.12] text-[#8293FF] text-xs font-semibold tracking-wider mb-7">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#8293FF] animate-pulse" />
+                INTELLIGENT PRINT OPERATIONS
               </div>
 
               {/* Main Headline */}
-              <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-[54px] font-extrabold tracking-tight leading-[1.12] mb-6 text-white">
-                Move print orders from a{' '}
-                <span className="text-[#A9B6FF]">shop QR page to your counter.</span>
+              <h1 className="text-[2.25rem] sm:text-[2.75rem] md:text-[3.25rem] lg:text-[3.5rem] font-extrabold tracking-[-0.03em] leading-[1.1] mb-6 text-white">
+                Your print shop.{' '}
+                <span className="bg-gradient-to-r from-[#8293FF] to-[#20A6A8] bg-clip-text text-transparent">Connected. Organised. Automated.</span>
               </h1>
 
               {/* Subhead */}
-              <p className="text-base sm:text-lg text-gray-200 max-w-2xl mx-auto lg:mx-0 mb-8 leading-relaxed font-normal">
-                Customers open your shop’s order page, upload a document, and choose print settings. Your team reviews each request in the merchant workspace and sends approved jobs to a Windows print agent.
+              <p className="text-base sm:text-lg text-[#A6B2C5] max-w-2xl mx-auto lg:mx-0 mb-9 leading-relaxed">
+                Give customers a simple way to submit print orders, receive clear pricing and track their jobs, while your shop manages the workflow from one connected workspace.
               </p>
 
               {/* Action Buttons */}
-              <div className="flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-4 mb-8">
+              <div className="flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-3.5 mb-10">
                 <button
                   type="button"
                   onClick={() => onNavigate('/register')}
-                  className="w-full sm:w-auto min-h-[48px] px-8 py-3.5 rounded-xl bg-[#4D64E6] hover:bg-[#3B50D4] text-white font-bold text-sm sm:text-base shadow-lg shadow-[#4D64E6]/30 transition-all cursor-pointer flex items-center justify-center gap-2"
+                  className="w-full sm:w-auto min-h-[48px] px-7 py-3.5 rounded-xl bg-[#4D64E6] hover:bg-[#3B50D4] text-white font-semibold text-[15px] shadow-[0_4px_20px_rgba(77,100,230,0.35)] hover:shadow-[0_6px_28px_rgba(77,100,230,0.45)] transition-all duration-200 cursor-pointer flex items-center justify-center gap-2"
                 >
-                  Create a shop account →
+                  Get started
+                  <ArrowRightIcon size={16} />
                 </button>
                 <button
                   type="button"
                   onClick={() => onNavigate('/p/campus1')}
-                  className="w-full sm:w-auto min-h-[48px] px-7 py-3.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/20 text-white font-semibold text-sm sm:text-base transition-all cursor-pointer flex items-center justify-center"
+                  className="w-full sm:w-auto min-h-[48px] px-7 py-3.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.15] text-white font-medium text-[15px] transition-all duration-200 cursor-pointer flex items-center justify-center gap-2"
                 >
-                  See Customer QR Demo
+                  Explore customer ordering
                 </button>
               </div>
 
               {/* Proof / Value Chips */}
-              <div className="flex flex-wrap items-center justify-center lg:justify-start gap-4 sm:gap-6 text-xs text-gray-200">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-emerald-400 font-bold">✓</span> Zero customer app download needed
+              <div className="flex flex-wrap items-center justify-center lg:justify-start gap-x-6 gap-y-2 text-[13px] text-[#A6B2C5]">
+                <div className="flex items-center gap-2">
+                  <CheckIcon size={14} className="text-[#2BD998]" />
+                  <span>No app download needed</span>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-emerald-400 font-bold">✓</span> Staff review orders before printing
+                <div className="flex items-center gap-2">
+                  <CheckIcon size={14} className="text-[#2BD998]" />
+                  <span>Staff review before printing</span>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-emerald-400 font-bold">✓</span> Windows desktop print agent
+                <div className="flex items-center gap-2">
+                  <CheckIcon size={14} className="text-[#2BD998]" />
+                  <span>Windows desktop agent</span>
                 </div>
               </div>
             </div>
@@ -135,20 +141,20 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
       </section>
 
       {/* ─────────────────────────────────────────────────────────────
-          SECTION 2: 6 BLUE TILES GRID (Section 2)
+          SECTION 2: CORE WORKFLOW TILES
       ───────────────────────────────────────────────────────────── */}
-      <section className="py-20 bg-[#FBFCFE]">
+      <section className="py-20 md:py-24 bg-[var(--bg-app)]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center max-w-3xl mx-auto mb-14">
-            <span className="text-xs uppercase font-extrabold tracking-wider text-[#4D64E6] mb-2 block">
+          <div className="text-center max-w-2xl mx-auto mb-14">
+            <span className="eyebrow">
               The core workflow
             </span>
-            <h2 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-[#172031] tracking-tight">
+            <h2 className="text-2xl sm:text-3xl md:text-[2.25rem] font-bold tracking-tight text-[var(--text-primary)]">
               One customer flow, connected to your shop counter
             </h2>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
             <BlueTile
               icon={<QrCodeIcon size={22} />}
               title="Self-service QR ordering"
@@ -158,13 +164,13 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
             <BlueTile
               icon={<SlidersIcon size={22} />}
               title="Print options and pricing"
-              description="Set print options and rates for each shop’s customer order page."
+              description="Set print options and rates for each shop's customer order page."
               onClick={() => onNavigate('/pricing')}
             />
             <BlueTile
               icon={<PrinterIcon size={22} />}
               title="Windows print agent"
-              description="Connect a Windows counter computer to the shop’s print workflow."
+              description="Connect a Windows counter computer to the shop's print workflow."
               onClick={() => onNavigate('/print-shop-automation-software')}
             />
             <BlueTile
@@ -190,11 +196,11 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
       </section>
 
       {/* ─────────────────────────────────────────────────────────────
-          SECTION 3: CUSTOMER WORKFLOW
+          SECTION 3: CUSTOMER WORKFLOW STEPS
       ───────────────────────────────────────────────────────────── */}
-      <section className="py-12 bg-white border-y border-[#E6E9F2]">
+      <section className="py-14 bg-[var(--bg-surface)] border-y border-[var(--border-default)]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-5">
             <StatTile icon={<QrCodeIcon size={20} />} stat="01" label="Customer opens the shop QR page" />
             <StatTile icon={<StoreIcon size={20} />} stat="02" label="Staff review the order" />
             <StatTile icon={<PrinterIcon size={20} />} stat="03" label="A Windows agent sends the job to print" />
@@ -204,27 +210,27 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
       </section>
 
       {/* ─────────────────────────────────────────────────────────────
-          SECTION 4: 4-STEP PROCESS (How It Works on Home)
+          SECTION 4: 4-STEP PROCESS
       ───────────────────────────────────────────────────────────── */}
-      <section className="py-20 bg-[#F3F5FF]">
+      <section className="py-20 md:py-24 bg-[var(--brand-soft)]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center max-w-2xl mx-auto mb-14">
-            <span className="text-xs uppercase font-extrabold tracking-wider text-[#4D64E6] mb-2 block">
+            <span className="eyebrow">
               Simple 4-Step Flow
             </span>
-            <h2 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-[#172031] tracking-tight">
+            <h2 className="text-2xl sm:text-3xl md:text-[2.25rem] font-bold tracking-tight text-[var(--text-primary)]">
               A clear path from request to pickup
             </h2>
-            <p className="text-sm text-[#5B6475] mt-2">
+            <p className="text-sm text-[var(--text-secondary)] mt-3">
               Customers submit a request; shop staff review it, take payment, and manage printing at the counter.
             </p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
             <StepPhoneCard
               stepNumber={1}
               title="Open the shop page"
-              description="The customer opens the shop’s order page in a mobile browser."
+              description="The customer opens the shop's order page in a mobile browser."
               fileName="Syllabus_Notes.pdf"
             />
             <StepPhoneCard
@@ -250,52 +256,53 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
       </section>
 
       {/* ─────────────────────────────────────────────────────────────
-          SECTION 5: MERCHANT WORKFLOW
+          SECTION 5: MERCHANT WORKSPACE
       ───────────────────────────────────────────────────────────── */}
-      <section className="py-20 bg-[#FBFCFE]">
+      <section className="py-20 md:py-24 bg-[var(--bg-app)]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 items-center">
             <div>
-              <span className="text-xs uppercase font-extrabold tracking-wider text-[#4D64E6] mb-2 block">
+              <span className="eyebrow">
                 Merchant workspace
               </span>
-              <h2 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-[#172031] tracking-tight mb-4">
+              <h2 className="text-2xl sm:text-3xl md:text-[2.25rem] font-bold tracking-tight text-[var(--text-primary)] mb-4">
                 Review each request before it reaches the printer
               </h2>
-              <p className="text-sm sm:text-base text-[#5B6475] leading-relaxed mb-6">
+              <p className="text-[15px] text-[var(--text-secondary)] leading-relaxed mb-8">
                 Keep customer requests, selected print options, and order status together. Your staff can handle the counter workflow and decide when a job is ready to print.
               </p>
               <button
                 type="button"
                 onClick={() => onNavigate('/login')}
-                className="px-6 py-3 rounded-xl bg-[#4D64E6] hover:bg-[#3F54D1] text-white font-bold text-sm shadow-md transition-all cursor-pointer"
+                className="px-6 py-3 rounded-xl bg-[var(--brand)] hover:bg-[var(--brand-hover)] text-white font-semibold text-sm shadow-brand transition-all duration-200 cursor-pointer inline-flex items-center gap-2"
               >
-                Open merchant sign in →
+                Open merchant sign in
+                <ArrowRightIcon size={15} />
               </button>
             </div>
 
-            <div className="rounded-3xl border border-[#E2E8F0] bg-white p-6 shadow-xl">
-              <div className="flex items-center justify-between border-b border-[#E6E9F2] pb-4 mb-4">
+            <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-surface)] p-6 shadow-lg">
+              <div className="flex items-center justify-between border-b border-[var(--border-default)] pb-4 mb-4">
                 <div>
-                  <p className="text-xs uppercase tracking-wide text-[#64748B]">Order queue</p>
-                  <h3 className="text-lg font-bold text-[#172031]">Shop workspace</h3>
+                  <p className="text-xs uppercase tracking-wider font-semibold text-[var(--text-muted)] mb-0.5">Order queue</p>
+                  <h3 className="text-base font-bold text-[var(--text-primary)]">Shop workspace</h3>
                 </div>
-                <span className="rounded-full bg-[#EEF2FF] px-3 py-1 text-xs font-semibold text-[#4D64E6]">Staff view</span>
+                <span className="rounded-full bg-[var(--brand-soft)] px-3 py-1 text-xs font-semibold text-[var(--brand)]">Staff view</span>
               </div>
               <div className="space-y-3">
-                <div className="rounded-xl border border-[#E2E8F0] p-4">
+                <div className="rounded-xl border border-[var(--border-default)] p-4 hover:border-[var(--border-strong)] transition-colors">
                   <div className="flex items-center justify-between gap-3">
-                    <span className="font-semibold text-sm text-[#172031]">Document order</span>
-                    <span className="rounded-full bg-[#FFF7E6] px-2.5 py-1 text-xs font-semibold text-[#9A6700]">Needs review</span>
+                    <span className="font-semibold text-sm text-[var(--text-primary)]">Document order</span>
+                    <span className="pill-warning rounded-full px-2.5 py-1 text-xs font-semibold">Needs review</span>
                   </div>
-                  <p className="text-xs text-[#64748B] mt-2">Review pages, copies, print settings, and the quote.</p>
+                  <p className="text-xs text-[var(--text-secondary)] mt-2">Review pages, copies, print settings, and the quote.</p>
                 </div>
-                <div className="rounded-xl border border-[#E2E8F0] p-4">
+                <div className="rounded-xl border border-[var(--border-default)] p-4 hover:border-[var(--border-strong)] transition-colors">
                   <div className="flex items-center justify-between gap-3">
-                    <span className="font-semibold text-sm text-[#172031]">Print release</span>
-                    <span className="rounded-full bg-[#EAFBF0] px-2.5 py-1 text-xs font-semibold text-[#1F8A4C]">Staff controlled</span>
+                    <span className="font-semibold text-sm text-[var(--text-primary)]">Print release</span>
+                    <span className="pill-success rounded-full px-2.5 py-1 text-xs font-semibold">Staff controlled</span>
                   </div>
-                  <p className="text-xs text-[#64748B] mt-2">Send the job to the shop’s connected Windows computer when ready.</p>
+                  <p className="text-xs text-[var(--text-secondary)] mt-2">Send the job to the shop's connected Windows computer when ready.</p>
                 </div>
               </div>
             </div>
@@ -304,79 +311,70 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
       </section>
 
       {/* ─────────────────────────────────────────────────────────────
-          SECTION 7: FEATURE DEEP DIVE: QR CODE ORDERING SYSTEM
+          SECTION 6: QR CODE ORDERING DEEP-DIVE
       ───────────────────────────────────────────────────────────── */}
-      <section className="py-20 bg-[#F3F5FF]">
+      <section className="py-20 md:py-24 bg-[var(--brand-soft)]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
             {/* Content Details */}
             <div className="lg:col-span-6 order-2 lg:order-1">
-              <span className="text-xs uppercase font-extrabold tracking-wider text-[#4D64E6] mb-2 block">
+              <span className="eyebrow">
                 Counter Self-Service
               </span>
-              <h2 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-[#172031] tracking-tight mb-4">
+              <h2 className="text-2xl sm:text-3xl md:text-[2.25rem] font-bold tracking-tight text-[var(--text-primary)] mb-4">
                 A customer order page that keeps requests organized
               </h2>
-              <p className="text-sm sm:text-base text-[#5B6475] leading-relaxed mb-6">
-                Share your shop’s order page or link it from a QR code. Customers can upload a document and choose print settings in their mobile browser.
+              <p className="text-[15px] text-[var(--text-secondary)] leading-relaxed mb-8">
+                Share your shop's order page or link it from a QR code. Customers can upload a document and choose print settings in their mobile browser.
               </p>
 
-              <div className="space-y-3 mb-8">
-                <div className="flex items-start gap-3">
-                  <div className="w-5 h-5 rounded-full bg-[#EAFBF0] text-[#1F8A4C] flex items-center justify-center shrink-0 mt-0.5">
-                    <CheckIcon size={12} />
+              <div className="space-y-3.5 mb-8">
+                {[
+                  { bold: 'Customer upload:', text: 'Collect a print request and its document through the shop page.' },
+                  { bold: 'Print options:', text: 'Let customers choose from the options configured for the shop.' },
+                  { bold: 'Order status:', text: 'Give customers a way to look up an order after they submit it.' },
+                ].map((item, i) => (
+                  <div key={i} className="flex items-start gap-3">
+                    <div className="w-5 h-5 rounded-full bg-[var(--status-success-bg)] text-[var(--status-success)] flex items-center justify-center shrink-0 mt-0.5">
+                      <CheckIcon size={12} />
+                    </div>
+                    <span className="text-sm text-[var(--text-primary)]">
+                      <strong>{item.bold}</strong> {item.text}
+                    </span>
                   </div>
-                  <span className="text-sm text-[#172031]">
-                    <strong>Customer upload:</strong> Collect a print request and its document through the shop page.
-                  </span>
-                </div>
-                <div className="flex items-start gap-3">
-                  <div className="w-5 h-5 rounded-full bg-[#EAFBF0] text-[#1F8A4C] flex items-center justify-center shrink-0 mt-0.5">
-                    <CheckIcon size={12} />
-                  </div>
-                  <span className="text-sm text-[#172031]">
-                    <strong>Print options:</strong> Let customers choose from the options configured for the shop.
-                  </span>
-                </div>
-                <div className="flex items-start gap-3">
-                  <div className="w-5 h-5 rounded-full bg-[#EAFBF0] text-[#1F8A4C] flex items-center justify-center shrink-0 mt-0.5">
-                    <CheckIcon size={12} />
-                  </div>
-                  <span className="text-sm text-[#172031]">
-                    <strong>Order status:</strong> Give customers a way to look up an order after they submit it.
-                  </span>
-                </div>
+                ))}
               </div>
 
               <button
                 type="button"
                 onClick={() => onNavigate('/qr-code-printing-system')}
-                className="px-6 py-3 rounded-xl bg-[#4D64E6] hover:bg-[#3F54D1] text-white font-bold text-sm shadow-md transition-all cursor-pointer flex items-center gap-2"
+                className="px-6 py-3 rounded-xl bg-[var(--brand)] hover:bg-[var(--brand-hover)] text-white font-semibold text-sm shadow-brand transition-all duration-200 cursor-pointer inline-flex items-center gap-2"
               >
-                <QrCodeIcon size={16} /> Explore QR Code Printing System →
+                <QrCodeIcon size={16} /> Explore QR Code Printing System
+                <ArrowRightIcon size={14} />
               </button>
             </div>
 
             {/* Standee Visual */}
             <div className="lg:col-span-6 flex justify-center order-1 lg:order-2">
-              <div className="bg-white border border-[#E6E9F2] rounded-3xl p-8 shadow-xl max-w-sm w-full text-center">
-                <div className="w-16 h-16 rounded-2xl bg-[#F3F5FF] text-[#4D64E6] flex items-center justify-center mx-auto mb-4 border border-[#E6E9F2]">
-                  <QrCodeIcon size={36} />
+              <div className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-2xl p-8 shadow-lg max-w-sm w-full text-center">
+                <div className="w-14 h-14 rounded-2xl bg-[var(--brand-soft)] text-[var(--brand)] flex items-center justify-center mx-auto mb-4 border border-[var(--border-selected)]">
+                  <QrCodeIcon size={32} />
                 </div>
-                  <h4 className="text-lg font-extrabold text-[#172031] mb-1">Campus Print Hub demo</h4>
-                  <p className="text-xs text-[#5B6475] mb-5">Example customer order page</p>
+                  <h4 className="text-lg font-bold text-[var(--text-primary)] mb-1">Campus Print Hub demo</h4>
+                  <p className="text-xs text-[var(--text-secondary)] mb-5">Example customer order page</p>
 
                 {/* QR Code Canvas Mockup */}
-                <div className="p-4 bg-gray-50 rounded-2xl border-2 border-dashed border-[#CBD5E1] inline-block mb-5">
-                  <div className="w-44 h-44 bg-white p-2 rounded-xl shadow-xs flex items-center justify-center">
-                    <div className="w-full h-full bg-[#172031] rounded-lg flex flex-col items-center justify-center text-white font-mono text-xs p-3 text-center">
-                      <span className="text-[#A9B6FF] uppercase tracking-widest text-[10px] mb-2">Demo link</span>
+                <div className="p-4 bg-[var(--bg-surface-subtle)] rounded-2xl border-2 border-dashed border-[var(--border-strong)] inline-block mb-5">
+                  <div className="w-44 h-44 bg-[var(--bg-surface)] p-2 rounded-xl shadow-sm flex items-center justify-center">
+                    <div className="w-full h-full rounded-lg flex flex-col items-center justify-center font-mono text-xs p-3 text-center" style={{ background: '#0D1422', color: 'white' }}>
+                      <span className="text-[#8293FF] uppercase tracking-widest text-[10px] mb-2">Demo link</span>
                       <span>inklly.in/p/campus1</span>
                     </div>
                   </div>
                 </div>
 
-                <div className="flex items-center justify-center gap-2 text-xs font-bold text-[#1F8A4C] bg-[#EAFBF0] py-1.5 px-3 rounded-full">
+                <div className="flex items-center justify-center gap-2 text-xs font-semibold text-[var(--status-success)] bg-[var(--status-success-bg)] py-1.5 px-3 rounded-full">
                   <CheckIcon size={14} /> Opens in a mobile browser
                 </div>
               </div>
@@ -386,29 +384,29 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
       </section>
 
       {/* ─────────────────────────────────────────────────────────────
-          SECTION 8: STAFFED COUNTER WORKFLOW
+          SECTION 7: STAFFED COUNTER WORKFLOW
       ───────────────────────────────────────────────────────────── */}
-      <section className="py-20 bg-white">
+      <section className="py-20 md:py-24 bg-[var(--bg-surface)]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="max-w-3xl mx-auto text-center">
-              <span className="text-xs uppercase font-extrabold tracking-wider text-[#4D64E6] mb-2 block">
+              <span className="eyebrow">
                 Shop-controlled printing
               </span>
-              <h2 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-[#172031] tracking-tight mb-4">
+              <h2 className="text-2xl sm:text-3xl md:text-[2.25rem] font-bold tracking-tight text-[var(--text-primary)] mb-4">
                 Keep staff in control of every print job
               </h2>
-              <p className="text-sm sm:text-base text-[#5B6475] leading-relaxed mb-8">
+              <p className="text-[15px] text-[var(--text-secondary)] leading-relaxed mb-10">
                 Customers submit print requests online. Your team can review the settings, handle payment at the counter, and decide when a job is ready to send to the local printer.
               </p>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-left">
-                <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0]">
-                  <h4 className="font-bold text-sm text-[#172031] mb-1">Review the request</h4>
-                  <p className="text-xs text-[#5B6475]">Check the document, print options, and quoted amount in the merchant workspace.</p>
+                <div className="p-5 rounded-xl bg-[var(--bg-surface-subtle)] border border-[var(--border-default)] hover:border-[var(--border-strong)] transition-colors">
+                  <h4 className="font-semibold text-sm text-[var(--text-primary)] mb-1.5">Review the request</h4>
+                  <p className="text-xs text-[var(--text-secondary)] leading-relaxed">Check the document, print options, and quoted amount in the merchant workspace.</p>
                 </div>
-                <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0]">
-                  <h4 className="font-bold text-sm text-[#172031] mb-1">Send when ready</h4>
-                  <p className="text-xs text-[#5B6475]">Keep the print decision with staff at the counter and the connected Windows computer.</p>
+                <div className="p-5 rounded-xl bg-[var(--bg-surface-subtle)] border border-[var(--border-default)] hover:border-[var(--border-strong)] transition-colors">
+                  <h4 className="font-semibold text-sm text-[var(--text-primary)] mb-1.5">Send when ready</h4>
+                  <p className="text-xs text-[var(--text-secondary)] leading-relaxed">Keep the print decision with staff at the counter and the connected Windows computer.</p>
                 </div>
               </div>
           </div>
@@ -416,25 +414,25 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
       </section>
 
       {/* ─────────────────────────────────────────────────────────────
-          SECTION 9: COUNTERTOP AUTOMATION BANNER (Royal Blue #2F5BE0)
+          SECTION 8: AUTOMATION CTA BANNER
       ───────────────────────────────────────────────────────────── */}
-      <section className="py-20 bg-[#1E2A44] text-white">
+      <section className="py-20 md:py-24" style={{ background: 'linear-gradient(135deg, #0D1422 0%, #19263A 100%)' }}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="bg-gradient-to-r from-[#2F5BE0] to-[#1E2A44] rounded-3xl p-8 md:p-14 shadow-2xl border border-white/10 flex flex-col lg:flex-row items-center justify-between gap-8">
+          <div className="bg-gradient-to-br from-[#4D64E6]/20 to-transparent rounded-2xl p-8 md:p-12 border border-white/[0.08] flex flex-col lg:flex-row items-center justify-between gap-10">
             <div className="max-w-2xl">
-              <span className="inline-block px-3 py-1 bg-white/20 text-white rounded-full text-xs font-bold uppercase tracking-wider mb-4">
-                Customer QR ordering • Merchant workspace • Windows agent
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-white/[0.08] text-[#A6B2C5] rounded-full text-xs font-medium tracking-wide mb-5">
+                Customer QR ordering · Merchant workspace · Windows agent
               </span>
-              <h2 className="text-2xl sm:text-3xl md:text-4xl font-extrabold tracking-tight mb-4">
+              <h2 className="text-2xl sm:text-3xl md:text-[2.25rem] font-bold tracking-tight mb-4 text-white">
                 Automate your shop counter with Inklly QR ordering
               </h2>
-              <p className="text-sm sm:text-base text-blue-100 leading-relaxed mb-6">
+              <p className="text-[15px] text-[#A6B2C5] leading-relaxed mb-6">
                 Give customers a clear way to submit print requests while your team manages the work from the counter. Payment-provider connections and automated printer confirmation are still being completed.
               </p>
-              <div className="flex flex-wrap gap-4 text-xs font-semibold text-white/90">
-                <span>✓ Customer order page</span>
-                <span>✓ Staff-managed order queue</span>
-                <span>✓ Local Windows print agent</span>
+              <div className="flex flex-wrap gap-5 text-[13px] font-medium text-[#A6B2C5]">
+                <span className="flex items-center gap-1.5"><CheckIcon size={13} className="text-[#2BD998]" /> Customer order page</span>
+                <span className="flex items-center gap-1.5"><CheckIcon size={13} className="text-[#2BD998]" /> Staff-managed order queue</span>
+                <span className="flex items-center gap-1.5"><CheckIcon size={13} className="text-[#2BD998]" /> Local Windows print agent</span>
               </div>
             </div>
 
@@ -442,9 +440,10 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
               <button
                 type="button"
                 onClick={() => onNavigate('/p/campus1')}
-                className="px-8 py-4 rounded-xl bg-white text-[#2F5BE0] hover:bg-gray-100 font-extrabold text-sm sm:text-base shadow-lg transition-all text-center cursor-pointer"
+                className="px-7 py-3.5 rounded-xl bg-white text-[#172033] hover:bg-gray-50 font-semibold text-sm shadow-lg transition-all duration-200 text-center cursor-pointer inline-flex items-center justify-center gap-2"
               >
-                Try Customer Demo Portal →
+                Try Customer Demo Portal
+                <ArrowRightIcon size={14} />
               </button>
             </div>
           </div>
@@ -452,15 +451,15 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
       </section>
 
       {/* ─────────────────────────────────────────────────────────────
-          SECTION 10: FAQ SECTION (Accordion)
+          SECTION 9: FAQ SECTION
       ───────────────────────────────────────────────────────────── */}
-      <section className="py-20 bg-[#F3F5FF]">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+      <section className="py-20 md:py-24 bg-[var(--bg-app)]">
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-14">
-            <span className="text-xs uppercase font-extrabold tracking-wider text-[#4D64E6] mb-2 block">
+            <span className="eyebrow">
               Frequently Asked Questions
             </span>
-            <h2 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-[#172031] tracking-tight">
+            <h2 className="text-2xl sm:text-3xl md:text-[2.25rem] font-bold tracking-tight text-[var(--text-primary)]">
               Got questions? We've got answers
             </h2>
           </div>
@@ -470,53 +469,54 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
       </section>
 
       {/* ─────────────────────────────────────────────────────────────
-          SECTION 11: ENQUIRY FORM (Variant A)
+          SECTION 10: ENQUIRY FORM
       ───────────────────────────────────────────────────────────── */}
-      <section className="py-20 bg-white border-t border-[#E6E9F2]">
+      <section className="py-20 md:py-24 bg-[var(--bg-surface)] border-t border-[var(--border-default)]">
         <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-10">
-            <span className="text-xs uppercase font-extrabold tracking-wider text-[#4D64E6] mb-2 block">
+            <span className="eyebrow">
               Get in Touch
             </span>
-            <h2 className="text-2xl sm:text-3xl font-extrabold text-[#172031] tracking-tight mb-2">
+            <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-[var(--text-primary)] mb-2">
               Have questions or want a personal demo?
             </h2>
-            <p className="text-xs sm:text-sm text-[#5B6475]">
+            <p className="text-sm text-[var(--text-secondary)]">
             Leave your details to request a product demo.
             </p>
           </div>
 
-          <div className="bg-[#FBFCFE] border border-[#E6E9F2] rounded-3xl p-6 sm:p-8 shadow-sm">
+          <div className="bg-[var(--bg-surface-subtle)] border border-[var(--border-default)] rounded-2xl p-6 sm:p-8 shadow-sm">
             <EnquiryForm variant="A" />
           </div>
         </div>
       </section>
 
       {/* ─────────────────────────────────────────────────────────────
-          SECTION 12: FINAL NAVY CALL TO ACTION BANNER
+          SECTION 11: FINAL CTA BANNER
       ───────────────────────────────────────────────────────────── */}
-      <section className="py-16 bg-[#172031] text-white text-center">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-          <h2 className="text-2xl sm:text-3xl md:text-4xl font-extrabold tracking-tight mb-4">
+      <section className="py-16 md:py-20 text-center" style={{ background: 'linear-gradient(135deg, #0D1422 0%, #172033 100%)' }}>
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+          <h2 className="text-2xl sm:text-3xl md:text-[2.25rem] font-bold tracking-tight mb-4 text-white">
             Ready to upgrade your print business?
           </h2>
-          <p className="text-sm sm:text-base text-gray-300 max-w-xl mx-auto mb-8 font-normal">
+          <p className="text-[15px] text-[#A6B2C5] max-w-xl mx-auto mb-9">
             Explore the customer order page and merchant print workflow in the product preview.
           </p>
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3.5">
             <button
               type="button"
               onClick={() => onNavigate('/register')}
-              className="w-full sm:w-auto px-8 py-3.5 rounded-xl bg-[#4D64E6] hover:bg-[#3F54D1] text-white font-bold text-sm sm:text-base shadow-lg transition-all cursor-pointer"
+              className="w-full sm:w-auto px-7 py-3.5 rounded-xl bg-[#4D64E6] hover:bg-[#3B50D4] text-white font-semibold text-[15px] shadow-[0_4px_20px_rgba(77,100,230,0.35)] transition-all duration-200 cursor-pointer inline-flex items-center justify-center gap-2"
             >
-              Create a shop account →
+              Get started
+              <ArrowRightIcon size={15} />
             </button>
             <button
               type="button"
               onClick={() => onNavigate('/pricing')}
-              className="w-full sm:w-auto px-8 py-3.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/20 text-white font-semibold text-sm sm:text-base transition-all cursor-pointer"
+              className="w-full sm:w-auto px-7 py-3.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.15] text-white font-medium text-[15px] transition-all duration-200 cursor-pointer inline-flex items-center justify-center"
             >
-              See pricing approach
+              See pricing
             </button>
           </div>
         </div>

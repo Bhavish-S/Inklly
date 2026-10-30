@@ -6,6 +6,7 @@ import {
   WhatsAppIcon,
   MailIcon,
   LifebuoyIcon,
+  ArrowRightIcon,
 } from '../components/icons';
 
 interface ContactPageProps {
@@ -14,14 +15,14 @@ interface ContactPageProps {
 
 export const ContactPage: React.FC<ContactPageProps> = ({ onNavigate }) => {
   return (
-    <div className="flex flex-col min-h-screen bg-[#FBFCFE]">
+    <div className="flex flex-col min-h-screen bg-ink-app dark:bg-ink-dark-app text-ink-text dark:text-ink-dark-text">
       {/* ─────────────────────────────────────────────────────────────
           HERO & CONTACT CARD
       ───────────────────────────────────────────────────────────── */}
       <section className="py-16 md:py-24 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full">
-        <div className="bg-white border border-[#E6E9F2] rounded-3xl shadow-xl overflow-hidden grid grid-cols-1 lg:grid-cols-12">
-          {/* Left Column: Solid Blue Card (#4D64E6) */}
-          <div className="lg:col-span-5 bg-[#4D64E6] text-white p-8 md:p-12 flex flex-col justify-between">
+        <div className="bg-ink-surface dark:bg-ink-dark-surface border border-ink-border dark:border-ink-dark-border rounded-3xl shadow-sm overflow-hidden grid grid-cols-1 lg:grid-cols-12">
+          {/* Left Column: Solid Indigo Card */}
+          <div className="lg:col-span-5 bg-brand text-white p-8 md:p-12 flex flex-col justify-between">
             <div>
               <span className="text-xs uppercase font-extrabold tracking-wider text-blue-200 mb-2 block">
                 CONTACT INKLLY
@@ -95,11 +96,11 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onNavigate }) => {
           </div>
 
           {/* Right Column: Contact Form */}
-          <div className="lg:col-span-7 p-8 md:p-12 bg-white flex flex-col justify-center">
-            <h2 className="text-2xl font-extrabold text-[#172031] mb-2 tracking-tight">
+          <div className="lg:col-span-7 p-8 md:p-12 bg-ink-surface dark:bg-ink-dark-surface flex flex-col justify-center">
+            <h2 className="text-2xl font-bold text-ink-text dark:text-ink-dark-text mb-2 tracking-tight">
               Send us a message
             </h2>
-            <p className="text-xs sm:text-sm text-[#5B6475] mb-8">
+            <p className="text-xs sm:text-sm text-ink-text-secondary dark:text-ink-dark-text-secondary mb-8">
               Fill in your details and our team will get in touch directly via call or WhatsApp.
             </p>
             <EnquiryForm variant="B" />
@@ -108,40 +109,43 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onNavigate }) => {
 
         {/* Support Sub-Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-12">
-          <div className="bg-white border border-[#E6E9F2] rounded-2xl p-6 shadow-2xs">
-            <h4 className="font-bold text-sm text-[#172031] mb-1">Existing Merchant Support</h4>
-            <p className="text-xs text-[#5B6475] mb-3">Trouble with printer spooling, edge agent or queue?</p>
+          <div className="bg-ink-surface dark:bg-ink-dark-surface border border-ink-border dark:border-ink-dark-border rounded-2xl p-6 shadow-xs">
+            <h4 className="font-bold text-sm text-ink-text dark:text-ink-dark-text mb-1">Existing Merchant Support</h4>
+            <p className="text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary mb-3">Trouble with printer spooling, edge agent or queue?</p>
             <a
               href="https://wa.me/918999829418?text=Hi%20Inklly%20Support,%20I%20need%20help%20with%20my%20printer%20agent"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-xs font-bold text-[#4D64E6] hover:underline"
+              className="text-xs font-semibold text-brand dark:text-brand-dark hover:underline inline-flex items-center gap-1"
             >
-              Open support chat →
+              <span>Open support chat</span>
+              <ArrowRightIcon size={12} />
             </a>
           </div>
 
-          <div className="bg-white border border-[#E6E9F2] rounded-2xl p-6 shadow-2xs">
-            <h4 className="font-bold text-sm text-[#172031] mb-1">Campus & Fleet Automation</h4>
-            <p className="text-xs text-[#5B6475] mb-3">Countertop QR rollouts for college bookstores and hubs.</p>
+          <div className="bg-ink-surface dark:bg-ink-dark-surface border border-ink-border dark:border-ink-dark-border rounded-2xl p-6 shadow-xs">
+            <h4 className="font-bold text-sm text-ink-text dark:text-ink-dark-text mb-1">Campus & Fleet Automation</h4>
+            <p className="text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary mb-3">Countertop QR rollouts for college bookstores and hubs.</p>
             <button
               type="button"
               onClick={() => onNavigate('/p/campus1')}
-              className="text-xs font-bold text-[#4D64E6] hover:underline text-left cursor-pointer"
+              className="text-xs font-semibold text-brand dark:text-brand-dark hover:underline text-left cursor-pointer inline-flex items-center gap-1"
             >
-              Try customer demo portal →
+              <span>Try customer demo portal</span>
+              <ArrowRightIcon size={12} />
             </button>
           </div>
 
-          <div className="bg-white border border-[#E6E9F2] rounded-2xl p-6 shadow-2xs">
-            <h4 className="font-bold text-sm text-[#172031] mb-1">Developer API & Integration</h4>
-            <p className="text-xs text-[#5B6475] mb-3">Integrate Inklly spooling engine into your ERP or apps.</p>
+          <div className="bg-ink-surface dark:bg-ink-dark-surface border border-ink-border dark:border-ink-dark-border rounded-2xl p-6 shadow-xs">
+            <h4 className="font-bold text-sm text-ink-text dark:text-ink-dark-text mb-1">Developer API & Integration</h4>
+            <p className="text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary mb-3">Integrate Inklly spooling engine into your ERP or apps.</p>
             <button
               type="button"
               onClick={() => onNavigate('/developer')}
-              className="text-xs font-bold text-[#4D64E6] hover:underline text-left cursor-pointer"
+              className="text-xs font-semibold text-brand dark:text-brand-dark hover:underline text-left cursor-pointer inline-flex items-center gap-1"
             >
-              View API documentation →
+              <span>View API documentation</span>
+              <ArrowRightIcon size={12} />
             </button>
           </div>
         </div>

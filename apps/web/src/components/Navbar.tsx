@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Logo, ChevronDownIcon, ArrowRightIcon } from './icons';
 
 interface NavbarProps {
@@ -6,11 +6,25 @@ interface NavbarProps {
   onNavigate: (path: string) => void;
 }
 
+const productItems = [
+  { name: 'Print automation', desc: 'Auto spooler & job routing', path: '/print-shop-automation-software' },
+  { name: 'WhatsApp printing', desc: 'No-app mobile intake', path: '/whatsapp-printing-software' },
+  { name: 'QR ordering system', desc: 'Self-serve counter standees', path: '/qr-code-printing-system' },
+  { name: 'Customer demo portal', desc: 'Interactive live demo (/p/campus1)', path: '/p/campus1' },
+] as const;
+
+const navLinks = [
+  { label: 'How it works', path: '/how-it-works' },
+  { label: 'Pricing', path: '/pricing' },
+  { label: 'Contact', path: '/contact' },
+] as const;
+
 export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate }) => {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mobileProductOpen, setMobileProductOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -30,6 +44,18 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate }) => {
     };
   }, []);
 
+  // Lock body scroll when mobile menu is open
+  useEffect(() => {
+    if (mobileMenuOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [mobileMenuOpen]);
+
   const handleNav = (path: string) => {
     setDropdownOpen(false);
     setMobileMenuOpen(false);
@@ -44,312 +70,336 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate }) => {
 
   return (
     <header
-      style={{
-        position: 'sticky',
-        top: 0,
-        zIndex: 50,
-        backgroundColor: isScrolled ? 'rgba(255, 255, 255, 0.94)' : '#FFFFFF',
-        backdropFilter: isScrolled ? 'blur(16px)' : 'none',
-        WebkitBackdropFilter: isScrolled ? 'blur(16px)' : 'none',
-        borderBottom: isScrolled ? '1px solid rgba(230, 233, 242, 0.9)' : '1px solid rgba(230, 233, 242, 0.45)',
-        boxShadow: isScrolled ? '0 4px 20px -2px rgba(23, 32, 49, 0.06)' : 'none',
-        transition: 'all 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
-        height: '66px',
-        display: 'flex',
-        alignItems: 'center',
-      }}
+      className={`
+        sticky top-0 z-50 flex items-center h-[64px]
+        transition-all duration-[250ms] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)]
+        ${isScrolled
+          ? 'bg-white/[0.92] dark:bg-[#0D1422]/[0.92] backdrop-blur-xl border-b border-ink-border/90 dark:border-ink-dark-border/90 shadow-xs'
+          : 'bg-white dark:bg-[#0D1422] border-b border-ink-border/40 dark:border-ink-dark-border/40'
+        }
+      `}
     >
-      <div
-        style={{
-          width: '100%',
-          maxWidth: '1180px',
-          margin: '0 auto',
-          padding: '0 24px',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-        }}
-      >
+      <div className="w-full max-w-[1180px] mx-auto px-5 sm:px-6 flex justify-between items-center">
+
         {/* Left: Logo */}
-        <div onClick={() => handleNav('/')}>
+        <div
+          onClick={() => handleNav('/')}
+          className="cursor-pointer flex-shrink-0 transition-opacity duration-200 hover:opacity-80"
+        >
           <Logo size={24} />
         </div>
 
-        {/* Desktop Navigation Links */}
-        <nav
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '1.75rem',
-          }}
-          className="desktop-nav"
-        >
+        {/* Centre: Desktop Navigation Links */}
+        <nav className="hidden lg:flex items-center gap-1">
           {/* Product Dropdown */}
           <div
-            style={{ position: 'relative' }}
+            ref={dropdownRef}
+            className="relative"
             onMouseEnter={() => setDropdownOpen(true)}
             onMouseLeave={() => setDropdownOpen(false)}
           >
             <button
               onClick={() => setDropdownOpen(!dropdownOpen)}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '0.25rem',
-                fontSize: '0.9375rem',
-                fontWeight: 600,
-                color: isProductActive ? 'var(--brand)' : 'var(--text)',
-                background: 'none',
-                border: 'none',
-                padding: '0.5rem 0',
-              }}
+              className={`
+                inline-flex items-center gap-1 px-3 py-2 text-[0.875rem] font-medium rounded-lg
+                transition-all duration-200 [transition-timing-function:cubic-bezier(0.16,1,0.3,1)]
+                ${isProductActive
+                  ? 'text-brand dark:text-[#8293FF]'
+                  : 'text-ink-text dark:text-ink-dark-text hover:text-brand dark:hover:text-[#8293FF] hover:bg-brand-soft/50 dark:hover:bg-[#202C52]/50'
+                }
+              `}
+              style={{ background: 'none', border: 'none' }}
             >
               Product
               <span
-                style={{
-                  display: 'inline-flex',
-                  transform: dropdownOpen ? 'rotate(180deg)' : 'none',
-                  transition: 'transform 0.15s ease',
-                }}
+                className={`
+                  inline-flex transition-transform duration-150
+                  ${dropdownOpen ? 'rotate-180' : ''}
+                `}
               >
-                <ChevronDownIcon size={16} />
+                <ChevronDownIcon size={15} />
               </span>
             </button>
 
-            {dropdownOpen && (
+            {/* Dropdown Panel */}
+            <div
+              className={`
+                absolute top-full left-0 pt-2 w-[280px] z-60
+                transition-all duration-200 [transition-timing-function:cubic-bezier(0.16,1,0.3,1)]
+                ${dropdownOpen
+                  ? 'opacity-100 translate-y-0 pointer-events-auto'
+                  : 'opacity-0 -translate-y-1 pointer-events-none'
+                }
+              `}
+            >
               <div
-                style={{
-                  position: 'absolute',
-                  top: '100%',
-                  left: '-12px',
-                  width: '270px',
-                  backgroundColor: '#FFFFFF',
-                  borderRadius: '16px',
-                  boxShadow: '0 14px 34px -4px rgba(23, 32, 49, 0.14), 0 4px 12px rgba(0, 0, 0, 0.05)',
-                  border: '1px solid var(--border)',
-                  padding: '0.625rem',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '0.35rem',
-                  zIndex: 60,
-                }}
+                className="
+                  bg-white dark:bg-ink-dark-surface
+                  rounded-2xl
+                  shadow-lg dark:shadow-[0_14px_34px_-4px_rgba(0,0,0,0.4)]
+                  border border-ink-border dark:border-ink-dark-border
+                  p-2
+                  flex flex-col gap-0.5
+                "
               >
-                {[
-                  { name: 'Print automation', desc: 'Auto spooler & job routing', path: '/print-shop-automation-software' },
-                  { name: 'WhatsApp printing', desc: 'No-app mobile intake', path: '/whatsapp-printing-software' },
-                  { name: 'QR ordering system', desc: 'Self-serve counter standees', path: '/qr-code-printing-system' },
-                  { name: 'Customer demo portal', desc: 'Interactive live demo (/p/campus1)', path: '/p/campus1' },
-                ].map((item) => (
-                  <button
-                    key={item.path}
-                    onClick={() => handleNav(item.path)}
-                    style={{
-                      textAlign: 'left',
-                      padding: '0.625rem 0.875rem',
-                      borderRadius: '10px',
-                      background: currentPath === item.path ? 'var(--tint)' : 'transparent',
-                      border: 'none',
-                      transition: 'all 0.15s ease',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '2px',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.backgroundColor = 'var(--tint)';
-                    }}
-                    onMouseLeave={(e) => {
-                      if (currentPath !== item.path) {
-                        e.currentTarget.style.backgroundColor = 'transparent';
-                      }
-                    }}
-                  >
-                    <span style={{ fontSize: '0.875rem', fontWeight: 600, color: currentPath === item.path ? 'var(--brand)' : 'var(--text)' }}>
-                      {item.name}
-                    </span>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                      {item.desc}
-                    </span>
-                  </button>
-                ))}
+                {productItems.map((item) => {
+                  const isActive = currentPath === item.path;
+                  return (
+                    <button
+                      key={item.path}
+                      onClick={() => handleNav(item.path)}
+                      className={`
+                        w-full text-left px-3 py-2.5 rounded-xl
+                        flex flex-col gap-0.5
+                        transition-all duration-150 [transition-timing-function:cubic-bezier(0.16,1,0.3,1)]
+                        ${isActive
+                          ? 'bg-brand-soft dark:bg-[#202C52]'
+                          : 'hover:bg-ink-surface-subtle dark:hover:bg-ink-dark-elevated bg-transparent'
+                        }
+                      `}
+                      style={{ border: 'none' }}
+                    >
+                      <span
+                        className={`
+                          text-[0.8125rem] font-semibold
+                          ${isActive
+                            ? 'text-brand dark:text-[#8293FF]'
+                            : 'text-ink-text dark:text-ink-dark-text'
+                          }
+                        `}
+                      >
+                        {item.name}
+                      </span>
+                      <span className="text-[0.75rem] text-ink-text-muted dark:text-ink-dark-text-secondary">
+                        {item.desc}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
-            )}
+            </div>
           </div>
 
-          <button
-            onClick={() => handleNav('/how-it-works')}
-            style={{
-              background: 'none',
-              border: 'none',
-              fontSize: '0.9375rem',
-              fontWeight: 600,
-              color: currentPath === '/how-it-works' ? 'var(--brand)' : 'var(--text)',
-            }}
-          >
-            How it works
-          </button>
+          {navLinks.map((link) => {
+            const isActive = currentPath === link.path;
+            return (
+              <button
+                key={link.path}
+                onClick={() => handleNav(link.path)}
+                className={`
+                  relative px-3 py-2 text-[0.875rem] font-medium rounded-lg
+                  transition-all duration-200 [transition-timing-function:cubic-bezier(0.16,1,0.3,1)]
+                  ${isActive
+                    ? 'text-brand dark:text-[#8293FF]'
+                    : 'text-ink-text dark:text-ink-dark-text hover:text-brand dark:hover:text-[#8293FF] hover:bg-brand-soft/50 dark:hover:bg-[#202C52]/50'
+                  }
+                `}
+                style={{ background: 'none', border: 'none' }}
+              >
+                {link.label}
+                {/* Active indicator underline */}
+                {isActive && (
+                  <span className="absolute bottom-0 left-3 right-3 h-[2px] rounded-full bg-brand dark:bg-[#8293FF]" />
+                )}
+              </button>
+            );
+          })}
+        </nav>
 
-          <button
-            onClick={() => handleNav('/pricing')}
-            style={{
-              background: 'none',
-              border: 'none',
-              fontSize: '0.9375rem',
-              fontWeight: 600,
-              color: currentPath === '/pricing' ? 'var(--brand)' : 'var(--text)',
-            }}
-          >
-            Pricing
-          </button>
-
-          <button
-            onClick={() => handleNav('/contact')}
-            style={{
-              background: 'none',
-              border: 'none',
-              fontSize: '0.9375rem',
-              fontWeight: 600,
-              color: currentPath === '/contact' ? 'var(--brand)' : 'var(--text)',
-            }}
-          >
-            Contact
-          </button>
-
+        {/* Right: Auth Buttons */}
+        <div className="hidden lg:flex items-center gap-2">
           <button
             onClick={() => handleNav('/login')}
-            style={{
-              background: 'none',
-              border: 'none',
-              fontSize: '0.9375rem',
-              fontWeight: 600,
-              color: currentPath === '/login' ? 'var(--brand)' : 'var(--text)',
-              marginLeft: '0.5rem',
-            }}
+            className={`
+              px-3.5 py-2 text-[0.875rem] font-medium rounded-[10px]
+              transition-all duration-200 [transition-timing-function:cubic-bezier(0.16,1,0.3,1)]
+              ${currentPath === '/login'
+                ? 'text-brand dark:text-[#8293FF] bg-brand-soft/60 dark:bg-[#202C52]/60'
+                : 'text-ink-text-secondary dark:text-ink-dark-text-secondary hover:text-ink-text dark:hover:text-ink-dark-text hover:bg-ink-surface-muted dark:hover:bg-ink-dark-elevated'
+              }
+            `}
+            style={{ background: 'none', border: 'none' }}
           >
             Sign in
           </button>
 
           <button
             onClick={() => handleNav('/register')}
-            className="btn btn-primary"
-            style={{ padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}
+            className="btn btn-primary !px-4 !py-2 !text-[0.8125rem] !rounded-[10px] !gap-1.5"
           >
             Get started
-            <ArrowRightIcon size={16} />
+            <ArrowRightIcon size={15} />
           </button>
-        </nav>
+        </div>
 
         {/* Mobile Hamburger Toggle Button */}
         <button
           onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          style={{
-            display: 'none',
-            background: 'none',
-            border: 'none',
-            padding: '0.625rem',
-            minHeight: '44px',
-            minWidth: '44px',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer',
-            borderRadius: '8px',
-          }}
-          className="mobile-toggle"
+          className="
+            lg:hidden flex items-center justify-center
+            w-10 h-10 rounded-lg
+            transition-colors duration-200
+            hover:bg-ink-surface-muted dark:hover:bg-ink-dark-elevated
+          "
+          style={{ background: 'none', border: 'none' }}
           aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
           aria-expanded={mobileMenuOpen}
           aria-controls="mobile-nav-drawer"
         >
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-            <div style={{ width: '22px', height: '2px', backgroundColor: 'var(--text)', transition: 'all 0.2s ease', transform: mobileMenuOpen ? 'rotate(45deg) translate(5px, 5px)' : 'none' }} />
-            <div style={{ width: '22px', height: '2px', backgroundColor: 'var(--text)', opacity: mobileMenuOpen ? 0 : 1, transition: 'all 0.2s ease' }} />
-            <div style={{ width: '22px', height: '2px', backgroundColor: 'var(--text)', transition: 'all 0.2s ease', transform: mobileMenuOpen ? 'rotate(-45deg) translate(5px, -5px)' : 'none' }} />
+          <div className="flex flex-col gap-[5px]">
+            <div
+              className="w-[20px] h-[2px] rounded-full bg-ink-text dark:bg-ink-dark-text transition-all duration-200"
+              style={{ transform: mobileMenuOpen ? 'rotate(45deg) translate(5px, 5px)' : 'none' }}
+            />
+            <div
+              className="w-[20px] h-[2px] rounded-full bg-ink-text dark:bg-ink-dark-text transition-all duration-200"
+              style={{ opacity: mobileMenuOpen ? 0 : 1 }}
+            />
+            <div
+              className="w-[20px] h-[2px] rounded-full bg-ink-text dark:bg-ink-dark-text transition-all duration-200"
+              style={{ transform: mobileMenuOpen ? 'rotate(-45deg) translate(5px, -5px)' : 'none' }}
+            />
           </div>
         </button>
       </div>
 
-      {/* Mobile Drawer */}
-      {mobileMenuOpen && (
-        <div
-          id="mobile-nav-drawer"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Mobile Navigation Menu"
-          style={{
-            position: 'fixed',
-            top: '66px',
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: '#FFFFFF',
-            zIndex: 100,
-            display: 'flex',
-            flexDirection: 'column',
-            padding: '1.25rem',
-            overflowY: 'auto',
-          }}
-        >
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', flex: 1 }}>
-            {/* Mobile Product Accordion */}
-            <div>
-              <button
-                onClick={() => setMobileProductOpen(!mobileProductOpen)}
-                aria-expanded={mobileProductOpen}
-                style={{
-                  width: '100%',
-                  minHeight: '44px',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  background: 'none',
-                  border: 'none',
-                  fontSize: '1.0625rem',
-                  fontWeight: 700,
-                  padding: '0.625rem 0.5rem',
-                  borderRadius: '8px',
-                  color: 'var(--text)',
-                }}
-              >
-                <span>Product</span>
-                <span style={{ transform: mobileProductOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }}>
-                  <ChevronDownIcon size={18} />
-                </span>
-              </button>
-              {mobileProductOpen && (
-                <div style={{ paddingLeft: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.35rem', marginTop: '0.25rem' }}>
-                  <button onClick={() => handleNav('/print-shop-automation-software')} style={{ minHeight: '44px', textAlign: 'left', background: 'var(--tint-2)', border: 'none', fontSize: '0.9375rem', fontWeight: 600, padding: '0.5rem 0.75rem', borderRadius: '8px' }}>Direct PC print automation</button>
-                  <button onClick={() => handleNav('/whatsapp-printing-software')} style={{ minHeight: '44px', textAlign: 'left', background: 'var(--tint-2)', border: 'none', fontSize: '0.9375rem', fontWeight: 600, padding: '0.5rem 0.75rem', borderRadius: '8px' }}>WhatsApp print intake</button>
-                  <button onClick={() => handleNav('/qr-code-printing-system')} style={{ minHeight: '44px', textAlign: 'left', background: 'var(--tint-2)', border: 'none', fontSize: '0.9375rem', fontWeight: 600, padding: '0.5rem 0.75rem', borderRadius: '8px' }}>Countertop QR standees</button>
-                  <button onClick={() => handleNav('/p/campus1')} style={{ minHeight: '44px', textAlign: 'left', background: 'var(--tint-2)', border: 'none', fontSize: '0.9375rem', fontWeight: 600, padding: '0.5rem 0.75rem', borderRadius: '8px', color: 'var(--brand)' }}>Customer live demo (/p/campus1)</button>
-                </div>
-              )}
-            </div>
-
-            <button onClick={() => handleNav('/how-it-works')} style={{ minHeight: '44px', textAlign: 'left', background: currentPath === '/how-it-works' ? 'var(--tint)' : 'none', border: 'none', fontSize: '1.0625rem', fontWeight: 700, padding: '0.625rem 0.5rem', borderRadius: '8px', color: currentPath === '/how-it-works' ? 'var(--brand)' : 'var(--text)' }}>How it works</button>
-            <button onClick={() => handleNav('/pricing')} style={{ minHeight: '44px', textAlign: 'left', background: currentPath === '/pricing' ? 'var(--tint)' : 'none', border: 'none', fontSize: '1.0625rem', fontWeight: 700, padding: '0.625rem 0.5rem', borderRadius: '8px', color: currentPath === '/pricing' ? 'var(--brand)' : 'var(--text)' }}>Pricing</button>
-            <button onClick={() => handleNav('/contact')} style={{ minHeight: '44px', textAlign: 'left', background: currentPath === '/contact' ? 'var(--tint)' : 'none', border: 'none', fontSize: '1.0625rem', fontWeight: 700, padding: '0.625rem 0.5rem', borderRadius: '8px', color: currentPath === '/contact' ? 'var(--brand)' : 'var(--text)' }}>Contact</button>
-            <button onClick={() => handleNav('/login')} style={{ minHeight: '44px', textAlign: 'left', background: currentPath === '/login' ? 'var(--tint)' : 'none', border: 'none', fontSize: '1.0625rem', fontWeight: 700, padding: '0.625rem 0.5rem', borderRadius: '8px', color: currentPath === '/login' ? 'var(--brand)' : 'var(--text)' }}>Sign in to counter</button>
-          </div>
-
-          <div style={{ paddingTop: '1rem', borderTop: '1px solid var(--border)' }}>
+      {/* Mobile Drawer — Slide-down overlay */}
+      <div
+        id="mobile-nav-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Mobile Navigation Menu"
+        className={`
+          lg:hidden fixed top-[64px] left-0 right-0 bottom-0 z-[100]
+          bg-white dark:bg-[#0D1422]
+          flex flex-col
+          transition-all duration-[280ms] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)]
+          ${mobileMenuOpen
+            ? 'opacity-100 translate-y-0 pointer-events-auto'
+            : 'opacity-0 -translate-y-3 pointer-events-none'
+          }
+        `}
+      >
+        {/* Scrollable content */}
+        <div className="flex-1 overflow-y-auto px-5 py-5 flex flex-col gap-1">
+          {/* Mobile Product Accordion */}
+          <div>
             <button
-              onClick={() => handleNav('/register')}
-              className="btn btn-primary"
-              style={{ width: '100%', minHeight: '48px', padding: '0.875rem' }}
+              onClick={() => setMobileProductOpen(!mobileProductOpen)}
+              aria-expanded={mobileProductOpen}
+              className={`
+                w-full min-h-[48px] flex justify-between items-center
+                px-3 py-3 rounded-xl
+                text-[1rem] font-semibold
+                transition-all duration-200
+                ${isProductActive
+                  ? 'text-brand dark:text-[#8293FF] bg-brand-soft/50 dark:bg-[#202C52]/50'
+                  : 'text-ink-text dark:text-ink-dark-text hover:bg-ink-surface-muted dark:hover:bg-ink-dark-elevated'
+                }
+              `}
+              style={{ border: 'none', background: 'none' }}
             >
-              Start Free Shop Trial
-              <ArrowRightIcon size={16} />
+              <span>Product</span>
+              <span
+                className={`
+                  inline-flex transition-transform duration-200
+                  ${mobileProductOpen ? 'rotate-180' : ''}
+                `}
+              >
+                <ChevronDownIcon size={18} />
+              </span>
             </button>
-          </div>
-        </div>
-      )}
 
-      {/* Responsive Styles Injection */}
-      <style>{`
-        @media (max-width: 900px) {
-          .desktop-nav { display: none !important; }
-          .mobile-toggle { display: block !important; }
-        }
-      `}</style>
+            <div
+              className={`
+                overflow-hidden transition-all duration-[250ms] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)]
+                ${mobileProductOpen ? 'max-h-[400px] opacity-100 mt-1' : 'max-h-0 opacity-0'}
+              `}
+            >
+              <div className="pl-3 flex flex-col gap-1">
+                {productItems.map((item) => {
+                  const isActive = currentPath === item.path;
+                  return (
+                    <button
+                      key={item.path}
+                      onClick={() => handleNav(item.path)}
+                      className={`
+                        min-h-[44px] text-left
+                        px-3.5 py-2.5 rounded-xl
+                        text-[0.875rem] font-medium
+                        transition-all duration-150
+                        ${isActive
+                          ? 'bg-brand-soft dark:bg-[#202C52] text-brand dark:text-[#8293FF]'
+                          : 'bg-ink-surface-subtle dark:bg-ink-dark-elevated text-ink-text dark:text-ink-dark-text hover:bg-ink-surface-muted dark:hover:bg-ink-dark-hover'
+                        }
+                      `}
+                      style={{ border: 'none' }}
+                    >
+                      <span className="block font-semibold">{item.name}</span>
+                      <span className="block text-[0.75rem] text-ink-text-muted dark:text-ink-dark-text-secondary mt-0.5">
+                        {item.desc}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* Nav links */}
+          {navLinks.map((link) => {
+            const isActive = currentPath === link.path;
+            return (
+              <button
+                key={link.path}
+                onClick={() => handleNav(link.path)}
+                className={`
+                  min-h-[48px] text-left
+                  px-3 py-3 rounded-xl
+                  text-[1rem] font-semibold
+                  transition-all duration-200
+                  ${isActive
+                    ? 'text-brand dark:text-[#8293FF] bg-brand-soft/50 dark:bg-[#202C52]/50'
+                    : 'text-ink-text dark:text-ink-dark-text hover:bg-ink-surface-muted dark:hover:bg-ink-dark-elevated'
+                  }
+                `}
+                style={{ border: 'none', background: 'none' }}
+              >
+                {link.label}
+              </button>
+            );
+          })}
+
+          {/* Sign in link in mobile */}
+          <button
+            onClick={() => handleNav('/login')}
+            className={`
+              min-h-[48px] text-left
+              px-3 py-3 rounded-xl
+              text-[1rem] font-semibold
+              transition-all duration-200
+              ${currentPath === '/login'
+                ? 'text-brand dark:text-[#8293FF] bg-brand-soft/50 dark:bg-[#202C52]/50'
+                : 'text-ink-text dark:text-ink-dark-text hover:bg-ink-surface-muted dark:hover:bg-ink-dark-elevated'
+              }
+            `}
+            style={{ border: 'none', background: 'none' }}
+          >
+            Sign in to counter
+          </button>
+        </div>
+
+        {/* Bottom CTA */}
+        <div className="px-5 pb-6 pt-3 border-t border-ink-border dark:border-ink-dark-border">
+          <button
+            onClick={() => handleNav('/register')}
+            className="btn btn-primary w-full !min-h-[48px] !text-[0.9375rem] !rounded-xl justify-center"
+          >
+            Start Free Shop Trial
+            <ArrowRightIcon size={16} />
+          </button>
+        </div>
+      </div>
     </header>
   );
 };

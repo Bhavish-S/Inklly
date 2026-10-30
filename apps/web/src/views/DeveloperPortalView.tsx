@@ -728,10 +728,10 @@ class Program
             type="button"
             onClick={() => setActiveTab(tab.id as DevTab)}
             disabled={!externalApiAccessEnabled && ['keys', 'webhooks'].includes(tab.id)}
-            className={`flex items-center gap-2 px-4 py-3 font-bold text-xs whitespace-nowrap border-b-2 transition-all cursor-pointer ${
+            className={`flex items-center gap-2 px-4 py-3 font-semibold text-xs whitespace-nowrap border-b-2 transition-all cursor-pointer ${
               activeTab === tab.id
-                ? 'border-[#4D64E6] text-[#4D64E6] bg-indigo-50/50 dark:bg-indigo-950/20'
-                : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                ? 'border-brand text-brand bg-brand-soft/50 dark:bg-brand-dark-soft/30 font-bold'
+                : 'border-transparent text-ink-text-secondary dark:text-ink-dark-text-secondary hover:text-ink-text dark:hover:text-ink-dark-text'
             } disabled:cursor-not-allowed disabled:opacity-50`}
           >
             {tab.icon}

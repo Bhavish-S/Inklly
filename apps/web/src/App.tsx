@@ -34,6 +34,17 @@ export const App: React.FC = () => {
   const [trackedShopCode, setTrackedShopCode] = useState<string>(() => new URLSearchParams(window.location.search).get('shop') || 'campus1');
 
   useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('inklly_theme');
+      if (saved === 'dark' || (!saved && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    }
+  }, []);
+
+  useEffect(() => {
     const handlePopState = () => {
       setCurrentPath(window.location.pathname || '/');
       if (window.location.pathname === '/track') {
@@ -121,7 +132,7 @@ export const App: React.FC = () => {
     ['/merchat', '/merchants', '/admins', '/platform-admin', '/dev', '/devs', '/developers'].includes(currentPath.toLowerCase().replace(/\/$/, ''));
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#FBFCFE' }}>
+    <div className="min-h-screen flex flex-col bg-ink-app dark:bg-ink-dark-app text-ink-text dark:text-ink-dark-text transition-colors duration-150">
       {/* Primary Sticky Website Navbar (Hidden in Standalone Workspace/Portal mode) */}
       {!isStandaloneApp && <Navbar currentPath={currentPath} onNavigate={navigate} />}
 
