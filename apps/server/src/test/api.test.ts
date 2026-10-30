@@ -3255,9 +3255,20 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       }) as typeof globalThis.fetch;
 
       const firstId = await createRequest(300);
+      assert.throws(
+        () => credentials.saveRazorpay(shopId, 'rzp_test_replacement123', 'replacement_api_secret_test_value', 'replacement_webhook_secret_value'),
+        /pending Razorpay payments and refunds/i,
+        'credential rotation must preserve webhook/API access while a refund request awaits review'
+      );
+      assert.throws(() => credentials.removeRazorpay(shopId), /pending Razorpay payments and refunds/i);
       const pending = await processRefund(firstId);
       assert.equal(pending.status, 202);
       assert.equal((await pending.json() as any).status, 'PROCESSING');
+      assert.throws(
+        () => credentials.saveRazorpay(shopId, 'rzp_test_replacement123', 'replacement_api_secret_test_value', 'replacement_webhook_secret_value'),
+        /pending Razorpay payments and refunds/i,
+        'credential rotation must remain blocked while provider confirmation is processing'
+      );
       assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM ledger_entries WHERE order_id = ? AND amount_paise < 0`, [orderId]).count), 0);
 
       const processed = await webhook(event(firstId, 'rfnd_test_partial_01', 300, 'processed'), 'evt_refund_processed_01');
