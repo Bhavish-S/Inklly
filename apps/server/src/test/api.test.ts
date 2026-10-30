@@ -3266,6 +3266,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       // A partially saved setup must remain repairable even with a refund
       // awaiting review; once repaired, further rotation is blocked.
       db.execute(`DELETE FROM shop_payment_webhook_secrets WHERE shop_id = ?`, [shopId]);
+      assert.throws(() => credentials.removeRazorpay(shopId), /pending Razorpay payments and refunds/i);
       credentials.saveRazorpay(shopId, 'rzp_test_repaired123', 'repaired_api_secret_test_value', 'repaired_webhook_secret_value');
       webhookSecret = 'repaired_webhook_secret_value';
       assert.equal(credentials.getRazorpayStatus(shopId).webhookConfigured, true);

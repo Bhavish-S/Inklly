@@ -71,7 +71,7 @@ export class ShopPaymentCredentialsService {
     return Boolean(row);
   }
 
-  private lockShopForCredentialMutation(shopId: string): void {
+  private lockShopForCredentialMutation(shopId: string, allowIncompleteRecovery = false): void {
     const locked = this.db.queryOne<any>(`UPDATE shops SET updated_at = updated_at WHERE id = ? RETURNING id`, [shopId]);
     if (!locked) throw new Error('Shop no longer exists.');
     const completeConfiguration = this.db.queryOne<any>(
@@ -80,7 +80,7 @@ export class ShopPaymentCredentialsService {
     );
     // Allow recovery from an absent or incomplete setup. Once both secrets are
     // present, protect any active checkout/refund from accidental rotation.
-    if (completeConfiguration && this.hasInFlightPaymentsOrRefunds(shopId)) {
+    if ((!allowIncompleteRecovery || completeConfiguration) && this.hasInFlightPaymentsOrRefunds(shopId)) {
       throw new Error('Resolve pending Razorpay payments and refunds before changing this shop’s credentials.');
     }
   }
@@ -115,7 +115,7 @@ export class ShopPaymentCredentialsService {
     const encryptedWebhookSecret = encryptSecret(webhookSecret);
     const now = new Date().toISOString();
     this.db.transaction(() => {
-      this.lockShopForCredentialMutation(shopId);
+      this.lockShopForCredentialMutation(shopId, true);
       this.db.execute(
         `INSERT INTO shop_payment_credentials (shop_id, provider, key_id, encrypted_secret, updated_at)
          VALUES (?, 'RAZORPAY', ?, ?, ?)
