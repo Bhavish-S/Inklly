@@ -594,3 +594,27 @@ describe('platform organization directory index migration', () => {
     }
   });
 });
+
+describe('order token migration', () => {
+  it('ensures token_number column and index exist for an existing orders table', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'inklly-order-token-migration-'));
+    const databasePath = path.join(directory, 'existing.sqlite');
+    try {
+      const initial = new DatabaseService(databasePath);
+      seedDatabase(initial);
+      initial.execute(`DROP INDEX idx_orders_token`);
+      initial.execute(`DELETE FROM inklly_schema_migrations WHERE version = 28`);
+      initial.close();
+
+      const upgraded = new DatabaseService(databasePath);
+      const columns = upgraded.query<{ name: string }>(`PRAGMA table_info(orders)`);
+      assert.ok(columns.some((c) => c.name === 'token_number'));
+      const indexes = upgraded.query<{ name: string }>(`SELECT name FROM sqlite_master WHERE type = 'index'`);
+      assert.ok(indexes.some((index) => index.name === 'idx_orders_token'));
+      assert.ok(upgraded.queryOne(`SELECT version FROM inklly_schema_migrations WHERE version = 28`));
+      upgraded.close();
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});

@@ -54,6 +54,7 @@ export class DatabaseService {
       this.ensureSqliteMerchantVaultDeletionMigration();
       this.ensureSqliteAgentFleetIndexesMigration();
       this.ensureSqliteOrganizationDirectoryMigration();
+      this.ensureSqliteOrderTokenMigration();
     }
   }
 
@@ -138,6 +139,14 @@ export class DatabaseService {
     if (applied.length === 0) {
       this.queryPostgres('BEGIN');
       try {
+        // Pre-patch tables that may exist from legacy deployments before baseline migrations,
+        // ensuring columns exist before indexes in SCHEMA_SQL are created on them.
+        this.queryPostgres(`ALTER TABLE IF EXISTS orders ADD COLUMN IF NOT EXISTS token_number TEXT NOT NULL DEFAULT ''`);
+        this.queryPostgres(`ALTER TABLE IF EXISTS orders ADD COLUMN IF NOT EXISTS pricing_snapshot TEXT`);
+        this.queryPostgres(`ALTER TABLE IF EXISTS order_files ADD COLUMN IF NOT EXISTS dispatch_acknowledged_at TEXT`);
+        this.queryPostgres(`ALTER TABLE IF EXISTS printers ADD COLUMN IF NOT EXISTS physical_printing_enabled INTEGER NOT NULL DEFAULT 0`);
+        this.queryPostgres(`ALTER TABLE IF EXISTS memberships ADD COLUMN IF NOT EXISTS is_active INTEGER NOT NULL DEFAULT 1`);
+
         for (const rawStatement of SCHEMA_SQL.split(';')) {
           const statement = rawStatement.replace(/^(?:\s*--[^\n]*(?:\n|$))+/, '').trim();
           if (!statement || /^PRAGMA\b/i.test(statement)) continue;
@@ -176,6 +185,38 @@ export class DatabaseService {
     this.ensurePostgresMerchantVaultDeletionMigration();
     this.ensurePostgresAgentFleetIndexesMigration();
     this.ensurePostgresOrganizationDirectoryMigration();
+    this.ensurePostgresOrderTokenMigration();
+  }
+
+  private ensureSqliteOrderTokenMigration(): void {
+    if (this.db!.prepare(`SELECT version FROM inklly_schema_migrations WHERE version = 28`).get()) return;
+    this.db!.exec('BEGIN');
+    try {
+      const columns = this.db!.prepare(`PRAGMA table_info(orders)`).all() as Array<{ name: string }>;
+      if (!columns.some((c) => c.name === 'token_number')) {
+        this.db!.exec(`ALTER TABLE orders ADD COLUMN token_number TEXT NOT NULL DEFAULT ''`);
+      }
+      this.db!.exec(`CREATE INDEX IF NOT EXISTS idx_orders_token ON orders(token_number)`);
+      this.db!.prepare(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (28, ?)`).run(new Date().toISOString());
+      this.db!.exec('COMMIT');
+    } catch (error) {
+      try { this.db!.exec('ROLLBACK'); } catch { /* preserve original error */ }
+      throw new Error(`[Inklly DB] Order token migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+
+  private ensurePostgresOrderTokenMigration(): void {
+    if (this.queryPostgres(`SELECT version FROM inklly_schema_migrations WHERE version = ?`, [28]).length) return;
+    this.queryPostgres('BEGIN');
+    try {
+      this.queryPostgres(`ALTER TABLE IF EXISTS orders ADD COLUMN IF NOT EXISTS token_number TEXT NOT NULL DEFAULT ''`);
+      this.queryPostgres(`CREATE INDEX IF NOT EXISTS idx_orders_token ON orders(token_number)`);
+      this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [28, new Date().toISOString()]);
+      this.queryPostgres('COMMIT');
+    } catch (error) {
+      try { this.queryPostgres('ROLLBACK'); } catch { /* preserve original error */ }
+      throw new Error(`[Inklly DB] PostgreSQL order token migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
   }
 
   private ensureSqliteOrganizationDirectoryMigration(): void {
