@@ -3205,7 +3205,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     const orderId = `refund-razorpay-${suffix}`;
     const orderNumber = `RZRF-${suffix.slice(0, 10)}`;
     const paymentId = `pay_refund_${suffix}`;
-    const webhookSecret = 'refund_webhook_secret_test_value';
+    let webhookSecret = 'refund_webhook_secret_test_value';
     const oldEncryptionKey = process.env.RAZORPAY_CREDENTIALS_ENCRYPTION_KEY;
     const originalFetch = globalThis.fetch;
     const credentials = new ShopPaymentCredentialsService(db);
@@ -3263,6 +3263,12 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       }) as typeof globalThis.fetch;
 
       const firstId = await createRequest(300);
+      // A partially saved setup must remain repairable even with a refund
+      // awaiting review; once repaired, further rotation is blocked.
+      db.execute(`DELETE FROM shop_payment_webhook_secrets WHERE shop_id = ?`, [shopId]);
+      credentials.saveRazorpay(shopId, 'rzp_test_repaired123', 'repaired_api_secret_test_value', 'repaired_webhook_secret_value');
+      webhookSecret = 'repaired_webhook_secret_value';
+      assert.equal(credentials.getRazorpayStatus(shopId).webhookConfigured, true);
       assert.throws(
         () => credentials.saveRazorpay(shopId, 'rzp_test_replacement123', 'replacement_api_secret_test_value', 'replacement_webhook_secret_value'),
         /pending Razorpay payments and refunds/i,
@@ -3305,7 +3311,10 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM ledger_entries WHERE order_id = ? AND amount_paise < 0`, [orderId]).count), 2);
     } finally {
       globalThis.fetch = originalFetch;
-      credentials.removeRazorpay(shopId);
+      // Test teardown bypasses production guards so one unrelated shared-shop
+      // fixture cannot make this test leave credentials behind.
+      db.execute(`DELETE FROM shop_payment_webhook_secrets WHERE shop_id = ?`, [shopId]);
+      db.execute(`DELETE FROM shop_payment_credentials WHERE shop_id = ?`, [shopId]);
       if (oldEncryptionKey === undefined) delete process.env.RAZORPAY_CREDENTIALS_ENCRYPTION_KEY;
       else process.env.RAZORPAY_CREDENTIALS_ENCRYPTION_KEY = oldEncryptionKey;
     }

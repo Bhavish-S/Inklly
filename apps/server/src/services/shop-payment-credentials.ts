@@ -74,7 +74,13 @@ export class ShopPaymentCredentialsService {
   private lockShopForCredentialMutation(shopId: string): void {
     const locked = this.db.queryOne<any>(`UPDATE shops SET updated_at = updated_at WHERE id = ? RETURNING id`, [shopId]);
     if (!locked) throw new Error('Shop no longer exists.');
-    if (this.hasInFlightPaymentsOrRefunds(shopId)) {
+    const completeConfiguration = this.db.queryOne<any>(
+      `SELECT c.shop_id FROM shop_payment_credentials c JOIN shop_payment_webhook_secrets w ON w.shop_id = c.shop_id
+       WHERE c.shop_id = ? AND c.provider = 'RAZORPAY'`, [shopId]
+    );
+    // Allow recovery from an absent or incomplete setup. Once both secrets are
+    // present, protect any active checkout/refund from accidental rotation.
+    if (completeConfiguration && this.hasInFlightPaymentsOrRefunds(shopId)) {
       throw new Error('Resolve pending Razorpay payments and refunds before changing this shop’s credentials.');
     }
   }
