@@ -364,25 +364,53 @@ input, select, textarea {
   color: #0F172A;
 }
 
-.dark input, .dark select, .dark textarea {
+.dark input:not(.bg-white):not([class*="bg-white"]):not([class*="text-slate-"]):not([class*="text-gray-"]),
+.dark select:not(.bg-white):not([class*="bg-white"]):not([class*="text-slate-"]):not([class*="text-gray-"]),
+.dark textarea:not(.bg-white):not([class*="bg-white"]):not([class*="text-slate-"]):not([class*="text-gray-"]) {
   color: #F8FAFC;
 }
 
-/* Any input on a light surface or explicitly with bg-white MUST always show dark high-contrast text */
+/* Any input on a light surface, inside registration forms, or with bg-white MUST always show dark high-contrast text */
 input.bg-white,
 select.bg-white,
 textarea.bg-white,
 .bg-white input,
 .bg-white select,
-.bg-white textarea {
+.bg-white textarea,
+input[class*="bg-white"],
+select[class*="bg-white"],
+textarea[class*="bg-white"],
+input[class*="text-slate-900"],
+.registration-input {
   color: #0F172A !important;
+  -webkit-text-fill-color: #0F172A !important;
+}
+
+/* Browser autofill styles: ensure autofilled inputs never render faint or white text in dark mode */
+input:-webkit-autofill,
+input:-webkit-autofill:hover, 
+input:-webkit-autofill:focus, 
+input:-webkit-autofill:active,
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:hover,
+textarea:-webkit-autofill:focus,
+select:-webkit-autofill,
+select:-webkit-autofill:hover,
+select:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px #ffffff inset !important;
+  box-shadow: 0 0 0 1000px #ffffff inset !important;
+  -webkit-text-fill-color: #0F172A !important;
+  color: #0F172A !important;
+  caret-color: #0F172A !important;
 }
 
 input.bg-white::placeholder,
 textarea.bg-white::placeholder,
 .bg-white input::placeholder,
-.bg-white textarea::placeholder {
+.bg-white textarea::placeholder,
+input[class*="bg-white"]::placeholder {
   color: #94A3B8 !important;
+  -webkit-text-fill-color: #94A3B8 !important;
 }
 
 .input-field {

@@ -251,11 +251,6 @@ export class AuthController {
       }
       cleanCode = candidateCode;
 
-      const existingUser = this.userRepo.getUserByEmail(normalizedEmail);
-      if (existingUser) {
-        return res.status(409).json({ error: 'An account with this email already exists' });
-      }
-
       const isPaid = Boolean(paymentDetails && (paymentDetails.razorpay_payment_id || paymentDetails.testPaymentId || paymentDetails.testSimulated));
       const selectedPlan = SUBSCRIPTION_PLANS.find((p) => p.id === planId) || (isPaid ? SUBSCRIPTION_PLANS[1] : SUBSCRIPTION_PLANS[0]);
       const isLifetime = selectedPlan.id === 'plan-lifetime' || billingCycle === 'lifetime';
@@ -263,6 +258,15 @@ export class AuthController {
       const amountPaise = isLifetime ? selectedPlan.annualPricePaise : isYearly ? selectedPlan.annualPricePaise : selectedPlan.monthlyPricePaise;
       const effectivePaymentId = paymentDetails?.razorpay_payment_id || paymentDetails?.testPaymentId || `pay_test_${crypto.randomUUID().slice(0, 10)}`;
       const effectiveOrderId = paymentDetails?.razorpay_order_id || `order_test_${crypto.randomUUID().slice(0, 10)}`;
+
+      const existingUser = this.userRepo.getUserByEmail(normalizedEmail);
+      if (existingUser) {
+        return res.status(409).json({
+          error: 'An account with this email already exists. Please sign in to your dashboard.',
+          accountExists: true,
+          email: normalizedEmail,
+        });
+      }
 
       // Guarantee unique IDs for platform_subscription_payment_attempts on retries
       let finalOrderId = effectiveOrderId;

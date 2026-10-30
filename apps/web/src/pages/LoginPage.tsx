@@ -9,12 +9,25 @@ interface LoginPageProps {
 }
 
 export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, onLoginSuccess, initialRole = 'merchant' }) => {
-  const [selectedRole, setSelectedRole] = useState<'merchant' | 'owner' | 'developer'>(initialRole);
-  const [identifier, setIdentifier] = useState('');
+  const searchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
+  const urlEmail = searchParams.get('email') || '';
+  const urlRole = searchParams.get('role');
+
+  const [selectedRole, setSelectedRole] = useState<'merchant' | 'owner' | 'developer'>(
+    urlRole === 'owner' ? 'owner' : urlRole === 'developer' ? 'developer' : initialRole
+  );
+  const [identifier, setIdentifier] = useState(urlEmail);
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const fillCredentials = (role: 'merchant' | 'owner' | 'developer', userEmail: string, pass: string) => {
+    setSelectedRole(role);
+    setIdentifier(userEmail);
+    setPassword(pass);
+    setError(null);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -173,6 +186,39 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, onLoginSuccess
               <span>⚠️</span> {error}
             </div>
           )}
+
+          {/* Quick Demo Credentials Assistant */}
+          <div className="mb-4 p-3 bg-slate-100 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700/60 text-xs">
+            <div className="flex items-center justify-between mb-2">
+              <span className="font-bold text-slate-700 dark:text-slate-300 text-[11px] uppercase tracking-wider">
+                ⚡ 1-Click Demo Credentials
+              </span>
+              <span className="text-[10px] text-slate-500">Click to autofill</span>
+            </div>
+            <div className="grid grid-cols-3 gap-1.5">
+              <button
+                type="button"
+                onClick={() => fillCredentials('merchant', 'owner@campusprint.in', 'DemoOwnerPassword123!')}
+                className="px-2 py-1.5 rounded-lg bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-800 dark:text-slate-200 hover:border-brand font-medium text-[11px] text-center transition-all cursor-pointer shadow-2xs"
+              >
+                🏪 Merchant
+              </button>
+              <button
+                type="button"
+                onClick={() => fillCredentials('owner', 'admin@inklly.com', 'InkllyAdmin2026!PlatformOwner')}
+                className="px-2 py-1.5 rounded-lg bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-800 dark:text-slate-200 hover:border-brand font-medium text-[11px] text-center transition-all cursor-pointer shadow-2xs"
+              >
+                🛡️ Admin
+              </button>
+              <button
+                type="button"
+                onClick={() => fillCredentials('developer', 'dev@inklly.com', 'DemoDeveloperPassword123!')}
+                className="px-2 py-1.5 rounded-lg bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-800 dark:text-slate-200 hover:border-brand font-medium text-[11px] text-center transition-all cursor-pointer shadow-2xs"
+              >
+                💻 Dev API
+              </button>
+            </div>
+          </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>

@@ -19,7 +19,8 @@ export const PricingPage: React.FC<PricingPageProps> = ({ onNavigate }) => {
   };
 
   const handleGetStarted = (planId: string) => {
-    onNavigate(`/register?plan=${encodeURIComponent(planId)}&cycle=${encodeURIComponent(isLifetime ? 'lifetime' : isYearly ? 'yearly' : 'monthly')}`);
+    const cycle = planId === 'plan-lifetime' ? 'lifetime' : isYearly ? 'yearly' : 'monthly';
+    onNavigate(`/register?plan=${encodeURIComponent(planId)}&cycle=${encodeURIComponent(cycle)}`);
   };
 
   const faqs: AccordionItemData[] = [
