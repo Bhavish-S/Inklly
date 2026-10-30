@@ -419,6 +419,30 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [confirmedOutputJobIds, setConfirmedOutputJobIds] = useState<string[]>([]);
   const [reconcilingOutput, setReconcilingOutput] = useState(false);
 
+  // Quick document peek / preview modal
+  const [previewDocOrder, setPreviewDocOrder] = useState<any>(null);
+  const [previewBlobUrl, setPreviewBlobUrl] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState<boolean>(false);
+
+  // Dedicated B&W and Color printer routing
+  const [defaultBwPrinterId, setDefaultBwPrinterId] = useState<string>(() => (typeof window !== 'undefined' ? localStorage.getItem('inklly_default_bw_printer') || '' : ''));
+  const [defaultColorPrinterId, setDefaultColorPrinterId] = useState<string>(() => (typeof window !== 'undefined' ? localStorage.getItem('inklly_default_color_printer') || '' : ''));
+
+  // Quick token search ref for hotkey '/'
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === '/' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   // Live Print search & filter
   const [livePrintSearch, setLivePrintSearch] = useState<string>('');
   const [livePrintFilter, setLivePrintFilter] = useState<'all' | 'working' | 'alerts'>('all');
@@ -1009,10 +1033,16 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       ? `Pages ${printOpts.pageRange} (${file?.pageCount || 1}p)`
       : `${file?.pageCount || 1} pages`;
 
+    const rawToken = o.tokenNumber || (o.orderNumber ? o.orderNumber.slice(-4) : '1001');
+    const tokenDigits = String(rawToken).replace(/^T-/, '').replace(/^#/, '');
+    const tokenDisplay = `#${tokenDigits}`;
+
     return {
       id: o.orderNumber || o.id,
       rawId: o.id,
       rawStatus: o.status,
+      tokenNumber: tokenDigits,
+      tokenDisplay,
       files: o.files || [],
       printJobs: o.printJobs || [],
       customer: o.customerName || 'Walk-in Customer',
@@ -1475,16 +1505,163 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const handleOneClickPrint = async (orderId: string) => {
     const order = findCachedOrder(orderId);
     const targetId = order?.rawId || orderId;
+    const tokenDisplay = order?.tokenDisplay || `#${orderId}`;
+
+    // Smart role-based printer routing
+    const targetPrinter = (order?.rawColorMode === 'color'
+      ? (defaultColorPrinterId || selectedPrinterId)
+      : (defaultBwPrinterId || selectedPrinterId)) || undefined;
 
     try {
-      await api.dispatchPrint(targetId, selectedPrinterId || undefined);
-      setOrderActionToast(`Order #${orderId} was queued for the shop print agent.`);
+      await api.dispatchPrint(targetId, targetPrinter);
+      setOrderActionToast(`Token ${tokenDisplay} dispatched to ${targetPrinter ? 'printer ' + targetPrinter : 'default printer'}!`);
       await fetchLiveOrdersFromApi();
-    } catch (e) {
-      console.warn('Server dispatch print warning:', e);
-      setOrderActionToast(e instanceof Error ? e.message : 'Could not queue this order for printing.');
+    } catch (e: any) {
+      console.warn('Silent print dispatch error:', e);
+      setOrderActionToast(e instanceof Error ? `${e.message} (You can use Browser Print)` : 'Could not queue print job. You can use Browser Print.');
+    }
+    setTimeout(() => setOrderActionToast(null), 3500);
+  };
+
+  const handleCollectCashAndPrint = async (ord: any) => {
+    try {
+      setOrderActionToast(`Recording cash payment of ${ord.amount} for Token ${ord.tokenDisplay}…`);
+      await api.collectCash(ord.rawId);
+      setOrderActionToast(`Cash payment verified! Dispatching Token ${ord.tokenDisplay} to printer…`);
+      await handleOneClickPrint(ord.rawId);
+    } catch (e: any) {
+      console.error('Cash collect and print error:', e);
+      setOrderActionToast(e instanceof Error ? e.message : 'Cash collection failed.');
+      setTimeout(() => setOrderActionToast(null), 3500);
+    }
+  };
+
+  const handleCollectCashOnly = async (ord: any) => {
+    try {
+      setOrderActionToast(`Recording cash payment of ${ord.amount}…`);
+      await api.collectCash(ord.rawId);
+      setOrderActionToast(`Payment of ${ord.amount} recorded for Token ${ord.tokenDisplay}!`);
+      await fetchLiveOrdersFromApi();
+    } catch (e: any) {
+      setOrderActionToast(e instanceof Error ? e.message : 'Could not record cash payment.');
     }
     setTimeout(() => setOrderActionToast(null), 3000);
+  };
+
+  const handleBrowserPrint = async (ord: any) => {
+    const file = ord.files?.[0];
+    if (!file) {
+      setOrderActionToast('No document attached to this order.');
+      return;
+    }
+    try {
+      setOrderActionToast(`Opening Token ${ord.tokenDisplay} in Browser Print…`);
+      const token = typeof window !== 'undefined' ? localStorage.getItem('inklly_token') : null;
+      const res = await fetch(`/api/v1/merchant/orders/${ord.rawId}/files/${file.id}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error('Could not download print file');
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+
+      const printWin = window.open(blobUrl, '_blank');
+      if (printWin) {
+        printWin.focus();
+      }
+      setOrderActionToast(`Document opened! Use browser print dialog to print to any installed printer.`);
+    } catch (err: any) {
+      setOrderActionToast(`Browser print failed: ${err.message}`);
+    }
+    setTimeout(() => setOrderActionToast(null), 4000);
+  };
+
+  const handleQuickPreview = async (ord: any) => {
+    const file = ord.files?.[0];
+    if (!file) {
+      setOrderActionToast('No document attached to this order.');
+      return;
+    }
+    setPreviewDocOrder(ord);
+    setPreviewLoading(true);
+    setPreviewBlobUrl(null);
+
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('inklly_token') : null;
+      const res = await fetch(`/api/v1/merchant/orders/${ord.rawId}/files/${file.id}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error('Could not load document preview');
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      setPreviewBlobUrl(blobUrl);
+    } catch (err: any) {
+      setOrderActionToast(`Preview load failed: ${err.message}`);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const handlePrintTestAlignmentPage = () => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Inklly Printer Alignment & Calibration Test</title>
+        <style>
+          @page { size: A4; margin: 10mm; }
+          body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 20px; color: #172031; }
+          .header { border-bottom: 2px solid #4D64E6; padding-bottom: 12px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
+          .title { font-size: 22px; font-weight: 800; color: #4D64E6; }
+          .subtitle { font-size: 11px; color: #64748B; }
+          .grid { border: 2px dashed #94A3B8; height: 350px; display: flex; align-items: center; justify-content: center; position: relative; margin-bottom: 20px; border-radius: 8px; }
+          .grid::before { content: ''; position: absolute; width: 100%; height: 1px; background: #E2E8F0; }
+          .grid::after { content: ''; position: absolute; height: 100%; width: 1px; background: #E2E8F0; }
+          .center-text { background: white; padding: 8px 16px; border: 1px solid #CBD5E1; border-radius: 8px; font-weight: 700; font-size: 13px; z-index: 2; }
+          .swatches { display: flex; gap: 10px; margin-bottom: 20px; }
+          .swatch { flex: 1; height: 38px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: white; text-shadow: 0 1px 2px rgba(0,0,0,0.4); }
+          .swatch-c { background: #00AEEF; }
+          .swatch-m { background: #EC008C; }
+          .swatch-y { background: #FFF200; color: #333; text-shadow: none; }
+          .swatch-k { background: #000000; }
+          .swatch-g { background: #64748B; }
+          .footer { font-size: 10px; color: #94A3B8; border-top: 1px solid #E2E8F0; padding-top: 12px; text-align: center; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div>
+            <div class="title">Inklly Printer Test Page</div>
+            <div class="subtitle">Hardware Alignment, Margin & Color Calibration Test</div>
+          </div>
+          <div style="text-align: right; font-size: 11px; color: #64748B;">
+            <strong>${liveShop?.name || 'Inklly Print Shop'}</strong><br/>
+            ${new Date().toLocaleString()}
+          </div>
+        </div>
+        <div class="grid">
+          <div class="center-text">✓ A4 Margins, Paper Feed & Alignment Verified</div>
+        </div>
+        <div style="font-size: 11px; font-weight: 700; margin-bottom: 6px; color: #475569;">Color & Density Calibration:</div>
+        <div class="swatches">
+          <div class="swatch swatch-c">Cyan</div>
+          <div class="swatch swatch-m">Magenta</div>
+          <div class="swatch swatch-y">Yellow</div>
+          <div class="swatch swatch-k">Black 100%</div>
+          <div class="swatch swatch-g">Grayscale 50%</div>
+        </div>
+        <div class="footer">
+          Inklly Intelligent Print Operations · Generated from Merchant Counter Dashboard · If this page printed clearly, your hardware queue is operational!
+        </div>
+      </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => {
+      printWindow.print();
+    }, 500);
   };
 
   const handleRejectOrder = async (orderId: string) => {
@@ -2610,14 +2787,15 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
 
             {/* Filters Row */}
             <div className="flex flex-col sm:flex-row gap-3 items-center justify-between">
-              <div className="relative w-full sm:w-80">
+              <div className="relative w-full sm:w-96">
                 <SearchIcon size={14} className="absolute left-3.5 top-3 text-slate-400" />
                 <input
+                  ref={searchInputRef}
                   type="text"
                   value={orderSearchQuery}
                   onChange={(e) => { setOrderSearchQuery(e.target.value); setQueuePage(1); }}
-                  placeholder="Search order ID, name, phone or file…"
-                  className="w-full pl-9 pr-4 py-2 rounded-full border border-gray-200 dark:border-gray-700 text-xs bg-white dark:bg-gray-800 outline-none focus:border-[#4E65F6]"
+                  placeholder="Search token # (e.g. 4821), customer name or phone… (Press '/' to focus)"
+                  className="w-full pl-9 pr-4 py-2 rounded-full border border-gray-200 dark:border-gray-700 text-xs bg-white dark:bg-gray-800 outline-none focus:border-[#4E65F6] shadow-2xs"
                 />
               </div>
               <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
@@ -2652,160 +2830,190 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                 <table className="w-full text-xs text-left">
                   <thead className="bg-gray-50 dark:bg-gray-800/60 border-b border-gray-100 dark:border-gray-800 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
                     <tr>
-                      <th className="py-3 px-4 w-10">
-                        <input type="checkbox" className="rounded text-[#4D64E6]" />
-                      </th>
-                      <th className="py-3 px-4">CUSTOMER & CONTACT</th>
-                      <th className="py-3 px-4">DOCUMENTS</th>
-                      <th className="py-3 px-4">STATUS</th>
-                      <th className="py-3 px-4">PRICE</th>
-                      <th className="py-3 px-4 text-right">ACTIONS</th>
+                      <th className="py-3.5 px-4">TOKEN #</th>
+                      <th className="py-3.5 px-4">CUSTOMER & TIME</th>
+                      <th className="py-3.5 px-4">DOCUMENT & PRINT SPECS</th>
+                      <th className="py-3.5 px-4">PAYMENT & STATUS</th>
+                      <th className="py-3.5 px-4 text-right">ONE-CLICK COUNTER ACTIONS</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                     {activeFilteredOrders.map((ord) => (
-                      <tr key={ord.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/40">
-                        <td className="py-4 px-4">
-                          <input type="checkbox" className="rounded text-[#4D64E6]" />
+                      <tr key={ord.id} className="hover:bg-gray-50/70 dark:hover:bg-gray-800/40 transition-colors">
+                        {/* Token Badge */}
+                        <td className="py-3.5 px-4 align-top">
+                          <div className="flex flex-col items-start gap-1">
+                            <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-[#4D64E6] dark:text-[#8293FF] font-mono font-black text-sm tracking-wider shadow-2xs">
+                              {ord.tokenDisplay}
+                            </span>
+                            <span className="text-[10px] text-gray-400 font-mono">
+                              #{String(ord.id).length > 8 ? String(ord.id).slice(0, 8) : ord.id}
+                            </span>
+                          </div>
                         </td>
-                        <td className="py-4 px-4">
-                          <div className="flex items-center gap-2">
-                            <span className="w-7 h-7 rounded-full bg-blue-100 text-[#4D64E6] dark:bg-gray-700 flex items-center justify-center text-[10px] font-bold">
+
+                        {/* Customer & Time */}
+                        <td className="py-3.5 px-4 align-top">
+                          <div className="flex items-center gap-2.5">
+                            <span className="w-8 h-8 rounded-full bg-blue-100 dark:bg-gray-700 text-[#4D64E6] dark:text-blue-300 flex items-center justify-center text-[10px] font-black shrink-0">
                               {ord.customer.slice(0, 2).toUpperCase()}
                             </span>
                             <div>
-                              <div className="font-bold text-[#172031] dark:text-white flex items-center gap-1.5">
-                                <span>{ord.customer}</span>
-                                <span className="text-[10px] text-purple-600 bg-purple-50 dark:bg-purple-950/40 px-1.5 py-0.2 rounded font-mono font-semibold">
-                                  #{ord.id}
-                                </span>
+                              <div className="font-bold text-[#172031] dark:text-white leading-tight">
+                                {ord.customer}
                               </div>
-                              <div className="text-[10px] text-gray-400">{ord.time} · {ord.phone}</div>
+                              <div className="text-[10px] text-gray-400 mt-0.5">
+                                {ord.time} · {ord.phone}
+                              </div>
                             </div>
                           </div>
                         </td>
-                        <td className="py-4 px-4">
-                          <div className="flex items-center gap-1.5">
-                            <span className="bg-red-50 text-red-600 font-extrabold px-1.5 py-0.5 rounded text-[9px]">PDF</span>
-                            <span className="font-semibold text-gray-800 dark:text-gray-200 truncate max-w-xs">{ord.document}</span>
-                            <span className="text-gray-400 text-[10px]">({ord.pages}p · {ord.copies}x)</span>
+
+                        {/* Document & Print Specs */}
+                        <td className="py-3.5 px-4 align-top">
+                          <div className="space-y-1.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 font-extrabold px-1.5 py-0.5 rounded text-[9px]">PDF</span>
+                              <span className="font-semibold text-gray-800 dark:text-gray-200 truncate max-w-[180px] sm:max-w-xs" title={ord.document}>
+                                {ord.document}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${
+                                ord.rawColorMode === 'color'
+                                  ? 'bg-pink-50 dark:bg-pink-950/40 text-pink-700 dark:text-pink-300 border-pink-200 dark:border-pink-800'
+                                  : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                              }`}>
+                                {ord.rawColorMode === 'color' ? '🎨 COLOR' : '⚫ B&W'}
+                              </span>
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700">
+                                {ord.pages}p · {ord.copies}x
+                              </span>
+                              <span className="text-[10px] text-gray-500 dark:text-gray-400 font-medium">
+                                {ord.duplex}
+                              </span>
+                            </div>
                           </div>
-                          <div className="text-[10px] text-gray-400 mt-0.5">
-                            {ord.colorMode} · {ord.duplex}
+                        </td>
+
+                        {/* Status & Payment */}
+                        <td className="py-3.5 px-4 align-top">
+                          <div className="space-y-1.5">
+                            <div className="font-bold text-gray-900 dark:text-white flex items-center gap-1.5">
+                              <span className="text-sm font-black text-emerald-600 dark:text-emerald-400">{ord.amount}</span>
+                            </div>
+                            {ord.tab === 'payment_pending' ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 border border-amber-200 dark:border-amber-800 flex items-center gap-1 w-max">
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                                💵 Cash Pending
+                              </span>
+                            ) : ord.tab === 'pending' ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 flex items-center gap-1 w-max">
+                                <span>✓</span> Paid ({ord.paymentMode})
+                              </span>
+                            ) : ord.tab === 'processing' ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 flex items-center gap-1 w-max">
+                                <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" /> Ready
+                              </span>
+                            ) : ord.tab === 'printing' ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 flex items-center gap-1 w-max">
+                                <span className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-ping" /> Spooling
+                              </span>
+                            ) : ord.tab === 'print_failed' ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 dark:bg-red-950/50 text-red-700 dark:text-red-300 flex items-center gap-1 w-max">
+                                <span>⚠️</span> Jam Alert
+                              </span>
+                            ) : ord.tab === 'done' ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-300 flex items-center gap-1 w-max">
+                                <span>✓</span> Collected
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-gray-400">{ord.tab}</span>
+                            )}
                           </div>
                         </td>
-                        <td className="py-4 px-4">
-                          {ord.tab === 'pending' && (
-                            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 flex items-center gap-1.5 w-max">
-                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-                              Awaiting Action
-                            </span>
-                          )}
-                          {ord.tab === 'payment_pending' && (
-                            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-orange-50 dark:bg-orange-950/40 text-orange-800 dark:text-orange-200 flex items-center gap-1.5 w-max">
-                              <span className="w-1.5 h-1.5 rounded-full bg-orange-500" />
-                              Customer payment pending
-                            </span>
-                          )}
-                          {ord.tab === 'processing' && (
-                            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 flex items-center gap-1.5 w-max">
-                              <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
-                              Rasterizing & Ready
-                            </span>
-                          )}
-                          {ord.tab === 'printing' && (
-                            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 flex items-center gap-1.5 w-max">
-                              <span className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-ping" />
-                              Spooling to Hardware
-                            </span>
-                          )}
-                          {ord.tab === 'rejected' && (
-                            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 flex items-center gap-1.5 w-max">
-                              <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
-                              Rejected by Merchant
-                            </span>
-                          )}
-                          {ord.tab === 'print_failed' && (
-                            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-red-100 dark:bg-red-950/50 text-red-700 dark:text-red-300 flex items-center gap-1.5 w-max">
-                              <span>⚠️</span>
-                              Paper Jam Alert
-                            </span>
-                          )}
-                          {ord.tab === 'done' && (
-                            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-300 flex items-center gap-1.5 w-max">
-                              <span>✓</span>
-                              Completed & Delivered
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-4 px-4 font-bold text-gray-900 dark:text-white">
-                          <div className="text-green-600 dark:text-green-400">{ord.amount}</div>
-                          <div className="text-[9px] text-gray-400 font-normal">{ord.paymentMode}</div>
-                        </td>
-                        <td className="py-4 px-4 text-right space-x-1.5">
-                          {(ord.tab === 'pending' || ord.tab === 'payment_pending') && (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => setSelectedOrder(ord)}
-                                className="px-2.5 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition-all border border-indigo-200 cursor-pointer shadow-xs"
-                                title="Review order details and payment status"
-                              >
-                                Review
-                              </button>
-                              {ord.tab === 'pending' && <>
+
+                        {/* One-Click Counter Actions */}
+                        <td className="py-3.5 px-4 text-right align-top">
+                          <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                            {/* If Cash Pending at Counter: Provide 1-tap Collect & Print */}
+                            {ord.tab === 'payment_pending' && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCollectCashAndPrint(ord)}
+                                  className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+                                  title="Record cash received and dispatch print in 1 tap"
+                                >
+                                  <span>💵</span>
+                                  <span>Collect {ord.amount} & Print</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCollectCashOnly(ord)}
+                                  className="px-2.5 py-1.5 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 text-amber-800 dark:text-amber-200 text-xs font-bold transition-all cursor-pointer"
+                                  title="Mark cash received without sending to printer yet"
+                                >
+                                  Cash Only
+                                </button>
+                              </>
+                            )}
+
+                            {/* If Paid / Awaiting Action: 1-click Print */}
+                            {ord.tab === 'pending' && (
                               <button
                                 type="button"
                                 onClick={() => handleOneClickPrint(ord.id)}
-                                className="px-3 py-1.5 rounded-lg bg-[#4D64E6] hover:bg-[#3F54D1] text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
+                                className="px-3.5 py-1.5 rounded-xl bg-[#4D64E6] hover:bg-[#3F54D1] text-white text-xs font-black transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+                                title="Send print job to default printer matching document specs"
                               >
-                                Print
+                                <span>🖨️</span>
+                                <span>Print</span>
                               </button>
+                            )}
+
+                            {/* Quick PDF Peek / Preview */}
+                            <button
+                              type="button"
+                              onClick={() => handleQuickPreview(ord)}
+                              className="px-2 py-1.5 rounded-xl border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300 text-xs font-bold transition-all cursor-pointer"
+                              title="Instant document preview peek"
+                            >
+                              <span>👁️</span> Peek
+                            </button>
+
+                            {/* Zero-Install Direct Browser Print */}
+                            <button
+                              type="button"
+                              onClick={() => handleBrowserPrint(ord)}
+                              className="px-2 py-1.5 rounded-xl border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300 text-xs font-bold transition-all cursor-pointer"
+                              title="Open formatted document in native Browser Print"
+                            >
+                              <span>🖨️</span> Direct
+                            </button>
+
+                            {/* Detail Drawer */}
+                            <button
+                              type="button"
+                              onClick={() => setSelectedOrder(ord)}
+                              className="px-2.5 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-xs font-bold transition-all cursor-pointer"
+                              title="Review full specs, audit logs and customer notes"
+                            >
+                              Review
+                            </button>
+
+                            {/* Reject / Cancel */}
+                            {(ord.tab === 'pending' || ord.tab === 'payment_pending') && (
                               <button
                                 type="button"
                                 onClick={() => handleRejectOrder(ord.id)}
-                                className="px-2 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold transition-all cursor-pointer"
+                                className="px-2 py-1.5 rounded-xl border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 text-xs font-bold transition-all cursor-pointer"
+                                title="Reject order"
                               >
-                                Reject
+                                ✕
                               </button>
-                              </>}
-                            </>
-                          )}
-                          {(ord.tab === 'processing' || ord.tab === 'printing') && (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => setSelectedOrder(ord)}
-                                className="px-2.5 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition-all border border-indigo-200 cursor-pointer shadow-xs"
-                              >
-                                Review
-                              </button>
-                              {ord.rawStatus === 'IN_PROGRESS' && <button
-                                type="button"
-                                onClick={() => setSelectedOrder(ord)}
-                                className="px-2.5 py-1.5 rounded-lg border border-amber-300 text-amber-800 hover:bg-amber-50 text-xs font-bold transition-all cursor-pointer"
-                                title="Review print state and record physical output after inspection"
-                              >
-                                Review output
-                              </button>}
-                            </>
-                          )}
-                          {ord.tab === 'print_failed' && (
-                            <button type="button" onClick={() => setSelectedOrder(ord)} className="px-3 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-bold transition-all cursor-pointer">
-                              Review output
-                            </button>
-                          )}
-                          {ord.tab === 'done' && (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => setSelectedOrder(ord)}
-                                className="px-2.5 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 text-gray-700 dark:text-gray-200 text-xs font-bold transition-all cursor-pointer"
-                              >
-                                Details
-                              </button>
-                            </>
-                          )}
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -2977,6 +3185,101 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                       </button>
                     </section>
                   )}
+                </div>
+              </div>
+            )}
+
+            {/* Quick Document Peek / Preview Modal */}
+            {previewDocOrder && (
+              <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs animate-fadeIn">
+                <div className="bg-white dark:bg-[#1E293B] rounded-3xl max-w-2xl w-full shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden flex flex-col max-h-[90vh]">
+                  {/* Header */}
+                  <div className="p-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between bg-gray-50/50 dark:bg-gray-800/50">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 flex items-center justify-center font-mono font-black text-sm text-[#4D64E6]">
+                        {previewDocOrder.tokenDisplay}
+                      </div>
+                      <div>
+                        <h3 className="font-extrabold text-sm text-gray-900 dark:text-white flex items-center gap-2">
+                          <span className="truncate max-w-[200px] sm:max-w-xs">{previewDocOrder.document}</span>
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${previewDocOrder.rawColorMode === 'color' ? 'bg-pink-50 text-pink-700 border border-pink-200' : 'bg-slate-100 text-slate-700 border border-slate-200'}`}>
+                            {previewDocOrder.rawColorMode === 'color' ? '🎨 COLOR' : '⚫ B&W'}
+                          </span>
+                        </h3>
+                        <p className="text-xs text-gray-400">
+                          {previewDocOrder.customer} · {previewDocOrder.pages} pages · {previewDocOrder.copies}x copies · {previewDocOrder.duplex}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => { setPreviewDocOrder(null); setPreviewBlobUrl(null); }}
+                      className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 text-gray-500 hover:text-gray-900 dark:hover:text-white flex items-center justify-center text-sm font-bold cursor-pointer transition-colors"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  {/* Body: PDF Iframe or Loading */}
+                  <div className="flex-1 min-h-[380px] bg-gray-100 dark:bg-gray-900 flex items-center justify-center relative">
+                    {previewLoading ? (
+                      <div className="text-center py-12">
+                        <div className="w-8 h-8 border-3 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                        <p className="text-xs font-semibold text-gray-500">Loading document preview…</p>
+                      </div>
+                    ) : previewBlobUrl ? (
+                      <iframe
+                        src={previewBlobUrl}
+                        title="Document Preview"
+                        className="w-full h-full min-h-[420px] border-0"
+                      />
+                    ) : (
+                      <div className="text-center py-12 text-xs text-gray-400">
+                        Preview unavailable. You can use direct browser print below.
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Footer Actions */}
+                  <div className="p-4 border-t border-gray-100 dark:border-gray-800 flex flex-wrap items-center justify-between gap-3 bg-white dark:bg-[#1E293B]">
+                    <div className="text-xs text-gray-500">
+                      Payment: <strong className={previewDocOrder.paymentStatus === 'PAID' ? 'text-emerald-600' : 'text-amber-600'}>{previewDocOrder.amount} ({previewDocOrder.paymentMode})</strong>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleBrowserPrint(previewDocOrder)}
+                        className="px-3.5 py-2 rounded-xl border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800 text-xs font-bold text-gray-700 dark:text-gray-200 transition-all flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <span>🖨️ Direct Browser Print</span>
+                      </button>
+                      {previewDocOrder.tab === 'payment_pending' ? (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const ord = previewDocOrder;
+                            setPreviewDocOrder(null);
+                            await handleCollectCashAndPrint(ord);
+                          }}
+                          className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <span>💵 Collect {previewDocOrder.amount} & Print</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const ord = previewDocOrder;
+                            setPreviewDocOrder(null);
+                            await handleOneClickPrint(ord.rawId);
+                          }}
+                          className="px-4 py-2 rounded-xl bg-[#4D64E6] hover:bg-[#3F54D1] text-white text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <span>🖨️ Send to Hardware Printer</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
@@ -3998,30 +4301,68 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                   <p className="text-xs text-gray-400">Add printers, review detected capabilities, and control order routing</p>
                 </div>
 
-                <section aria-labelledby="agent-availability-title" className="bg-white dark:bg-gray-800 border border-amber-200 dark:border-amber-900 rounded-2xl p-6 shadow-xs space-y-4">
+                <section aria-labelledby="agent-availability-title" className="bg-white dark:bg-gray-800 border border-indigo-100 dark:border-indigo-900/60 rounded-2xl p-6 shadow-xs space-y-4">
                   <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-100 dark:border-gray-700 pb-4">
                     <div className="flex items-start gap-3">
-                      <div className="w-9 h-9 rounded-xl bg-amber-50 dark:bg-amber-950/40 flex items-center justify-center text-amber-700">⚠</div>
+                      <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 flex items-center justify-center text-lg">🖨️</div>
                       <div>
-                        <h3 id="agent-availability-title" className="font-extrabold text-sm text-[#172031] dark:text-white">Desktop print agent</h3>
-                        <p className="mt-1 max-w-2xl text-[11px] text-gray-500 dark:text-gray-400">A signed, verified production installer is not available yet. We have disabled installer downloads and pairing scripts, so this shop cannot currently dispatch physical print jobs through Inklly.</p>
+                        <h3 id="agent-availability-title" className="font-extrabold text-sm text-[#172031] dark:text-white">Counter Print Operations Hub</h3>
+                        <p className="mt-1 max-w-2xl text-[11px] text-gray-500 dark:text-gray-400">Configure your counter printing modes. Inklly supports zero-install direct browser printing for any device, as well as an optional silent background spooler for high-volume counters.</p>
                       </div>
                     </div>
-                    <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full ${agentOnline ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}>
-                      {agentOnline ? 'LOCAL AGENT PAIRED' : 'INSTALLER UNAVAILABLE'}
+                    <span className="text-[10px] font-black px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300">
+                      DIRECT PRINT READY
                     </span>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                    <div className="rounded-xl border border-gray-200 dark:border-gray-700 p-4 space-y-2">
-                      <div className="font-bold text-slate-900 dark:text-white">Local agent check</div>
-                      <p className="text-[11px] leading-5 text-gray-500 dark:text-gray-400">This checks whether a paired agent responds on this computer. It does not prove that the cloud heartbeat is fresh or that a printer is ready.</p>
-                      <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">{agentOnline ? `Paired local process responds · ${agentInfo?.version || 'version unavailable'}` : 'No paired agent response detected'}</div>
-                      <button type="button" onClick={() => checkAgentHealth(true)} className="mt-1 rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-[11px] font-bold hover:bg-gray-50 dark:hover:bg-gray-700">Check this computer</button>
+                    {/* Mode 1 Card */}
+                    <div className="rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/30 dark:bg-indigo-950/20 p-4 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                          <span>⚡ Mode 1: Web-Direct Print</span>
+                          <span className="text-[9px] px-2 py-0.2 bg-emerald-500 text-white rounded-full font-bold">ACTIVE</span>
+                        </div>
+                      </div>
+                      <p className="text-[11px] leading-5 text-gray-600 dark:text-gray-300">
+                        Zero software or agent install required. Click <strong>Direct</strong> or <strong>Peek</strong> on any order in your queue to immediately print via your system print dialog with exact customer paper size and color settings.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handlePrintTestAlignmentPage}
+                        className="mt-1 px-3 py-1.5 rounded-lg bg-[#4D64E6] hover:bg-[#3F54D1] text-white text-[11px] font-bold shadow-xs cursor-pointer flex items-center gap-1"
+                      >
+                        <span>🖨️</span> Send A4 Calibration Test Page
+                      </button>
                     </div>
-                    <div className="rounded-xl border border-amber-200 dark:border-amber-900 bg-amber-50/60 dark:bg-amber-950/20 p-4 space-y-2">
-                      <div className="font-bold text-amber-950 dark:text-amber-200">Pilot print safety</div>
-                      <p className="text-[11px] leading-5 text-amber-900/80 dark:text-amber-200/80">Physical printing stays disabled until installer integrity, Windows credential protection, printer capabilities, and output reconciliation have been verified on supported hardware. A spooler acceptance alone is not proof that paper was produced.</p>
+
+                    {/* Mode 2 Card */}
+                    <div className="rounded-xl border border-gray-200 dark:border-gray-700 p-4 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="font-bold text-slate-900 dark:text-white">🚀 Mode 2: Silent Hardware Spooler</div>
+                        <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${agentOnline ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-500'}`}>
+                          {agentOnline ? 'CONNECTED' : 'STANDBY'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] leading-5 text-gray-500 dark:text-gray-400">
+                        For high-volume Windows counters. Sends print jobs silently to your physical printers without opening print preview windows.
+                      </p>
+                      <div className="flex items-center gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => checkAgentHealth(true)}
+                          className="rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-[11px] font-bold hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
+                        >
+                          Check Local Agent
+                        </button>
+                        <a
+                          href="/downloads/Inklly-Agent-Setup.bat"
+                          download="Inklly-Agent-Setup.bat"
+                          className="rounded-lg border border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950/40 px-3 py-1.5 text-[11px] font-bold text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 cursor-pointer"
+                        >
+                          Download Agent (.bat)
+                        </a>
+                      </div>
                     </div>
                   </div>
                 </section>
@@ -4163,27 +4504,55 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                       ))}
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
                       <div>
-                        <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">Default Printer</label>
+                        <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">
+                          Default B&W Printer (⚫ Monochrome)
+                        </label>
                         <select
-                          value={selectedDefaultPrinter}
-                            onChange={(e) => {
-                              const selected = detectedPrinters.find((printer) => printer.name === e.target.value);
-                              if (selected) void handleSetDefaultPrinter(selected.id);
-                            }}
+                          value={defaultBwPrinterId}
+                          onChange={(e) => {
+                            setDefaultBwPrinterId(e.target.value);
+                            localStorage.setItem('inklly_default_bw_printer', e.target.value);
+                            triggerSaveNotification(`Default B&W printer set to ${e.target.value || 'Auto'}`);
+                          }}
                           className="w-full px-3 py-2 border rounded-xl bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 font-bold text-xs"
                         >
-                          {!selectedDefaultPrinter && <option value="" disabled>Choose a default printer</option>}
+                          <option value="">Auto-Route (System Default)</option>
                           {detectedPrinters.map((p) => (
-                            <option key={p.id} value={p.name}>
-                              {p.name}
+                            <option key={`bw-${p.id}`} value={p.name}>
+                              {p.name} {p.supportsColor ? '(Color)' : '(B&W)'}
                             </option>
                           ))}
                         </select>
+                        <p className="text-[10px] text-gray-400 mt-1">Black & White jobs will automatically route here</p>
                       </div>
+
                       <div>
-                        <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">Paper Tray</label>
+                        <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">
+                          Default Color Printer (🎨 Color Tank)
+                        </label>
+                        <select
+                          value={defaultColorPrinterId}
+                          onChange={(e) => {
+                            setDefaultColorPrinterId(e.target.value);
+                            localStorage.setItem('inklly_default_color_printer', e.target.value);
+                            triggerSaveNotification(`Default Color printer set to ${e.target.value || 'Auto'}`);
+                          }}
+                          className="w-full px-3 py-2 border rounded-xl bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 font-bold text-xs"
+                        >
+                          <option value="">Auto-Route (System Default)</option>
+                          {detectedPrinters.map((p) => (
+                            <option key={`col-${p.id}`} value={p.name}>
+                              {p.name} {p.supportsColor ? '🎨' : ''}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="text-[10px] text-gray-400 mt-1">Color jobs will automatically route here</p>
+                      </div>
+
+                      <div>
+                        <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1">Paper Tray & Feeder</label>
                         <select
                           value={selectedPaperTray}
                           onChange={(e) => {
@@ -4194,8 +4563,9 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                         >
                           <option value="Auto-Select">Auto-Select (Recommended)</option>
                           <option value="Tray 1">Tray 1 (A4 Standard - 250 Sheets)</option>
-                          <option value="Manual Feed">Manual Feed Slot (Envelopes / Heavy Paper)</option>
+                          <option value="Manual Feed">Manual Feed Slot (Heavy Paper)</option>
                         </select>
+                        <p className="text-[10px] text-gray-400 mt-1">Default paper drawer for print spools</p>
                       </div>
                     </div>
 

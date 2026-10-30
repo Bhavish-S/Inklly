@@ -182,13 +182,16 @@ export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onB
 
         {/* Counter Pickup Token Card */}
         {order.tokenNumber && !terminalIssue && (
-          <div className="inline-block bg-ink-surface-subtle dark:bg-ink-dark-elevated border-2 border-dashed border-brand/40 rounded-2xl px-8 py-4 mb-8">
-            <span className="text-[11px] font-semibold text-ink-text-muted dark:text-ink-dark-text-muted uppercase tracking-wider block mb-1">
+          <div className="inline-block bg-ink-surface-subtle dark:bg-ink-dark-elevated border-2 border-dashed border-brand/50 rounded-3xl px-8 py-5 mb-8 shadow-xs">
+            <span className="text-[11px] font-bold text-ink-text-muted dark:text-ink-dark-text-muted uppercase tracking-wider block mb-1">
               Counter Pickup Token
             </span>
-            <div className="text-3xl sm:text-4xl font-extrabold font-mono text-brand dark:text-brand-dark tracking-widest">
-              {order.tokenNumber}
+            <div className="text-4xl sm:text-5xl font-black font-mono text-brand dark:text-brand-dark tracking-widest my-1">
+              {order.tokenNumber.startsWith('T-') ? `#${order.tokenNumber.slice(2)}` : order.tokenNumber}
             </div>
+            <p className="text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary mt-1 font-medium">
+              Tell counter staff: <strong className="text-brand dark:text-brand-dark font-bold font-mono">Token {order.tokenNumber.replace(/^T-/, '')}</strong>
+            </p>
           </div>
         )}
 

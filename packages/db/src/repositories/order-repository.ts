@@ -36,9 +36,9 @@ export class OrderRepository {
     }
     const search = options.search?.trim();
     if (search) {
-      filters.push(`(LOWER(order_number) LIKE LOWER(?) OR LOWER(COALESCE(customer_name, '')) LIKE LOWER(?) OR LOWER(COALESCE(customer_phone, '')) LIKE LOWER(?) OR EXISTS (SELECT 1 FROM order_files f WHERE f.order_id = orders.id AND LOWER(f.file_name) LIKE LOWER(?)))`);
+      filters.push(`(LOWER(order_number) LIKE LOWER(?) OR LOWER(COALESCE(token_number, '')) LIKE LOWER(?) OR LOWER(COALESCE(customer_name, '')) LIKE LOWER(?) OR LOWER(COALESCE(customer_phone, '')) LIKE LOWER(?) OR EXISTS (SELECT 1 FROM order_files f WHERE f.order_id = orders.id AND LOWER(f.file_name) LIKE LOWER(?)))`);
       const pattern = `%${search}%`;
-      params.push(pattern, pattern, pattern, pattern);
+      params.push(pattern, pattern, pattern, pattern, pattern);
     }
     const where = filters.join(' AND ');
     const count = this.db.queryOne<{ total: number | string; revenue_paise: number | string; page_count: number | string }>(
@@ -129,6 +129,7 @@ export class OrderRepository {
   private persistOrder(order: Order): void {
       lockAvailablePrintFiles(this.db, order.files.map((file) => file.storageKey || ''));
       const tokenNumber = order.tokenNumber || `T-${Math.floor(1000 + Math.random() * 9000)}`;
+      order.tokenNumber = tokenNumber;
       this.db.execute(
         `INSERT INTO orders (
           id, shop_id, order_number, token_number, customer_name, customer_phone, customer_email,

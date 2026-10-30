@@ -314,9 +314,8 @@ export class PortalController {
       id: orderId,
       shopId,
       orderNumber,
-      // Reuse the random, unique order suffix so two concurrent orders cannot
-      // accidentally receive the same short collection token.
-      tokenNumber: `T-${orderNumber.slice(-8)}`,
+      // 4-digit counter pickup token (1000-9999) for quick callouts at shop counter
+      tokenNumber: `T-${Math.floor(1000 + (crypto.randomBytes(2).readUInt16BE(0) % 9000))}`,
       customerName: customerName || 'Counter Customer',
       customerPhone,
       customerEmail,

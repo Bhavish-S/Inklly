@@ -212,7 +212,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
   const [customerName, setCustomerName] = useState<string>('');
   const [customerPhone, setCustomerPhone] = useState<string>('');
   const [paymentMethod, setPaymentMethod] = useState<'CASH_ON_COLLECTION' | 'ONLINE_RAZORPAY'>('CASH_ON_COLLECTION');
-  const [pendingOnlineOrder, setPendingOnlineOrder] = useState<{ orderId: string; orderNumber: string; totalAmountPaise: number } | null>(null);
+  const [pendingOnlineOrder, setPendingOnlineOrder] = useState<{ orderId: string; orderNumber: string; totalAmountPaise: number; tokenNumber?: string } | null>(null);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [isSavingEdits, setIsSavingEdits] = useState<boolean>(false);
   const [editorError, setEditorError] = useState<string | null>(null);
@@ -891,7 +891,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
         if (!data?.orderId || !data?.orderNumber || !Number.isSafeInteger(data.totalAmountPaise)) {
           throw new Error('The order service did not confirm an exact order total. Please try again.');
         }
-        order = { orderId: data.orderId, orderNumber: data.orderNumber, totalAmountPaise: data.totalAmountPaise };
+        order = { orderId: data.orderId, orderNumber: data.orderNumber, totalAmountPaise: data.totalAmountPaise, tokenNumber: data.tokenNumber as string | undefined };
         totalAmountPaise = data.totalAmountPaise;
         if (paymentMethod === 'ONLINE_RAZORPAY') setPendingOnlineOrder(order);
       }
@@ -928,8 +928,11 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
         });
       }
 
+      const rawToken = order.tokenNumber || order.orderNumber || '';
+      const cleanToken = rawToken.startsWith('T-') ? `#${rawToken.slice(2)}` : (rawToken.length <= 6 ? `#${rawToken}` : `#${rawToken.slice(-4)}`);
+
       setOrderResult({
-        token: order.orderNumber,
+        token: cleanToken,
         orderId: order.orderId,
         placedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         totalAmount: (totalAmountPaise / 100).toFixed(2),
