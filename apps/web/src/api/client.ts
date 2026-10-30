@@ -83,7 +83,7 @@ export const api = {
   },
 
   // Auth & Signup Checkout
-  async createSignupCheckout(payload: { planId: string; billingCycle: 'monthly' | 'yearly'; email?: string }) {
+  async createSignupCheckout(payload: { planId: string; billingCycle: 'monthly' | 'yearly' | 'lifetime'; email?: string }) {
     const res = await fetch(`${API_BASE}/auth/signup-checkout`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

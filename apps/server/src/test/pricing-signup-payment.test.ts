@@ -162,4 +162,61 @@ describe('Pricing, Signup Credentials & Razorpay Sandbox Payment', { concurrency
     assert.equal(attempt[0].plan_tier, 'GROWTH');
     assert.equal(Number(attempt[0].amount_paise), 19900);
   });
+
+  it('completes lifetime plan signup with 149900 paise and activates lifetime access', async () => {
+    const email = 'lifetimeowner@testprint.in';
+    const password = 'SuperSecurePassword2026!';
+
+    // 1. Checkout for lifetime
+    const checkoutRes = await fetch(`${baseUrl}/api/v1/auth/signup-checkout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        planId: 'plan-lifetime',
+        billingCycle: 'lifetime',
+      }),
+    });
+    assert.equal(checkoutRes.status, 200);
+    const checkout = await checkoutRes.json() as any;
+    assert.equal(checkout.amount, 149900);
+    assert.equal(checkout.plan.billingCycle, 'lifetime');
+    assert.equal(checkout.plan.id, 'plan-lifetime');
+
+    // 2. Register with lifetime payment
+    const regRes = await fetch(`${baseUrl}/api/v1/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ownerName: 'Priya Sharma',
+        businessName: 'Priya Express Print',
+        shopCode: 'priya-express',
+        email,
+        password,
+        phone: '9822012345',
+        address: 'FC Road',
+        city: 'Pune',
+        state: 'Maharashtra',
+        pinCode: '411004',
+        planId: 'plan-lifetime',
+        billingCycle: 'lifetime',
+        paymentDetails: {
+          provider: 'SANDBOX_TEST_KIT',
+          razorpay_order_id: checkout.razorpayOrderId,
+          razorpay_payment_id: 'pay_test_lifetime123',
+          testSimulated: true,
+        },
+      }),
+    });
+    assert.equal(regRes.status, 201);
+    const regData = await regRes.json() as any;
+    assert.equal(regData.success, true);
+    assert.equal(regData.subscription.status, 'ACTIVE');
+    assert.equal(regData.subscription.amountPaise, 149900);
+
+    // Verify current_period_end is > 50 years in future
+    const sub = db.queryOne<any>(`SELECT * FROM subscriptions WHERE organization_id = ?`, [regData.organizationId]);
+    assert.ok(sub);
+    const endYear = new Date(sub.current_period_end).getFullYear();
+    assert.ok(endYear > 2070, `Expected endYear > 2070, got ${endYear}`);
+  });
 });

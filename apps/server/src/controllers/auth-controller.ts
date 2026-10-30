@@ -145,8 +145,9 @@ export class AuthController {
     try {
       const { planId, billingCycle } = req.body || {};
       const plan = SUBSCRIPTION_PLANS.find((p) => p.id === planId) || SUBSCRIPTION_PLANS[1];
-      const isYearly = billingCycle === 'yearly';
-      const amountPaise = isYearly ? plan.annualPricePaise : plan.monthlyPricePaise;
+      const isLifetime = plan.id === 'plan-lifetime' || billingCycle === 'lifetime';
+      const isYearly = !isLifetime && billingCycle === 'yearly';
+      const amountPaise = isLifetime ? plan.annualPricePaise : isYearly ? plan.annualPricePaise : plan.monthlyPricePaise;
 
       const platformConfig = this.platformProvider.getConfig();
       if (platformConfig && platformConfig.keyId.startsWith('rzp_')) {
@@ -168,7 +169,7 @@ export class AuthController {
               id: plan.id,
               name: plan.name,
               tier: plan.tier,
-              billingCycle: isYearly ? 'yearly' : 'monthly',
+              billingCycle: isLifetime ? 'lifetime' : isYearly ? 'yearly' : 'monthly',
               amountPaise,
             },
           });
@@ -192,7 +193,7 @@ export class AuthController {
           id: plan.id,
           name: plan.name,
           tier: plan.tier,
-          billingCycle: isYearly ? 'yearly' : 'monthly',
+          billingCycle: isLifetime ? 'lifetime' : isYearly ? 'yearly' : 'monthly',
           amountPaise,
         },
       });
@@ -256,8 +257,9 @@ export class AuthController {
 
     const isPaid = Boolean(paymentDetails && (paymentDetails.razorpay_payment_id || paymentDetails.testPaymentId || paymentDetails.testSimulated));
     const selectedPlan = SUBSCRIPTION_PLANS.find((p) => p.id === planId) || (isPaid ? SUBSCRIPTION_PLANS[1] : SUBSCRIPTION_PLANS[0]);
-    const isYearly = billingCycle === 'yearly';
-    const amountPaise = isYearly ? selectedPlan.annualPricePaise : selectedPlan.monthlyPricePaise;
+    const isLifetime = selectedPlan.id === 'plan-lifetime' || billingCycle === 'lifetime';
+    const isYearly = !isLifetime && billingCycle === 'yearly';
+    const amountPaise = isLifetime ? selectedPlan.annualPricePaise : isYearly ? selectedPlan.annualPricePaise : selectedPlan.monthlyPricePaise;
     const effectivePaymentId = paymentDetails?.razorpay_payment_id || paymentDetails?.testPaymentId || `pay_test_${crypto.randomUUID().slice(0, 10)}`;
     const effectiveOrderId = paymentDetails?.razorpay_order_id || `order_test_${crypto.randomUUID().slice(0, 10)}`;
 
@@ -269,7 +271,9 @@ export class AuthController {
     const trialStartsAt = now;
     const trialEndsAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
     const paidStartsAt = now;
-    const paidEndsAt = isYearly
+    const paidEndsAt = isLifetime
+      ? new Date(Date.now() + 100 * 365 * 24 * 60 * 60 * 1000).toISOString()
+      : isYearly
       ? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString()
       : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
@@ -414,8 +418,8 @@ export class AuthController {
           currency: 'INR',
           provider: 'RAZORPAY',
           providerTransactionId: effectivePaymentId,
-          description: `Inklly ${selectedPlan.name} (${isYearly ? 'yearly' : 'monthly'}) subscription payment`,
-          metadata: { planId: selectedPlan.id, billingCycle: isYearly ? 'yearly' : 'monthly' },
+          description: `Inklly ${selectedPlan.name} (${isLifetime ? 'lifetime' : isYearly ? 'yearly' : 'monthly'}) subscription payment`,
+          metadata: { planId: selectedPlan.id, billingCycle: isLifetime ? 'lifetime' : isYearly ? 'yearly' : 'monthly' },
           createdAt: now,
         });
       } else {

@@ -99,8 +99,8 @@ const PLANS: Record<string, PlanInfo> = {
     annualPrice: 1499,
     orderLimit: 100000,
     printers: 100,
-    tagline: 'One payment. Permanent access to every Inklly feature',
-    features: ['Unlimited orders/month', 'Unlimited printers', 'All-document auto print', '90% discount applied'],
+    tagline: 'One payment. Permanent access to every Inklly feature.',
+    features: ['Unlimited orders/month', 'Unlimited printers', 'All-document auto print', 'Permanent lifetime access'],
   },
 };
 
@@ -108,10 +108,18 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
   // Read plan & cycle from URL if present
   const searchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
   const urlPlan = searchParams.get('plan') || 'plan-growth';
-  const urlCycle = (searchParams.get('cycle') as 'monthly' | 'yearly') || 'monthly';
+  const urlCycle = searchParams.get('cycle');
 
-  const [selectedPlanId, setSelectedPlanId] = useState<string>(PLANS[urlPlan] ? urlPlan : 'plan-growth');
-  const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>(urlCycle === 'yearly' ? 'yearly' : 'monthly');
+  const initialPlanId = PLANS[urlPlan] ? urlPlan : 'plan-growth';
+  const initialCycle: 'monthly' | 'yearly' | 'lifetime' =
+    initialPlanId === 'plan-lifetime' || urlCycle === 'lifetime'
+      ? 'lifetime'
+      : urlCycle === 'yearly'
+      ? 'yearly'
+      : 'monthly';
+
+  const [selectedPlanId, setSelectedPlanId] = useState<string>(initialPlanId);
+  const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly' | 'lifetime'>(initialCycle);
 
   // Form Fields
   const [ownerName, setOwnerName] = useState('');
@@ -143,8 +151,13 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
     paymentId?: string;
   } | null>(null);
 
+  const isLifetime = selectedPlanId === 'plan-lifetime' || billingCycle === 'lifetime';
   const selectedPlan = PLANS[selectedPlanId] || PLANS['plan-growth'];
-  const priceInr = billingCycle === 'yearly' ? selectedPlan.annualPrice : selectedPlan.monthlyPrice;
+  const priceInr = isLifetime
+    ? 1499
+    : billingCycle === 'yearly'
+    ? selectedPlan.annualPrice
+    : selectedPlan.monthlyPrice;
 
   const handleBusinessNameChange = (name: string) => {
     setBusinessName(name);
@@ -208,7 +221,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
         state: state.trim() || 'Maharashtra',
         pinCode: pinCode.trim() || '411001',
         planId: selectedPlan.id,
-        billingCycle,
+        billingCycle: isLifetime ? 'lifetime' : billingCycle,
         paymentDetails,
       });
 
@@ -230,10 +243,10 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
 
       setRegisteredSuccess({
         email: email.toLowerCase().trim(),
-        planName: selectedPlan.name,
-        billingCycle: billingCycle === 'yearly' ? 'Yearly' : 'Monthly',
+        planName: isLifetime ? 'Lifetime Deal' : selectedPlan.name,
+        billingCycle: isLifetime ? 'One-time Payment' : billingCycle === 'yearly' ? 'Yearly' : 'Monthly',
         shopCode: cleanSlug,
-        paymentId: paymentDetails?.razorpay_payment_id || 'Free Trial Activated',
+        paymentId: paymentDetails?.razorpay_payment_id || (paymentDetails ? 'Verified Payment' : 'Free Trial Activated'),
       });
     } catch (err: any) {
       setError(err.message || 'Registration failed. Please review your details and try again.');
@@ -257,7 +270,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
 
       const checkout = await api.createSignupCheckout({
         planId: selectedPlan.id,
-        billingCycle,
+        billingCycle: isLifetime ? 'lifetime' : billingCycle,
         email: email.trim(),
       });
 
@@ -268,7 +281,9 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
           amount: checkout.amount,
           currency: checkout.currency,
           name: 'Inklly Cloud Print',
-          description: `${checkout.plan.name} (${billingCycle})`,
+          description: isLifetime
+            ? 'Inklly Lifetime License (Permanent Access)'
+            : `${checkout.plan.name} (${billingCycle})`,
           order_id: checkout.razorpayOrderId,
           prefill: {
             name: ownerName,
@@ -328,7 +343,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
     try {
       const checkout = await api.createSignupCheckout({
         planId: selectedPlan.id,
-        billingCycle,
+        billingCycle: isLifetime ? 'lifetime' : billingCycle,
         email: email.trim(),
       });
 
@@ -454,69 +469,149 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
               <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-2">
                 Selected Subscription Plan
               </label>
-              <div className="grid grid-cols-2 gap-1.5 p-1 bg-white/10 rounded-xl border border-white/15">
-                {Object.values(PLANS).map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => setSelectedPlanId(p.id)}
-                    className={`px-2 py-1.5 rounded-lg text-xs font-bold transition-all text-center cursor-pointer ${
-                      selectedPlanId === p.id
-                        ? 'bg-[#4D64E6] text-white shadow-xs'
-                        : 'text-gray-300 hover:text-white'
-                    }`}
-                  >
-                    {p.name.replace('Inklly ', '')}
-                  </button>
-                ))}
+              <div className="space-y-1.5 p-1.5 bg-white/10 rounded-xl border border-white/15">
+                {/* 4 Standard Plans */}
+                <div className="grid grid-cols-2 gap-1.5">
+                  {['plan-starter', 'plan-growth', 'plan-pro', 'plan-scale'].map((id) => {
+                    const p = PLANS[id];
+                    const isSelected = selectedPlanId === id && !isLifetime;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedPlanId(p.id);
+                          if (billingCycle === 'lifetime') setBillingCycle('monthly');
+                        }}
+                        className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all text-center cursor-pointer ${
+                          isSelected
+                            ? 'bg-[#4D64E6] text-white shadow-xs'
+                            : 'text-gray-300 hover:text-white hover:bg-white/5'
+                        }`}
+                      >
+                        {p.name}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Lifetime Deal Banner Pill */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedPlanId('plan-lifetime');
+                    setBillingCycle('lifetime');
+                  }}
+                  className={`w-full px-3 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-between cursor-pointer border ${
+                    isLifetime
+                      ? 'bg-[#4D64E6] border-[#4D64E6] text-white shadow-xs ring-1 ring-white/30'
+                      : 'bg-white/5 border-white/10 text-gray-300 hover:text-white hover:bg-white/10'
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <span>⚡ Lifetime Plan</span>
+                    <span className="text-[10px] text-indigo-200 font-normal hidden sm:inline">• Permanent access</span>
+                  </span>
+                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-500 text-white uppercase tracking-wider shadow-xs">
+                    90% OFF • ₹1,499
+                  </span>
+                </button>
               </div>
             </div>
 
             {/* Plan Details Card */}
-            <div className="bg-white/5 border border-white/15 rounded-2xl p-5 mb-6">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold uppercase tracking-wider text-[#A9B6FF]">
-                  {selectedPlan.name}
-                </span>
-                {selectedPlan.popular && (
-                  <span className="px-2 py-0.5 rounded-full bg-[#4D64E6] text-white text-[10px] font-extrabold uppercase">
-                    Popular
-                  </span>
-                )}
-              </div>
+            <div className="bg-white/5 border border-white/15 rounded-2xl p-5 mb-6 relative">
+              {isLifetime ? (
+                <>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold uppercase tracking-wider text-[#A9B6FF]">
+                      Lifetime
+                    </span>
+                    <span className="px-2.5 py-0.5 rounded-full bg-emerald-500 text-white text-[10px] font-black uppercase tracking-wider shadow-xs">
+                      90% OFF
+                    </span>
+                  </div>
 
-              {/* Price & Billing Cycle Toggle */}
-              <div className="flex items-baseline gap-1.5 my-2">
-                <span className="text-3xl font-extrabold text-white">
-                  ₹{priceInr.toLocaleString('en-IN')}
-                </span>
-                <span className="text-xs text-gray-300">
-                  {billingCycle === 'yearly' ? '/year' : '/month'}
-                </span>
-              </div>
+                  <p className="text-xs text-slate-300 leading-relaxed mb-3">
+                    One payment. Permanent access to every Inklly feature.
+                  </p>
 
-              {/* Billing Cycle Picker */}
-              <div className="flex items-center gap-2 mt-3 pt-3 border-t border-white/10 text-xs">
-                <button
-                  type="button"
-                  onClick={() => setBillingCycle('monthly')}
-                  className={`px-2.5 py-1 rounded-md font-bold transition-all cursor-pointer ${
-                    billingCycle === 'monthly' ? 'bg-white text-[#172031]' : 'text-gray-300 hover:text-white'
-                  }`}
-                >
-                  Monthly
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setBillingCycle('yearly')}
-                  className={`px-2.5 py-1 rounded-md font-bold transition-all flex items-center gap-1 cursor-pointer ${
-                    billingCycle === 'yearly' ? 'bg-white text-[#172031]' : 'text-gray-300 hover:text-white'
-                  }`}
-                >
-                  <span>Yearly</span>
-                  <span className="text-[9px] px-1 py-0.2 bg-[#1F8A4C] text-white rounded">Save 17%</span>
-                </button>
-              </div>
+                  {/* Strikethrough & Big Price */}
+                  <div className="text-slate-400 font-bold text-xs line-through mb-0.5">
+                    ₹14,999
+                  </div>
+                  <div className="flex items-baseline gap-1.5 mb-1.5">
+                    <span className="text-3xl font-extrabold text-white">
+                      ₹1,499
+                    </span>
+                    <span className="text-xs text-slate-300 font-medium">
+                      one time
+                    </span>
+                  </div>
+
+                  {/* Discount callout */}
+                  <div className="text-xs font-bold text-emerald-400 mb-4 flex items-center gap-1">
+                    <span>✓</span>
+                    <span>You save ₹13,500 • 90% discount</span>
+                  </div>
+
+                  {/* Lifetime Info Box replacing Monthly/Yearly Toggle */}
+                  <div className="px-3 py-2 rounded-xl bg-white/10 border border-white/15 text-[11px] font-medium text-indigo-200 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                    <span>Permanent access • No monthly or yearly renewal charges</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold uppercase tracking-wider text-[#A9B6FF]">
+                      {selectedPlan.name}
+                    </span>
+                    {selectedPlan.popular && (
+                      <span className="px-2 py-0.5 rounded-full bg-[#4D64E6] text-white text-[10px] font-extrabold uppercase">
+                        Popular
+                      </span>
+                    )}
+                  </div>
+
+                  <p className="text-xs text-slate-300 leading-relaxed mb-3">
+                    {selectedPlan.tagline}
+                  </p>
+
+                  {/* Price & Billing Cycle Toggle */}
+                  <div className="flex items-baseline gap-1.5 my-2">
+                    <span className="text-3xl font-extrabold text-white">
+                      ₹{priceInr.toLocaleString('en-IN')}
+                    </span>
+                    <span className="text-xs text-gray-300">
+                      {billingCycle === 'yearly' ? '/year' : '/month'}
+                    </span>
+                  </div>
+
+                  {/* Billing Cycle Picker */}
+                  <div className="flex items-center gap-2 mt-3 pt-3 border-t border-white/10 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setBillingCycle('monthly')}
+                      className={`px-2.5 py-1 rounded-md font-bold transition-all cursor-pointer ${
+                        billingCycle === 'monthly' ? 'bg-white text-[#172031]' : 'text-gray-300 hover:text-white'
+                      }`}
+                    >
+                      Monthly
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBillingCycle('yearly')}
+                      className={`px-2.5 py-1 rounded-md font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                        billingCycle === 'yearly' ? 'bg-white text-[#172031]' : 'text-gray-300 hover:text-white'
+                      }`}
+                    >
+                      <span>Yearly</span>
+                      <span className="text-[9px] px-1 py-0.2 bg-[#1F8A4C] text-white rounded">Save 17%</span>
+                    </button>
+                  </div>
+                </>
+              )}
 
               {/* Feature Inclusions */}
               <div className="space-y-2 mt-4 pt-3 border-t border-white/10 text-xs text-gray-200">
@@ -763,10 +858,14 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
                 disabled={loading}
                 className="w-full py-3.5 bg-[#4D64E6] hover:bg-[#3F54D1] text-white rounded-xl font-bold text-sm shadow-md transition-all cursor-pointer flex items-center justify-center gap-2"
               >
-                <span>Pay ₹{priceInr.toLocaleString('en-IN')} via Razorpay & Activate Account →</span>
+                <span>
+                  {isLifetime
+                    ? 'Pay ₹1,499 via Razorpay & Activate Lifetime Access →'
+                    : `Pay ₹${priceInr.toLocaleString('en-IN')} via Razorpay & Activate Account →`}
+                </span>
               </button>
 
-              <div className="flex flex-col sm:flex-row gap-2">
+              <div className={`flex flex-col ${isLifetime ? '' : 'sm:flex-row'} gap-2`}>
                 <button
                   type="button"
                   disabled={loading}
@@ -774,17 +873,19 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
                   className="flex-1 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs"
                   title="Simulates an instant verified Razorpay Sandbox payment for automated testing"
                 >
-                  <span>⚡ 1-Click Sandbox Test Payment</span>
+                  <span>⚡ 1-Click Sandbox Test Payment ({isLifetime ? '₹1,499 Lifetime' : `₹${priceInr.toLocaleString('en-IN')}`})</span>
                 </button>
 
-                <button
-                  type="button"
-                  disabled={loading}
-                  onClick={handleStartFreeTrial}
-                  className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center justify-center"
-                >
-                  <span>Or Start 7-Day Free Trial (₹0 today)</span>
-                </button>
+                {!isLifetime && (
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={handleStartFreeTrial}
+                    className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center justify-center"
+                  >
+                    <span>Or Start 7-Day Free Trial (₹0 today)</span>
+                  </button>
+                )}
               </div>
             </div>
           </form>
