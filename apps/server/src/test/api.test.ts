@@ -159,6 +159,42 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     }
   });
 
+  it('allows only the persisted organization owner to manage shop Razorpay credentials and audits changes safely', async () => {
+    const shopId = 'shop-campus-1';
+    const oldEncryptionKey = process.env.RAZORPAY_CREDENTIALS_ENCRYPTION_KEY;
+    process.env.RAZORPAY_CREDENTIALS_ENCRYPTION_KEY = Buffer.alloc(32, 31).toString('base64');
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` };
+    const apiSecret = 'credential_audit_api_secret_value';
+    const webhookSecret = 'credential_audit_webhook_secret_value';
+    try {
+      const saved = await fetch(`${baseUrl}/api/v1/merchant/settings/razorpay`, {
+        method: 'PUT', headers,
+        body: JSON.stringify({ keyId: 'rzp_test_audit123', secret: apiSecret, webhookSecret }),
+      });
+      assert.equal(saved.status, 200, await saved.clone().text());
+      const stored = db.queryOne<any>(`SELECT encrypted_secret, key_id FROM shop_payment_credentials WHERE shop_id = ?`, [shopId]);
+      assert.ok(stored);
+      assert.equal(stored.key_id, 'rzp_test_audit123');
+      assert.equal(stored.encrypted_secret.includes(apiSecret), false);
+      const savedAudit = db.queryOne<any>(`SELECT actor_user_id, action, details FROM audit_events WHERE shop_id = ? AND action = 'MERCHANT_RAZORPAY_CREDENTIALS_SAVED' ORDER BY created_at DESC LIMIT 1`, [shopId]);
+      assert.equal(savedAudit.actor_user_id, db.queryOne<any>(`SELECT owner_user_id FROM organizations WHERE id = 'org-campus-network'`).owner_user_id);
+      assert.equal(savedAudit.action, 'MERCHANT_RAZORPAY_CREDENTIALS_SAVED');
+      assert.equal(JSON.stringify(JSON.parse(savedAudit.details)).includes(apiSecret), false);
+      assert.equal(JSON.stringify(JSON.parse(savedAudit.details)).includes(webhookSecret), false);
+
+      const removed = await fetch(`${baseUrl}/api/v1/merchant/settings/razorpay`, { method: 'DELETE', headers });
+      assert.equal(removed.status, 200, await removed.clone().text());
+      const removedAudit = db.queryOne<any>(`SELECT actor_user_id, action FROM audit_events WHERE shop_id = ? AND action = 'MERCHANT_RAZORPAY_CREDENTIALS_REMOVED' ORDER BY created_at DESC LIMIT 1`, [shopId]);
+      assert.equal(removedAudit.actor_user_id, savedAudit.actor_user_id);
+      assert.equal(removedAudit.action, 'MERCHANT_RAZORPAY_CREDENTIALS_REMOVED');
+    } finally {
+      db.execute(`DELETE FROM shop_payment_webhook_secrets WHERE shop_id = ?`, [shopId]);
+      db.execute(`DELETE FROM shop_payment_credentials WHERE shop_id = ?`, [shopId]);
+      if (oldEncryptionKey === undefined) delete process.env.RAZORPAY_CREDENTIALS_ENCRYPTION_KEY;
+      else process.env.RAZORPAY_CREDENTIALS_ENCRYPTION_KEY = oldEncryptionKey;
+    }
+  });
+
   it('persists bulk and additional-copy discounts atomically with audited integer-Paise rules', async () => {
     const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${merchantToken}` };
     const originalBulk = db.queryOne<any>(`SELECT * FROM bulk_discount_rules WHERE shop_id = 'shop-campus-1'`);
@@ -2326,6 +2362,8 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.ok(spec.paths['/platform/admins']?.get.description.includes('Platform-owner only'));
     assert.ok(spec.paths['/platform/admins/{id}/permissions']?.put.description.includes('take effect on the next request'));
     assert.ok(spec.paths['/merchant/settings']?.put.description.includes('settings:manage'));
+    assert.ok(spec.paths['/merchant/settings/razorpay']?.put.description.includes('persisted organization owner'));
+    assert.ok(spec.paths['/merchant/settings/razorpay']?.put.description.includes('audited'));
     assert.ok(spec.paths['/payments/orders/{id}/refunds']?.post.description.includes('Reserves balance from the verified payment'));
     assert.deepEqual(spec.paths['/payments/refunds/{id}/process']?.post.requestBody.content['application/json'].schema.properties.action.enum, ['APPROVE', 'REJECT', 'RECORD_OFFLINE']);
     assert.ok(spec.paths['/payments/webhook/razorpay/{shopId}']?.post.description.includes('refund.processed'));
@@ -3073,6 +3111,24 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(adminRes.status, 200);
     const body = await adminRes.json();
     assert.equal(body.shopId, 'shop-campus-1');
+
+    const beforeCredentials = db.query<any>(`SELECT * FROM shop_payment_credentials WHERE shop_id = ?`, ['shop-campus-1']);
+    const beforeWebhookSecrets = db.query<any>(`SELECT * FROM shop_payment_webhook_secrets WHERE shop_id = ?`, ['shop-campus-1']);
+    const selectedShop = '?shopId=shop-campus-1';
+    const ownerOnly = { Authorization: `Bearer ${adminToken}` };
+    const status = await fetch(`${baseUrl}/api/v1/merchant/settings/razorpay${selectedShop}`, { headers: ownerOnly });
+    assert.equal(status.status, 403, 'platform support bypass must not expose shop payment credential status');
+    const save = await fetch(`${baseUrl}/api/v1/merchant/settings/razorpay${selectedShop}`, {
+      method: 'PUT', headers: { ...ownerOnly, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keyId: 'rzp_test_platformattack', secret: 'platform_attack_secret_value', webhookSecret: 'platform_attack_webhook_value' }),
+    });
+    assert.equal(save.status, 403, 'platform owner cannot rotate shop-owned Razorpay credentials');
+    const test = await fetch(`${baseUrl}/api/v1/merchant/settings/razorpay/test${selectedShop}`, { method: 'POST', headers: ownerOnly });
+    assert.equal(test.status, 403, 'platform owner cannot invoke a credential test using merchant secrets');
+    const remove = await fetch(`${baseUrl}/api/v1/merchant/settings/razorpay${selectedShop}`, { method: 'DELETE', headers: ownerOnly });
+    assert.equal(remove.status, 403, 'platform owner cannot remove shop-owned Razorpay credentials');
+    assert.deepEqual(db.query<any>(`SELECT * FROM shop_payment_credentials WHERE shop_id = ?`, ['shop-campus-1']), beforeCredentials);
+    assert.deepEqual(db.query<any>(`SELECT * FROM shop_payment_webhook_secrets WHERE shop_id = ?`, ['shop-campus-1']), beforeWebhookSecrets);
   });
 
   // ─── MILESTONE 2: REFUNDS ───

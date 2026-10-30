@@ -10,7 +10,7 @@ import {
   LedgerRepository,
   AgentRepository,
 } from '@inklly/db';
-import { authenticate, requireRole, requirePermission, enforceTenantIsolation, requireActiveSubscription } from '../middleware/auth';
+import { authenticate, requireRole, requirePermission, enforceTenantIsolation, requireActiveSubscription, requireShopOrganizationOwner } from '../middleware/auth';
 import { ShopPaymentCredentialsService } from '../services/shop-payment-credentials';
 import { PrivateFileStorage } from '../services/private-file-storage';
 
@@ -64,10 +64,11 @@ export function createMerchantRoutes(db: DatabaseService, fileStorage: PrivateFi
 
   router.get('/settings', requirePermission('settings:view'), controller.getSettings);
   router.put('/settings', requirePermission('settings:manage'), controller.updateSettings);
-  router.get('/settings/razorpay', requireRole('MERCHANT_OWNER'), controller.getRazorpayCredentials);
-  router.put('/settings/razorpay', requireRole('MERCHANT_OWNER'), controller.saveRazorpayCredentials);
-  router.post('/settings/razorpay/test', requireRole('MERCHANT_OWNER'), controller.testRazorpayCredentials);
-  router.delete('/settings/razorpay', requireRole('MERCHANT_OWNER'), controller.removeRazorpayCredentials);
+  const requirePaymentCredentialOwner = requireShopOrganizationOwner(db);
+  router.get('/settings/razorpay', requireRole('MERCHANT_OWNER'), requirePaymentCredentialOwner, controller.getRazorpayCredentials);
+  router.put('/settings/razorpay', requireRole('MERCHANT_OWNER'), requirePaymentCredentialOwner, controller.saveRazorpayCredentials);
+  router.post('/settings/razorpay/test', requireRole('MERCHANT_OWNER'), requirePaymentCredentialOwner, controller.testRazorpayCredentials);
+  router.delete('/settings/razorpay', requireRole('MERCHANT_OWNER'), requirePaymentCredentialOwner, controller.removeRazorpayCredentials);
 
   router.get('/staff', requireRole('MERCHANT_OWNER', 'SHOP_MANAGER'), controller.getStaff);
   router.post('/staff', requireRole('MERCHANT_OWNER'), controller.addStaff);

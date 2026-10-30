@@ -173,6 +173,28 @@ export function requireRole(...allowedRoles: UserRole[]) {
   };
 }
 
+/** Sensitive shop controls belong to the persisted organization owner, not a
+ * platform support role or a tenant membership carrying a stale owner label. */
+export function requireShopOrganizationOwner(db: DatabaseService) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const user = req.user;
+    if (!user || user.role !== 'MERCHANT_OWNER' || !user.userId || !user.shopId || !user.organizationId) {
+      res.status(403).json({ error: 'Only this shop’s organization owner can manage payment credentials.' });
+      return;
+    }
+    const owner = db.queryOne<{ owner_user_id: string }>(
+      `SELECT o.owner_user_id FROM organizations o JOIN shops s ON s.organization_id = o.id
+       WHERE o.id = ? AND s.id = ? AND s.is_active = 1`,
+      [user.organizationId, user.shopId]
+    );
+    if (!owner || owner.owner_user_id !== user.userId) {
+      res.status(403).json({ error: 'Only this shop’s organization owner can manage payment credentials.' });
+      return;
+    }
+    next();
+  };
+}
+
 export function requirePermission(permission: string) {
   return (req: Request, res: Response, next: NextFunction) => {
     const user = req.user;

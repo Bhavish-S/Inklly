@@ -666,6 +666,24 @@ export class MerchantController {
     res.json({ shopId, ...this.paymentCredentials.getRazorpayStatus(shopId) });
   };
 
+  private auditRazorpayCredentialChange(req: Request, action: string, details?: Record<string, unknown>): void {
+    const shopId = this.getShopId(req);
+    this.userRepo.logAuditEvent({
+      id: crypto.randomUUID(),
+      actorUserId: req.user?.userId,
+      actorRole: req.user?.role,
+      shopId,
+      organizationId: req.user?.organizationId,
+      action,
+      targetType: 'SHOP_PAYMENT_CREDENTIALS',
+      targetId: shopId,
+      outcome: 'SUCCESS',
+      ipAddress: req.ip,
+      details,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
   public saveRazorpayCredentials = (req: Request, res: Response) => {
     const keyId = typeof req.body?.keyId === 'string' ? req.body.keyId.trim() : '';
     const secret = typeof req.body?.secret === 'string' ? req.body.secret.trim() : '';
@@ -674,8 +692,13 @@ export class MerchantController {
       return res.status(400).json({ error: 'Enter a valid Razorpay Key ID, API Secret, and Webhook Secret.' });
     }
     try {
-      this.paymentCredentials.saveRazorpay(this.getShopId(req), keyId, secret, webhookSecret);
       const shopId = this.getShopId(req);
+      this.db.transaction(() => {
+        this.paymentCredentials.saveRazorpay(shopId, keyId, secret, webhookSecret);
+        this.auditRazorpayCredentialChange(req, 'MERCHANT_RAZORPAY_CREDENTIALS_SAVED', {
+          keyIdPreview: `${keyId.slice(0, 8)}…`, webhookConfigured: true,
+        });
+      });
       res.json({ success: true, shopId, ...this.paymentCredentials.getRazorpayStatus(shopId) });
     } catch (error) {
       console.error('[Razorpay credentials]', error);
@@ -731,8 +754,11 @@ export class MerchantController {
 
   public removeRazorpayCredentials = (req: Request, res: Response) => {
     try {
-      this.paymentCredentials.removeRazorpay(this.getShopId(req));
       const shopId = this.getShopId(req);
+      this.db.transaction(() => {
+        this.paymentCredentials.removeRazorpay(shopId);
+        this.auditRazorpayCredentialChange(req, 'MERCHANT_RAZORPAY_CREDENTIALS_REMOVED');
+      });
       res.json({ success: true, shopId, ...this.paymentCredentials.getRazorpayStatus(shopId) });
     } catch (error) {
       return res.status(409).json({ error: error instanceof Error ? error.message : 'Unable to disconnect Razorpay.' });
