@@ -12,6 +12,7 @@ export function createAuthRoutes(db: DatabaseService): Router {
   const controller = new AuthController(userRepo, shopRepo, pricingRepo, db);
 
   router.post('/login', controller.login);
+  router.post('/signup-checkout', controller.signupCheckout);
   router.post('/register', controller.register);
   router.post('/invitations/accept', controller.acceptPlatformInvitation);
   const requireAuthentication = authenticate(db);

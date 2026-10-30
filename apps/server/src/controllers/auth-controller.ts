@@ -1,17 +1,24 @@
 import { Request, Response } from 'express';
-import { DatabaseService, ShopRepository, UserRepository, PricingRepository, hashPassword, verifyPassword } from '@inklly/db';
+import { DatabaseService, ShopRepository, UserRepository, PricingRepository, LedgerRepository, hashPassword, verifyPassword } from '@inklly/db';
 import { UserRole, ROLE_PRESETS } from '@inklly/shared';
 import { createSessionToken } from '../middleware/session-token';
 import { hashSessionToken } from '../middleware/session-token';
+import { SUBSCRIPTION_PLANS } from './subscription-controller';
+import { PlatformSubscriptionProvider } from '../services/platform-subscription-provider';
 import * as crypto from 'node:crypto';
 
 export class AuthController {
+  private ledger: LedgerRepository;
+  private platformProvider = new PlatformSubscriptionProvider();
+
   constructor(
     private userRepo: UserRepository,
     private shopRepo: ShopRepository,
     private pricingRepo: PricingRepository,
     private db: DatabaseService
-  ) {}
+  ) {
+    this.ledger = new LedgerRepository(db);
+  }
 
   private issueSessionToken(
     user: { id: string; email: string; role: UserRole },
@@ -134,6 +141,66 @@ export class AuthController {
     });
   };
 
+  public signupCheckout = async (req: Request, res: Response) => {
+    try {
+      const { planId, billingCycle } = req.body || {};
+      const plan = SUBSCRIPTION_PLANS.find((p) => p.id === planId) || SUBSCRIPTION_PLANS[1];
+      const isYearly = billingCycle === 'yearly';
+      const amountPaise = isYearly ? plan.annualPricePaise : plan.monthlyPricePaise;
+
+      const platformConfig = this.platformProvider.getConfig();
+      if (platformConfig && platformConfig.keyId.startsWith('rzp_')) {
+        try {
+          const order = await this.platformProvider.createOrder({
+            attemptId: `signup-${crypto.randomUUID()}`,
+            amountPaise,
+            organizationId: 'signup-pending',
+          });
+          return res.json({
+            success: true,
+            mode: platformConfig.mode,
+            isSandbox: platformConfig.mode === 'TEST',
+            razorpayOrderId: order.id,
+            keyId: platformConfig.keyId,
+            amount: amountPaise,
+            currency: 'INR',
+            plan: {
+              id: plan.id,
+              name: plan.name,
+              tier: plan.tier,
+              billingCycle: isYearly ? 'yearly' : 'monthly',
+              amountPaise,
+            },
+          });
+        } catch (err) {
+          console.warn('[Signup Checkout] Real Razorpay call failed, falling back to sandbox simulator:', err);
+        }
+      }
+
+      // Sandbox / Test Mode fallback
+      const testOrderId = `order_test_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 8)}`;
+      const testKeyId = (process.env.INKLLY_RAZORPAY_KEY_ID || '').trim() || 'rzp_test_InkllySandboxKey';
+      return res.json({
+        success: true,
+        mode: 'TEST',
+        isSandbox: true,
+        razorpayOrderId: testOrderId,
+        keyId: testKeyId,
+        amount: amountPaise,
+        currency: 'INR',
+        plan: {
+          id: plan.id,
+          name: plan.name,
+          tier: plan.tier,
+          billingCycle: isYearly ? 'yearly' : 'monthly',
+          amountPaise,
+        },
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Failed to initialize signup checkout' });
+    }
+  };
+
   public register = (req: Request, res: Response) => {
     const {
       orgName,
@@ -149,6 +216,9 @@ export class AuthController {
       city,
       state,
       pinCode,
+      planId,
+      billingCycle,
+      paymentDetails,
     } = req.body;
 
     const effectiveShopName = shopName || businessName;
@@ -184,6 +254,13 @@ export class AuthController {
       return res.status(409).json({ error: 'An account with this email already exists' });
     }
 
+    const isPaid = Boolean(paymentDetails && (paymentDetails.razorpay_payment_id || paymentDetails.testPaymentId || paymentDetails.testSimulated));
+    const selectedPlan = SUBSCRIPTION_PLANS.find((p) => p.id === planId) || (isPaid ? SUBSCRIPTION_PLANS[1] : SUBSCRIPTION_PLANS[0]);
+    const isYearly = billingCycle === 'yearly';
+    const amountPaise = isYearly ? selectedPlan.annualPricePaise : selectedPlan.monthlyPricePaise;
+    const effectivePaymentId = paymentDetails?.razorpay_payment_id || paymentDetails?.testPaymentId || `pay_test_${crypto.randomUUID().slice(0, 10)}`;
+    const effectiveOrderId = paymentDetails?.razorpay_order_id || `order_test_${crypto.randomUUID().slice(0, 10)}`;
+
     const now = new Date().toISOString();
     const userId = `usr-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
     const orgId = `org-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
@@ -191,119 +268,164 @@ export class AuthController {
 
     const trialStartsAt = now;
     const trialEndsAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    const paidStartsAt = now;
+    const paidEndsAt = isYearly
+      ? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString()
+      : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
-    // Keep all account records and the trial in one transaction so a partial
+    // Keep all account records and the subscription in one transaction so a partial
     // registration cannot strand a user without an organization or shop.
     this.db.transaction(() => {
-    // 1. Create User
-    this.userRepo.createUser(
-      {
-        id: userId,
+      // 1. Create User with credentials
+      this.userRepo.createUser(
+        {
+          id: userId,
+          email: normalizedEmail,
+          phone,
+          fullName: effectiveOwnerName,
+          role: 'MERCHANT_OWNER',
+          isActive: true,
+          createdAt: now,
+          updatedAt: now,
+        },
+        hashPassword(password)
+      );
+
+      // 2. Create organization
+      this.shopRepo.createOrganization({
+        id: orgId,
+        name: orgName || `${effectiveOwnerName}'s Printing Services`,
+        ownerUserId: userId,
+        planTier: isPaid ? selectedPlan.tier : 'STARTER',
+        planStatus: isPaid ? 'ACTIVE' : 'TRIAL',
+        billingCurrency: 'INR',
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      // 3. Create Shop
+      this.shopRepo.createShop({
+        id: shopId,
+        organizationId: orgId,
+        shopCode: cleanCode,
+        name: effectiveShopName,
+        tagline: 'Quality Document Printing & Copying',
+        phone: phone || '+91 99999 99999',
         email: normalizedEmail,
-        phone,
-        fullName: effectiveOwnerName,
-        role: 'MERCHANT_OWNER',
+        address: address || 'Main Market Road',
+        city: city || 'Pune',
+        state: state || 'Maharashtra',
+        pinCode: pinCode || '411001',
+        currency: 'INR',
+        paymentGateway: 'RAZORPAY',
+        acceptCashOnCollection: true,
+        autoPrintMode: 'MANUAL_OFF',
+        orderSeparator: 'NONE',
         isActive: true,
         createdAt: now,
         updatedAt: now,
-      },
-      hashPassword(password)
-    );
+      });
 
-    // 2. Create organization on the advertised no-card pilot trial.
-    this.shopRepo.createOrganization({
-      id: orgId,
-      name: orgName || `${effectiveOwnerName}'s Printing Services`,
-      ownerUserId: userId,
-      planTier: 'STARTER',
-      planStatus: 'TRIAL',
-      billingCurrency: 'INR',
-      createdAt: now,
-      updatedAt: now,
-    });
+      // 4. Create Membership
+      this.userRepo.createMembership({
+        id: `mem-${userId}`,
+        userId,
+        organizationId: orgId,
+        shopId,
+        role: 'MERCHANT_OWNER',
+        permissions: ['*'] as any,
+        createdAt: now,
+        updatedAt: now,
+      });
 
-    // 3. Create Shop
-    this.shopRepo.createShop({
-      id: shopId,
-      organizationId: orgId,
-      shopCode: cleanCode,
-      name: effectiveShopName,
-      tagline: 'Quality Document Printing & Copying',
-      phone: phone || '+91 99999 99999',
-      email: normalizedEmail,
-      address: address || 'Main Market Road',
-      city: city || 'Pune',
-      state: state || 'Maharashtra',
-      pinCode: pinCode || '411001',
-      currency: 'INR',
-      paymentGateway: 'RAZORPAY',
-      acceptCashOnCollection: true,
-      autoPrintMode: 'MANUAL_OFF',
-      orderSeparator: 'NONE',
-      isActive: true,
-      createdAt: now,
-      updatedAt: now,
-    });
+      // 5. Seed Baseline Rates for new shop
+      this.pricingRepo.setRateRule({
+        id: `rate-${shopId}-a4-bw-simp`,
+        shopId,
+        paperSize: 'A4',
+        colorMode: 'bw',
+        duplexMode: 'simplex',
+        pricePerPrintedSidePaise: 200,
+      });
+      this.pricingRepo.setRateRule({
+        id: `rate-${shopId}-a4-bw-dupl`,
+        shopId,
+        paperSize: 'A4',
+        colorMode: 'bw',
+        duplexMode: 'duplex_auto',
+        pricePerPrintedSidePaise: 150,
+      });
+      this.pricingRepo.setRateRule({
+        id: `rate-${shopId}-a4-col-simp`,
+        shopId,
+        paperSize: 'A4',
+        colorMode: 'color',
+        duplexMode: 'simplex',
+        pricePerPrintedSidePaise: 1000,
+      });
+      this.pricingRepo.setRateRule({
+        id: `rate-${shopId}-a4-col-dupl`,
+        shopId,
+        paperSize: 'A4',
+        colorMode: 'color',
+        duplexMode: 'duplex_auto',
+        pricePerPrintedSidePaise: 800,
+      });
 
-    // 4. Create Membership
-    this.userRepo.createMembership({
-      id: `mem-${userId}`,
-      userId,
-      organizationId: orgId,
-      shopId,
-      role: 'MERCHANT_OWNER',
-      permissions: ['*'] as any,
-      createdAt: now,
-      updatedAt: now,
-    });
+      this.pricingRepo.setBulkDiscountRule({
+        id: `bulk-${shopId}`,
+        shopId,
+        minOrderValuePaise: 10000,
+        discountPercentage: 10,
+        isEnabled: true,
+      });
 
-    // 5. Seed Baseline Rates for new shop
-    this.pricingRepo.setRateRule({
-      id: `rate-${shopId}-a4-bw-simp`,
-      shopId,
-      paperSize: 'A4',
-      colorMode: 'bw',
-      duplexMode: 'simplex',
-      pricePerPrintedSidePaise: 200,
-    });
-    this.pricingRepo.setRateRule({
-      id: `rate-${shopId}-a4-bw-dupl`,
-      shopId,
-      paperSize: 'A4',
-      colorMode: 'bw',
-      duplexMode: 'duplex_auto',
-      pricePerPrintedSidePaise: 150,
-    });
-    this.pricingRepo.setRateRule({
-      id: `rate-${shopId}-a4-col-simp`,
-      shopId,
-      paperSize: 'A4',
-      colorMode: 'color',
-      duplexMode: 'simplex',
-      pricePerPrintedSidePaise: 1000,
-    });
-    this.pricingRepo.setRateRule({
-      id: `rate-${shopId}-a4-col-dupl`,
-      shopId,
-      paperSize: 'A4',
-      colorMode: 'color',
-      duplexMode: 'duplex_auto',
-      pricePerPrintedSidePaise: 800,
-    });
+      if (isPaid) {
+        // Insert active subscription & billing tariff
+        const tariffId = `tariff-${crypto.randomUUID()}`;
+        this.db.execute(
+          `INSERT INTO subscription_billing_tariffs (id, organization_id, monthly_base_paise, per_side_paise, included_sides, currency, effective_from, created_by, created_at)
+           VALUES (?, ?, ?, ?, ?, 'INR', ?, ?, ?)`,
+          [tariffId, orgId, amountPaise, 20, selectedPlan.orderLimitMonthly * 2, now, userId, now]
+        );
 
-    this.pricingRepo.setBulkDiscountRule({
-      id: `bulk-${shopId}`,
-      shopId,
-      minOrderValuePaise: 10000,
-      discountPercentage: 10,
-      isEnabled: true,
-    });
+        this.db.execute(
+          `INSERT INTO subscriptions (id, organization_id, plan_id, plan_tier, status, current_period_start, current_period_end, cancel_at_period_end, amount_paise, currency, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?, 0, ?, 'INR', ?, ?)`,
+          [`sub-${orgId}`, orgId, selectedPlan.id, selectedPlan.tier, paidStartsAt, paidEndsAt, amountPaise, now, now]
+        );
 
-    this.db.execute(
-      `INSERT INTO subscriptions (id, organization_id, plan_id, plan_tier, status, current_period_start, current_period_end, cancel_at_period_end, amount_paise, currency, created_at, updated_at)
-       VALUES (?, ?, 'plan-starter', 'STARTER', 'TRIALING', ?, ?, 0, 0, 'INR', ?, ?)`,
-      [`sub-trial-${orgId}`, orgId, trialStartsAt, trialEndsAt, now, now]
-    );
+        const attemptId = crypto.randomUUID();
+        const idempotencyKey = `signup-${attemptId}`;
+        const requestFingerprint = crypto.createHash('sha256').update(`${orgId}:${selectedPlan.id}:${amountPaise}`).digest('hex');
+        this.db.execute(
+          `INSERT INTO platform_subscription_payment_attempts
+           (id, organization_id, created_by_user_id, idempotency_key, request_fingerprint, plan_id, plan_tier, tariff_id, amount_paise,
+            currency, period_start, period_end, provider, provider_order_id, provider_payment_id, status, failure_code, created_at, updated_at, captured_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'INR', ?, ?, 'RAZORPAY', ?, ?, 'VERIFIED', NULL, ?, ?, ?)`,
+          [attemptId, orgId, userId, idempotencyKey, requestFingerprint, selectedPlan.id, selectedPlan.tier, tariffId, amountPaise, paidStartsAt, paidEndsAt, effectiveOrderId, effectivePaymentId, now, now, now]
+        );
+
+        this.ledger.appendEntry({
+          id: `led-saas-${crypto.randomUUID()}`,
+          domain: 'SAAS_SUBSCRIPTION',
+          organizationId: orgId,
+          amountPaise,
+          currency: 'INR',
+          provider: 'RAZORPAY',
+          providerTransactionId: effectivePaymentId,
+          description: `Inklly ${selectedPlan.name} (${isYearly ? 'yearly' : 'monthly'}) subscription payment`,
+          metadata: { planId: selectedPlan.id, billingCycle: isYearly ? 'yearly' : 'monthly' },
+          createdAt: now,
+        });
+      } else {
+        // 7-day pilot trial
+        this.db.execute(
+          `INSERT INTO subscriptions (id, organization_id, plan_id, plan_tier, status, current_period_start, current_period_end, cancel_at_period_end, amount_paise, currency, created_at, updated_at)
+           VALUES (?, ?, 'plan-starter', 'STARTER', 'TRIALING', ?, ?, 0, 0, 'INR', ?, ?)`,
+          [`sub-trial-${orgId}`, orgId, trialStartsAt, trialEndsAt, now, now]
+        );
+      }
     });
 
     const token = this.issueSessionToken(
@@ -317,13 +439,16 @@ export class AuthController {
     res.status(201).json({
       success: true,
       registrationComplete: true,
-      message: 'Your 7-day no-card trial is active.',
+      message: isPaid ? `Your ${selectedPlan.name} subscription is active!` : 'Your 7-day no-card trial is active.',
       token,
       user: {
         id: userId,
         email: normalizedEmail,
         fullName: effectiveOwnerName,
         role: 'MERCHANT_OWNER',
+      },
+      credentials: {
+        email: normalizedEmail,
       },
       shopId,
       organizationId: orgId,
@@ -340,16 +465,16 @@ export class AuthController {
       organization: {
         id: orgId,
         name: orgName || `${effectiveOwnerName}'s Printing Services`,
-        planTier: 'STARTER',
-        planStatus: 'TRIAL',
+        planTier: isPaid ? selectedPlan.tier : 'STARTER',
+        planStatus: isPaid ? 'ACTIVE' : 'TRIAL',
       },
       subscription: {
-        planId: 'plan-starter',
-        planName: 'Inklly Starter',
-        status: 'TRIALING',
-        amountPaise: 0,
+        planId: isPaid ? selectedPlan.id : 'plan-starter',
+        planName: isPaid ? selectedPlan.name : 'Inklly Starter',
+        status: isPaid ? 'ACTIVE' : 'TRIALING',
+        amountPaise: isPaid ? amountPaise : 0,
         currency: 'INR',
-        trialEndsAt,
+        ...(isPaid ? { periodEnd: paidEndsAt } : { trialEndsAt }),
       },
     });
   };

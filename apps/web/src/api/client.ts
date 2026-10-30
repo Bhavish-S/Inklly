@@ -82,7 +82,40 @@ export const api = {
     return res.json();
   },
 
-  // Auth
+  // Auth & Signup Checkout
+  async createSignupCheckout(payload: { planId: string; billingCycle: 'monthly' | 'yearly'; email?: string }) {
+    const res = await fetch(`${API_BASE}/auth/signup-checkout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not start payment checkout');
+    return body as {
+      success: boolean;
+      mode: 'TEST' | 'LIVE';
+      isSandbox?: boolean;
+      razorpayOrderId: string;
+      keyId: string;
+      amount: number;
+      currency: string;
+      plan: {
+        id: string;
+        name: string;
+        tier: string;
+        billingCycle: string;
+        amountPaise: number;
+      };
+    };
+  },
+
+  async getSubscriptionPlans() {
+    const res = await fetch(`${API_BASE}/subscriptions/plans`);
+    const body = await res.json().catch(() => ([]));
+    if (!res.ok) throw new Error(body.error || 'Failed to load plans');
+    return body;
+  },
+
   async register(registrationData: any) {
     const res = await fetch(`${API_BASE}/auth/register`, {
       method: 'POST',

@@ -72,13 +72,7 @@ export class SubscriptionController {
   }
 
   public listPlans = (_req: Request, res: Response) => {
-    res.json(SUBSCRIPTION_PLANS.map(({ monthlyPricePaise: _monthly, annualPricePaise: _annual, ...plan }) => ({
-      ...plan,
-      catalogStatus: 'PLANNED_NOT_ENFORCED',
-      pricing: 'CONFIGURED_PER_PILOT',
-      monthlyPricePaise: null,
-      annualPricePaise: null,
-    })));
+    res.json(SUBSCRIPTION_PLANS);
   };
 
   private currentAttemptView(row: any) {
