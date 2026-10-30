@@ -236,6 +236,69 @@ describe('Relational Database & Multi-Tenancy Tests', () => {
     assert.equal(printerRepo.getPrintersByShop('shop-campus-1').find((printer) => printer.name === 'Other Agent Queue')?.isOnline, true);
   });
 
+  it('hydrates shop printer inventory and trays with one bounded database query', () => {
+    const prefix = `inventory-query-${Date.now()}`;
+    for (let index = 0; index < 5; index++) {
+      const printerId = `${prefix}-${index}`;
+      printerRepo.registerPrinter({
+        id: printerId,
+        shopId: 'shop-campus-1',
+        name: `Inventory Printer ${index}`,
+        systemDriverName: `Inventory Driver ${index}`,
+        isOnline: index % 2 === 0,
+        isDefault: index === 0,
+        supportsColor: index % 2 === 0,
+        supportsDuplex: true,
+        lastHeartbeat: new Date().toISOString(),
+        trays: [
+          { id: `${printerId}-tray-a4`, name: 'A4 tray', supportedSizes: ['A4'] as any, isDefault: true },
+          { id: `${printerId}-tray-a3`, name: 'A3 tray', supportedSizes: ['A3'] as any, isDefault: false },
+        ],
+      });
+    }
+
+    const originalQuery = db.query;
+    let inventoryQueryCount = 0;
+    (db as any).query = function (sql: string, params?: any[]) {
+      if (/FROM printers p LEFT JOIN paper_trays t/i.test(sql)) inventoryQueryCount += 1;
+      return originalQuery.call(this, sql, params);
+    };
+    try {
+      const printers = printerRepo.getPrintersByShop('shop-campus-1').filter((printer) => printer.id.startsWith(prefix));
+      assert.equal(inventoryQueryCount, 1, 'printer list and all associated trays must be loaded together');
+      assert.equal(printers.length, 5);
+      for (const printer of printers) {
+        assert.deepEqual(printer.trays.map((tray) => tray.supportedSizes), [['A3'], ['A4']]);
+      }
+    } finally {
+      (db as any).query = originalQuery;
+    }
+  });
+
+  it('checks printer ownership and dashboard health without loading tray inventory', () => {
+    const printer = printerRepo.getPrintersByShop('shop-campus-1')[0];
+    assert.ok(printer);
+    assert.equal(printerRepo.hasPrinterForShop('shop-campus-1', printer.id), true);
+    assert.equal(printerRepo.hasPrinterForShop('shop-campus-2', printer.id), false);
+    assert.equal(printerRepo.hasPrintersByShop('shop-campus-1'), true);
+    assert.equal(printerRepo.hasPrintersByShop('shop-does-not-exist'), false);
+
+    const originalQuery = db.query;
+    let healthQueryCount = 0;
+    (db as any).query = function (sql: string, params?: any[]) {
+      if (/SELECT is_online, last_heartbeat FROM printers WHERE shop_id = \?/i.test(sql)) healthQueryCount += 1;
+      return originalQuery.call(this, sql, params);
+    };
+    try {
+      const rows = printerRepo.getPrinterHealthRowsByShop('shop-campus-1');
+      assert.equal(healthQueryCount, 1);
+      assert.equal(rows.length, printerRepo.getPrintersByShop('shop-campus-1').length);
+      assert.ok(rows.every((row) => typeof row.isOnline === 'boolean'));
+    } finally {
+      (db as any).query = originalQuery;
+    }
+  });
+
   it('attaches an agent queue to its exact saved capability profile and keeps that identity on later heartbeats', () => {
     const profile = {
       id: 'printer-profile-queue-link-test', shopId: 'shop-campus-1', name: 'Configured Queue Test',

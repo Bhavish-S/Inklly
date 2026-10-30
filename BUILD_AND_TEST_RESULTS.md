@@ -5,7 +5,7 @@
 ## Current local verification
 
 - `npm run build` — passed on 2026-10-30 for database, shared, desktop agent, server, and web workspaces using Vite 6.4.5. The initial JavaScript bundle is 219.30 kB minified (61.67 kB gzip); PDF rendering is isolated in a 484.31 kB lazy-loaded chunk. Vite reports no oversized JavaScript chunk.
-- `npm test` — 279 passed, 0 failed on 2026-10-30: database 19, shared 16, agent 15, server 218, web 11. Coverage includes provider-mocked Razorpay refund processing, signed refund webhook idempotency, late failure events, stable idempotency-key retry after timeout, cash refund confirmation, partial-refund state transitions, incomplete-credential recovery, organization-owner-only Razorpay credential management and mutation audit, and batched merchant order/file/print-job hydration. These tests do not establish a live Razorpay or production PostgreSQL round trip.
+- `npm test` — 281 passed, 0 failed on 2026-10-30: database 21, shared 16, agent 15, server 218, web 11. Coverage includes provider-mocked Razorpay refund processing, signed refund webhook idempotency, late failure events, stable idempotency-key retry after timeout, cash refund confirmation, partial-refund state transitions, incomplete-credential recovery, organization-owner-only Razorpay credential management and mutation audit, and batched printer/order/file/print-job hydration. These tests do not establish a live Razorpay or production PostgreSQL round trip.
 - `npm audit --audit-level=high` — attempted twice; both requests to the npm advisory endpoint timed out, so no current audit result is available.
 - `npm run lint` — no root lint script is currently configured.
 

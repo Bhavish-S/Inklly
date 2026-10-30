@@ -60,4 +60,4 @@ Use `BUILD_AND_TEST_RESULTS.md` for the latest executed checks and `REMAINING_IS
 
 ## Verification record
 
-For the current local snapshot on 2026-10-30, `npm run build` and `npm test` completed successfully (279 tests: database 19, shared 16, agent 15, server 218, web 11). `npm audit --audit-level=high` timed out twice at the npm registry. Render's currently served OpenAPI document has not picked up the recently pushed API contract. See `BUILD_AND_TEST_RESULTS.md` for deployment and hardware limits.
+For the current local snapshot on 2026-10-30, `npm run build` and `npm test` completed successfully (281 tests: database 21, shared 16, agent 15, server 218, web 11). Printer lists hydrate trays in one query; dashboard health uses a compact projection, and printer ownership/seed checks use scoped existence queries. `npm audit --audit-level=high` timed out twice at the npm registry. Render's currently served OpenAPI document has not picked up the recently pushed API contract. See `BUILD_AND_TEST_RESULTS.md` for deployment and hardware limits.

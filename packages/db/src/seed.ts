@@ -389,7 +389,7 @@ export function seedDatabase(db: DatabaseService, forceDemoSeed: boolean = false
   const p1Id = 'printer-hp-laserjet';
   const p2Id = 'printer-canon-color';
 
-  if (printerRepo.getPrintersByShop(shopId).length === 0) {
+  if (!printerRepo.hasPrintersByShop(shopId)) {
     printerRepo.registerPrinter({
       id: p1Id,
       shopId,

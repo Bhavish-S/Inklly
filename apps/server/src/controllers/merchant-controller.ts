@@ -110,14 +110,14 @@ export class MerchantController {
   public getDashboard = (req: Request, res: Response) => {
     const shopId = this.getShopId(req);
     const { statusCounts, recentOrders } = this.orderRepo.getDashboardSummaryByShop(shopId);
-    const printers = this.printerRepo.getPrintersByShop(shopId);
+    const printerHealthRows = this.printerRepo.getPrinterHealthRowsByShop(shopId);
     const countStatuses = (...statuses: string[]) => statuses.reduce((sum, status) => sum + (statusCounts[status] || 0), 0);
 
     // Revenue reflects captured/collected financial entries only. Order status
     // alone is not evidence that a cash or online payment was received.
     const totalRevenuePaise = this.ledgerRepo.calculateBalancePaise(shopId, 'CUSTOMER_PRINT_PAYMENT', 'INR');
 
-    const onlinePrinters = printers.filter((p) => getPrinterHealthStatus(p.isOnline, p.lastHeartbeat) === 'ONLINE').length;
+    const onlinePrinters = printerHealthRows.filter((p) => getPrinterHealthStatus(p.isOnline, p.lastHeartbeat) === 'ONLINE').length;
 
     res.json({
       shopId,
@@ -133,7 +133,7 @@ export class MerchantController {
         cancelled: countStatuses('CANCELLED'),
         totalRevenuePaise,
         activePrinters: onlinePrinters,
-        totalPrinters: printers.length,
+        totalPrinters: printerHealthRows.length,
         statusCounts,
       },
       recentOrders: this.presentOrders(recentOrders),
@@ -448,8 +448,7 @@ export class MerchantController {
     }
 
     if (printerId !== undefined && printerId !== null && printerId !== '') {
-      const printerIsOwned = typeof printerId === 'string' &&
-        this.printerRepo.getPrintersByShop(shopId).some((printer) => printer.id === printerId);
+      const printerIsOwned = typeof printerId === 'string' && this.printerRepo.hasPrinterForShop(shopId, printerId);
       if (!printerIsOwned) return res.status(400).json({ error: 'Rate rules can only target a printer registered to this shop.' });
     }
 

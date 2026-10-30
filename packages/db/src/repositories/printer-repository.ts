@@ -46,31 +46,63 @@ export class PrinterRepository {
   }
 
   public getPrintersByShop(shopId: string): PrinterDevice[] {
-    const rows = this.db.query<any>(`SELECT * FROM printers WHERE shop_id = ?`, [shopId]);
-    return rows.map((r) => {
-      const trays = this.db
-        .query<any>(`SELECT * FROM paper_trays WHERE printer_id = ?`, [r.id])
-        .map((t) => ({
-          id: t.id,
-          name: t.name,
-          supportedSizes: JSON.parse(t.supported_sizes),
-          isDefault: Boolean(t.is_default),
-        }));
+    const rows = this.db.query<any>(
+      `SELECT p.*, t.id AS tray_id, t.name AS tray_name, t.supported_sizes AS tray_supported_sizes,
+              t.is_default AS tray_is_default
+       FROM printers p LEFT JOIN paper_trays t ON t.printer_id = p.id
+       WHERE p.shop_id = ? ORDER BY p.id, t.id`,
+      [shopId]
+    );
+    const printers = new Map<string, PrinterDevice>();
+    for (const row of rows) {
+      let printer = printers.get(row.id);
+      if (!printer) {
+        printer = {
+          id: row.id,
+          shopId: row.shop_id,
+          agentId: row.agent_id || undefined,
+          name: row.name,
+          systemDriverName: row.system_driver_name,
+          isOnline: Boolean(row.is_online),
+          isDefault: Boolean(row.is_default),
+          supportsColor: Boolean(row.supports_color),
+          supportsDuplex: Boolean(row.supports_duplex),
+          trays: [],
+          lastHeartbeat: row.last_heartbeat,
+        };
+        printers.set(row.id, printer);
+      }
+      if (row.tray_id !== null && row.tray_id !== undefined) {
+        printer.trays.push({
+          id: row.tray_id,
+          name: row.tray_name,
+          supportedSizes: JSON.parse(row.tray_supported_sizes),
+          isDefault: Boolean(row.tray_is_default),
+        });
+      }
+    }
+    return [...printers.values()];
+  }
 
-      return {
-        id: r.id,
-        shopId: r.shop_id,
-        agentId: r.agent_id || undefined,
-        name: r.name,
-        systemDriverName: r.system_driver_name,
-        isOnline: Boolean(r.is_online),
-        isDefault: Boolean(r.is_default),
-        supportsColor: Boolean(r.supports_color),
-        supportsDuplex: Boolean(r.supports_duplex),
-        trays,
-        lastHeartbeat: r.last_heartbeat,
-      };
-    });
+  public getPrinterHealthRowsByShop(shopId: string): Array<{ isOnline: boolean; lastHeartbeat: string | null }> {
+    return this.db.query<any>(
+      `SELECT is_online, last_heartbeat FROM printers WHERE shop_id = ? ORDER BY id`,
+      [shopId]
+    ).map((row) => ({ isOnline: Boolean(row.is_online), lastHeartbeat: row.last_heartbeat || null }));
+  }
+
+  public hasPrinterForShop(shopId: string, printerId: string): boolean {
+    return Boolean(this.db.queryOne<any>(
+      `SELECT 1 AS found FROM printers WHERE id = ? AND shop_id = ? LIMIT 1`,
+      [printerId, shopId]
+    ));
+  }
+
+  public hasPrintersByShop(shopId: string): boolean {
+    return Boolean(this.db.queryOne<any>(
+      `SELECT 1 AS found FROM printers WHERE shop_id = ? LIMIT 1`,
+      [shopId]
+    ));
   }
 
   public updatePrinterHeartbeat(printerId: string, isOnline: boolean): void {
