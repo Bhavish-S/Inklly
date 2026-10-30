@@ -94,9 +94,32 @@ export class PrivateFileStorage {
   async verifyReady(): Promise<void> {
     if (this.driver === 'local') return;
     await this.withRequestTimeout(this.requestTimeoutMs, async (signal) => {
-      const response = await fetch(`${this.supabaseUrl}/storage/v1/bucket/${encodeURIComponent(this.bucket)}`, {
+      let response = await fetch(`${this.supabaseUrl}/storage/v1/bucket/${encodeURIComponent(this.bucket)}`, {
         headers: this.headers(), signal,
       });
+
+      // If bucket is not found (Supabase returns 400 or 404), attempt to auto-create it
+      if (!response.ok && (response.status === 400 || response.status === 404)) {
+        try {
+          const createResponse = await fetch(`${this.supabaseUrl}/storage/v1/bucket`, {
+            method: 'POST',
+            headers: this.headers({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({
+              id: this.bucket,
+              name: this.bucket,
+              public: false,
+            }),
+            signal,
+          });
+          if (createResponse.ok) {
+            console.log(`[PrivateFileStorage] Auto-created private bucket "${this.bucket}" in Supabase.`);
+            return;
+          }
+        } catch {
+          // If creation fails, proceed to requireSuccess with original response
+        }
+      }
+
       await this.requireSuccess(response, 'bucket verification');
       const bucket = await response.json() as { public?: boolean };
       if (bucket.public !== false) throw new Error('Customer print storage bucket must exist and be private (public=false).');

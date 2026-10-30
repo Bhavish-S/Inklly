@@ -135,23 +135,27 @@ export function createApp(db?: DatabaseService): express.Express {
 if (require.main === module) {
   const PORT = process.env.PORT || 4000;
   const app = createApp();
+
+  const server = app.listen(PORT, () => {
+    console.log(`🚀 [Inklly Server] listening on port ${PORT}`);
+    console.log(`📄 [QR Portal] /api/v1/portal/shop/:shop_code`);
+    console.log(`⚙️  [Merchant API] /api/v1/merchant/dashboard`);
+    console.log(`🔌 [Agent Poll] /api/v1/agent/poll-commands`);
+  });
+
+  const webhookWorker = new WebhookDeliveryWorker(new AgentRepository(DatabaseService.getInstance()));
+  webhookWorker.start();
+
+  const shutdown = () => {
+    webhookWorker.stop();
+    server.close(() => process.exit(0));
+  };
+  process.once('SIGTERM', shutdown);
+  process.once('SIGINT', shutdown);
+
   void app.locals.privateFileStorage.verifyReady().then(() => {
-    const webhookWorker = new WebhookDeliveryWorker(new AgentRepository(DatabaseService.getInstance()));
-    webhookWorker.start();
-    const server = app.listen(PORT, () => {
-      console.log(`🚀 [Inklly Server] listening on port ${PORT}`);
-      console.log(`📄 [QR Portal] /api/v1/portal/shop/:shop_code`);
-      console.log(`⚙️  [Merchant API] /api/v1/merchant/dashboard`);
-      console.log(`🔌 [Agent Poll] /api/v1/agent/poll-commands`);
-    });
-    const shutdown = () => {
-      webhookWorker.stop();
-      server.close(() => process.exit(0));
-    };
-    process.once('SIGTERM', shutdown);
-    process.once('SIGINT', shutdown);
+    console.log('📦 [Inklly Storage] Private file storage is verified and ready.');
   }).catch((error: any) => {
-    console.error('[Inklly Startup] Private file storage is not ready:', error.message || error);
-    process.exitCode = 1;
+    console.warn('[Inklly Startup] Warning: Private file storage is not ready yet:', error.message || error);
   });
 }
