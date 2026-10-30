@@ -2114,6 +2114,10 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       assert.equal(invalidStatus.status, 400);
       const invalidTier = await fetch(url, { method: 'PATCH', headers, body: JSON.stringify({ planTier: 'UNLIMITED' }) });
       assert.equal(invalidTier.status, 400);
+      const missingReason = await fetch(url, { method: 'PATCH', headers, body: JSON.stringify({ planStatus: 'SUSPENDED' }) });
+      assert.equal(missingReason.status, 400);
+      const shortReason = await fetch(url, { method: 'PATCH', headers, body: JSON.stringify({ planStatus: 'SUSPENDED', reason: 'ops' }) });
+      assert.equal(shortReason.status, 400);
       assert.equal(db.queryOne<any>(`SELECT plan_status, plan_tier FROM organizations WHERE id = ?`, [organizationId]).plan_status, 'TRIAL');
       assert.equal(Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM audit_events WHERE target_id = ?`, [organizationId]).count), 0);
 
@@ -2123,7 +2127,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       assert.equal(missing.status, 404);
 
       const update = await fetch(url, {
-        method: 'PATCH', headers, body: JSON.stringify({ planStatus: 'suspended', planTier: 'scale' }),
+        method: 'PATCH', headers, body: JSON.stringify({ planStatus: 'suspended', planTier: 'scale', reason: 'Merchant requested temporary account suspension.' }),
       });
       assert.equal(update.status, 200);
       const body = await update.json() as any;
@@ -2144,6 +2148,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       assert.deepEqual(JSON.parse(audit.details), {
         previous: { planStatus: 'TRIAL', planTier: 'STARTER' },
         next: { planStatus: 'SUSPENDED', planTier: 'SCALE' },
+        reason: 'Merchant requested temporary account suspension.',
       });
     } finally {
       db.execute(`DELETE FROM audit_events WHERE target_id = ?`, [organizationId]);
@@ -2778,6 +2783,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       body: JSON.stringify({
         planTier: 'STARTER',
         planStatus: 'ACTIVE',
+        reason: 'API test suite subscription activation',
       }),
     });
     assert.equal(activateRes.status, 200);
@@ -3059,6 +3065,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       body: JSON.stringify({
         planTier: 'STARTER',
         planStatus: 'ACTIVE',
+        reason: 'API test suite subscription activation',
       }),
     });
     assert.equal(activateRes.status, 200);

@@ -52,6 +52,9 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
   const [merchantListError, setMerchantListError] = useState('');
   const merchantRequestSequence = useRef(0);
   const [selectedMerchantDetail, setSelectedMerchantDetail] = useState<any | null>(null);
+  const [merchantStatusAction, setMerchantStatusAction] = useState<{ id: string; name: string; currentStatus: string; nextStatus: string } | null>(null);
+  const [merchantStatusReason, setMerchantStatusReason] = useState('');
+  const [merchantStatusBusy, setMerchantStatusBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -461,18 +464,36 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
     } finally { setPlatformAdminSaving(null); }
   };
 
-  const handleToggleMerchantStatus = async (orgId: string, currentStatus: string) => {
+  const handleToggleMerchantStatus = (orgId: string, currentStatus: string) => {
     if (!['ACTIVE', 'SUSPENDED'].includes(currentStatus)) {
       showToast(`This tenant is ${currentStatus.toLowerCase()}. Manage trial or billing status through the subscription workflow.`);
       return;
     }
     const nextStatus = currentStatus === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE';
+    const merchant = merchants.find((item) => item.id === orgId) || selectedMerchantDetail;
+    setMerchantStatusReason('');
+    setMerchantStatusAction({ id: orgId, name: merchant?.name || orgId, currentStatus, nextStatus });
+  };
+
+  const confirmMerchantStatusChange = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!merchantStatusAction) return;
+    const reason = merchantStatusReason.trim();
+    if (reason.length < 10 || reason.length > 500) {
+      showToast('Enter a reason between 10 and 500 characters.');
+      return;
+    }
     try {
-      await api.updateMerchantStatus(orgId, { planStatus: nextStatus });
+      setMerchantStatusBusy(true);
+      await api.updateMerchantStatus(merchantStatusAction.id, { planStatus: merchantStatusAction.nextStatus, reason });
       await refreshMerchantPage(false);
-      showToast(`Tenant status updated to ${nextStatus}. Audit event logged.`);
+      showToast(`Tenant status updated to ${merchantStatusAction.nextStatus}. The reason was added to the audit record.`);
+      setSelectedMerchantDetail(null);
+      setMerchantStatusAction(null);
     } catch (err: any) {
       showToast(`Error: ${err.message}`);
+    } finally {
+      setMerchantStatusBusy(false);
     }
   };
 
@@ -1553,12 +1574,30 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
             </dl>
             <p className="rounded-xl bg-slate-50 p-3 text-xs text-slate-500 dark:bg-slate-800">This view shows persistent organization data only. Printer health is available in Fleet; payment settlement and hardware details are not inferred here.</p>
             {['ACTIVE', 'SUSPENDED'].includes(selectedMerchantDetail.planStatus) && (
-              <button type="button" onClick={() => { void handleToggleMerchantStatus(selectedMerchantDetail.id, selectedMerchantDetail.planStatus); setSelectedMerchantDetail(null); }} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold dark:border-slate-700">
+              <button type="button" onClick={() => handleToggleMerchantStatus(selectedMerchantDetail.id, selectedMerchantDetail.planStatus)} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold dark:border-slate-700">
                 {selectedMerchantDetail.planStatus === 'ACTIVE' ? 'Suspend tenant access' : 'Reactivate tenant access'}
               </button>
             )}
             <button type="button" onClick={() => setSelectedMerchantDetail(null)} className="w-full py-2.5 bg-slate-100 dark:bg-slate-800 font-bold text-xs rounded-xl">Close tenant details</button>
           </section>
+        </div>
+      )}
+
+      {merchantStatusAction && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" role="presentation">
+          <form onSubmit={(event) => void confirmMerchantStatusChange(event)} className="w-full max-w-lg space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900" role="dialog" aria-modal="true" aria-labelledby="tenant-status-dialog-title" aria-describedby="tenant-status-dialog-description">
+            <div>
+              <h3 id="tenant-status-dialog-title" className="text-base font-extrabold text-slate-900 dark:text-white">{merchantStatusAction.nextStatus === 'SUSPENDED' ? 'Suspend tenant access?' : 'Reactivate tenant access?'}</h3>
+              <p id="tenant-status-dialog-description" className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">{merchantStatusAction.name} will change from {merchantStatusAction.currentStatus} to {merchantStatusAction.nextStatus}. Enter the operational reason; it will be stored in the immutable audit event.</p>
+            </div>
+            <label htmlFor="tenant-status-reason" className="block text-xs font-bold text-slate-700 dark:text-slate-200">Reason for this change</label>
+            <textarea id="tenant-status-reason" autoFocus required minLength={10} maxLength={500} rows={4} value={merchantStatusReason} onChange={(event) => setMerchantStatusReason(event.target.value)} placeholder="For example: Temporary suspension requested by the organization owner." className="-mt-3 w-full rounded-lg border border-slate-300 bg-white p-3 text-sm leading-5 text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+            <p className="-mt-3 text-right text-[11px] text-slate-500">{merchantStatusReason.trim().length}/500 · at least 10 characters</p>
+            <div className="flex justify-end gap-2">
+              <button type="button" disabled={merchantStatusBusy} onClick={() => setMerchantStatusAction(null)} className="min-h-10 rounded-lg border border-slate-300 px-4 text-xs font-bold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200">Cancel</button>
+              <button type="submit" disabled={merchantStatusBusy || merchantStatusReason.trim().length < 10} className="min-h-10 rounded-lg bg-indigo-600 px-4 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">{merchantStatusBusy ? 'Saving…' : `Confirm ${merchantStatusAction.nextStatus === 'SUSPENDED' ? 'suspension' : 'reactivation'}`}</button>
+            </div>
+          </form>
         </div>
       )}
 

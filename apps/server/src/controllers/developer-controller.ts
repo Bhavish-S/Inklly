@@ -318,14 +318,33 @@ export class DeveloperController {
           },
         },
         '/developer/webhooks': {
-          get: { summary: 'List active organization webhook subscriptions', security: [{ bearerAuth: [] }], responses: { 200: { description: 'Tenant-scoped subscriptions; secrets are omitted.' } } },
-          post: { summary: 'Create a signed webhook subscription', security: [{ bearerAuth: [] }], responses: { 201: { description: 'Subscription and one-time webhook secret.' }, 400: { description: 'Invalid HTTPS destination or event type.' } } },
+          get: { summary: 'List active organization webhook subscriptions', description: 'Requires an authenticated organization member with developer portal access. Encrypted signing secrets are never returned.', security: [{ bearerAuth: [] }], responses: { 200: { description: 'Organization-scoped subscriptions with secret values omitted.' }, 401: { description: 'Authentication required.' }, 403: { description: 'An organization membership and enabled external API access are required.' } } },
+          post: {
+            summary: 'Create a signed webhook subscription',
+            description: 'Creates an organization-wide destination. Only public HTTPS hostnames are accepted. The generated webhook secret is returned once and is never returned by list or rotation status calls.',
+            security: [{ bearerAuth: [] }],
+            requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: false, required: ['targetUrl'], properties: { targetUrl: { type: 'string', format: 'uri', maxLength: 2048 }, eventTypes: { type: 'array', minItems: 1, maxItems: 3, uniqueItems: true, items: { type: 'string', enum: ['order.created', 'order.status_changed', 'payment.succeeded'] }, default: ['order.created', 'order.status_changed'] } } } } } },
+            responses: { 201: { description: 'Subscription and one-time webhook signing secret.' }, 400: { description: 'Invalid HTTPS destination or event type.' }, 401: { description: 'Authentication required.' }, 403: { description: 'An organization membership and enabled external API access are required.' }, 503: { description: 'Webhook secret encryption is unavailable.' } },
+          },
+        },
+        '/developer/keys': {
+          get: { summary: 'List organization API keys', description: 'Requires an authenticated organization owner/developer. Secret verifiers are omitted; the full API key is only returned once during creation.', security: [{ bearerAuth: [] }], responses: { 200: { description: 'Organization-scoped key metadata.' }, 401: { description: 'Authentication required.' }, 403: { description: 'Organization membership or external API access is unavailable.' } } },
+          post: {
+            summary: 'Create a shop-bound TEST or LIVE API key',
+            description: 'Requires an authenticated organization owner/developer and an active shop membership. API key scopes are limited to merchant API operations; organization-wide webhook management requires the organization session and cannot be granted to a shop-bound API key.',
+            security: [{ bearerAuth: [] }],
+            requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: false, required: ['keyName'], properties: { keyName: { type: 'string', minLength: 1, maxLength: 80 }, environment: { type: 'string', enum: ['TEST', 'LIVE'], default: 'TEST' }, scopes: { type: 'array', minItems: 1, maxItems: 5, uniqueItems: true, items: { type: 'string', enum: ['orders:read', 'orders:write', 'printers:read', 'printers:spool', 'ledger:read'] }, default: ['orders:read', 'orders:write', 'printers:read'] } } } } } },
+            responses: { 201: { description: 'Shop-bound API key metadata and apiKeySecret, shown once.' }, 400: { description: 'Invalid key name, environment, or unsupported scope.' }, 401: { description: 'Authentication required.' }, 403: { description: 'Organization owner/developer membership and enabled external API access are required.' } },
+          },
+        },
+        '/developer/keys/{id}': {
+          delete: { summary: 'Revoke an organization API key', description: 'Revocation immediately prevents subsequent authentication. The key is scoped to the authenticated organization.', security: [{ bearerAuth: [] }], parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'Key revoked.' }, 401: { description: 'Authentication required.' }, 403: { description: 'Organization owner/developer membership and enabled external API access are required.' } } },
         },
         '/developer/webhooks/{id}': {
-          delete: { summary: 'Revoke an organization webhook destination', security: [{ bearerAuth: [] }], responses: { 200: { description: 'Destination revoked and pending deliveries cancelled.' }, 404: { description: 'Subscription not found.' } } },
+          delete: { summary: 'Revoke an organization webhook destination', description: 'Organization-scoped revocation disables delivery and cancels pending attempts while preserving history.', security: [{ bearerAuth: [] }], parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'Destination revoked and pending deliveries cancelled.' }, 401: { description: 'Authentication required.' }, 403: { description: 'An organization membership and enabled external API access are required.' }, 404: { description: 'Subscription not found in the active organization.' } } },
         },
         '/developer/webhooks/{id}/rotate-secret': {
-          post: { summary: 'Rotate a webhook signing secret', security: [{ bearerAuth: [] }], responses: { 200: { description: 'New signing secret returned once.' }, 409: { description: 'Wait for active attempts before rotating.' } } },
+          post: { summary: 'Rotate a webhook signing secret', description: 'Returns the new secret exactly once. Rotation is rejected while a delivery attempt is active.', security: [{ bearerAuth: [] }], parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'New signing secret returned once.' }, 401: { description: 'Authentication required.' }, 403: { description: 'An organization membership and enabled external API access are required.' }, 404: { description: 'Subscription not found in the active organization.' }, 409: { description: 'Wait for active attempts before rotating.' } } },
         },
         '/developer/webhooks/{id}/deliveries': {
           get: {
@@ -339,6 +358,9 @@ export class DeveloperController {
             ],
             responses: { 200: { description: 'Persisted delivery records and attempts.' }, 404: { description: 'Subscription not found in the active organization.' } },
           },
+        },
+        '/developer/test-webhook': {
+          post: { summary: 'Preview a synthetic webhook payload', description: 'Returns a synthetic payload for UI inspection only. No HTTP request is sent, no delivery is recorded, and the payload is not signed.', security: [{ bearerAuth: [] }], requestBody: { required: false, content: { 'application/json': { schema: { type: 'object', additionalProperties: false, properties: { eventType: { type: 'string', enum: ['order.created', 'order.status_changed', 'payment.succeeded'] } } } } } }, responses: { 200: { description: 'Synthetic PREVIEW_ONLY payload; delivered is always false.' }, 401: { description: 'Authentication required.' }, 403: { description: 'An organization membership and enabled external API access are required.' } } },
         },
         '/portal/shop/{shop_code}': {
           get: {
@@ -472,7 +494,9 @@ export class DeveloperController {
     if (environment !== undefined && !['LIVE', 'TEST'].includes(environment)) {
       return res.status(400).json({ error: 'environment must be LIVE or TEST.' });
     }
-    const allowedScopes = ['orders:read', 'orders:write', 'printers:read', 'printers:spool', 'ledger:read', 'webhooks:manage'];
+    // API keys are shop-bound. Webhook subscriptions are organization-wide,
+    // so `webhooks:manage` cannot safely be granted to an individual shop key.
+    const allowedScopes = ['orders:read', 'orders:write', 'printers:read', 'printers:spool', 'ledger:read'];
     const requestedScopes = scopes === undefined ? ['orders:read', 'orders:write', 'printers:read'] : scopes;
     if (!Array.isArray(requestedScopes) || requestedScopes.length < 1 || requestedScopes.length > allowedScopes.length ||
         requestedScopes.some((scope: unknown) => typeof scope !== 'string' || !allowedScopes.includes(scope)) ||

@@ -77,18 +77,30 @@ export class PrivateFileStorage {
     return { apikey: this.serviceKey, Authorization: `Bearer ${this.serviceKey}`, ...extra };
   }
 
-  private requestSignal(timeoutMs = this.requestTimeoutMs): AbortSignal {
-    return AbortSignal.timeout(timeoutMs);
+  private async withRequestTimeout<T>(timeoutMs: number, operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const signal = AbortSignal.timeout(timeoutMs);
+    try {
+      return await operation(signal);
+    } catch (error) {
+      // Include response-body reads in the same deadline as the HTTP request.
+      // A timeout is an availability failure, not an internal server error.
+      if (signal.aborted || (error instanceof Error && ['AbortError', 'TimeoutError'].includes(error.name))) {
+        throw new Error('Private storage request timed out.');
+      }
+      throw error;
+    }
   }
 
   async verifyReady(): Promise<void> {
     if (this.driver === 'local') return;
-    const response = await fetch(`${this.supabaseUrl}/storage/v1/bucket/${encodeURIComponent(this.bucket)}`, {
-      headers: this.headers(), signal: this.requestSignal(),
+    await this.withRequestTimeout(this.requestTimeoutMs, async (signal) => {
+      const response = await fetch(`${this.supabaseUrl}/storage/v1/bucket/${encodeURIComponent(this.bucket)}`, {
+        headers: this.headers(), signal,
+      });
+      await this.requireSuccess(response, 'bucket verification');
+      const bucket = await response.json() as { public?: boolean };
+      if (bucket.public !== false) throw new Error('Customer print storage bucket must exist and be private (public=false).');
     });
-    await this.requireSuccess(response, 'bucket verification');
-    const bucket = await response.json() as { public?: boolean };
-    if (bucket.public !== false) throw new Error('Customer print storage bucket must exist and be private (public=false).');
   }
 
   private async requireSuccess(response: Response, operation: string): Promise<void> {
@@ -106,13 +118,15 @@ export class PrivateFileStorage {
       fs.writeFileSync(fullPath, body, { flag: 'wx' });
       return storageKey;
     }
-    const response = await fetch(this.apiUrl('object', objectPath), {
-      method: 'POST',
-      headers: this.headers({ 'Content-Type': mimeType || 'application/octet-stream', 'x-upsert': 'false', 'cache-control': '0' }),
-      body,
-      signal: this.requestSignal(),
+    await this.withRequestTimeout(this.requestTimeoutMs, async (signal) => {
+      const response = await fetch(this.apiUrl('object', objectPath), {
+        method: 'POST',
+        headers: this.headers({ 'Content-Type': mimeType || 'application/octet-stream', 'x-upsert': 'false', 'cache-control': '0' }),
+        body,
+        signal,
+      });
+      await this.requireSuccess(response, 'upload');
     });
-    await this.requireSuccess(response, 'upload');
     return storageKey;
   }
 
@@ -125,13 +139,15 @@ export class PrivateFileStorage {
     }
     // Supabase documents HEAD on /object/info for object metadata. The authenticated
     // download route is GET-only; using HEAD there is not a portable existence check.
-    const response = await fetch(this.apiUrl('info', objectPath), { method: 'HEAD', headers: this.headers(), signal: this.requestSignal() });
-    // Storage API versions have returned both 400 and 404 for a missing HEAD target.
-    // A valid parsed key makes either response an absent object; auth/provider errors
-    // (401/403/5xx) remain failures and are never treated as a successful absence.
-    if (response.status === 400 || response.status === 404) return false;
-    await this.requireSuccess(response, 'existence check');
-    return true;
+    return this.withRequestTimeout(this.requestTimeoutMs, async (signal) => {
+      const response = await fetch(this.apiUrl('info', objectPath), { method: 'HEAD', headers: this.headers(), signal });
+      // Storage API versions have returned both 400 and 404 for a missing HEAD target.
+      // A valid parsed key makes either response an absent object; auth/provider errors
+      // (401/403/5xx) remain failures and are never treated as a successful absence.
+      if (response.status === 400 || response.status === 404) return false;
+      await this.requireSuccess(response, 'existence check');
+      return true;
+    });
   }
 
   async read(storageKey: string, shopId?: string): Promise<Buffer | null> {
@@ -142,10 +158,12 @@ export class PrivateFileStorage {
       if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) return null;
       return fs.readFileSync(fullPath);
     }
-    const response = await fetch(this.apiUrl('authenticated', objectPath), { headers: this.headers(), signal: this.requestSignal() });
-    if (response.status === 404) return null;
-    await this.requireSuccess(response, 'download');
-    return Buffer.from(await response.arrayBuffer());
+    return this.withRequestTimeout(this.requestTimeoutMs, async (signal) => {
+      const response = await fetch(this.apiUrl('authenticated', objectPath), { headers: this.headers(), signal });
+      if (response.status === 404) return null;
+      await this.requireSuccess(response, 'download');
+      return Buffer.from(await response.arrayBuffer());
+    });
   }
 
   async remove(storageKey: string): Promise<boolean> {
@@ -161,14 +179,16 @@ export class PrivateFileStorage {
         return false;
       }
     }
-    const response = await fetch(this.apiUrl('remove'), {
-      method: 'DELETE',
-      headers: this.headers({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ prefixes: [objectPath] }),
-      signal: this.requestSignal(STORAGE_DELETE_TIMEOUT_MS),
+    return this.withRequestTimeout(STORAGE_DELETE_TIMEOUT_MS, async (signal) => {
+      const response = await fetch(this.apiUrl('remove'), {
+        method: 'DELETE',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ prefixes: [objectPath] }),
+        signal,
+      });
+      await this.requireSuccess(response, 'deletion');
+      return true;
     });
-    await this.requireSuccess(response, 'deletion');
-    return true;
   }
 
   async list(prefix: string, limit = 100, offset = 0): Promise<StoredObject[]> {
@@ -183,14 +203,16 @@ export class PrivateFileStorage {
         created_at: entry.isDirectory() ? null : fs.statSync(path.join(directory, entry.name)).birthtime.toISOString(),
       }));
     }
-    const response = await fetch(this.apiUrl('list'), {
-      method: 'POST',
-      headers: this.headers({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ prefix, limit, offset, sortBy: { column: 'name', order: 'asc' } }),
-      signal: this.requestSignal(),
+    return this.withRequestTimeout(this.requestTimeoutMs, async (signal) => {
+      const response = await fetch(this.apiUrl('list'), {
+        method: 'POST',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ prefix, limit, offset, sortBy: { column: 'name', order: 'asc' } }),
+        signal,
+      });
+      await this.requireSuccess(response, 'listing');
+      const entries = await response.json() as StoredObject[];
+      return Array.isArray(entries) ? entries : [];
     });
-    await this.requireSuccess(response, 'listing');
-    const entries = await response.json() as StoredObject[];
-    return Array.isArray(entries) ? entries : [];
   }
 }

@@ -70,8 +70,36 @@ describe('Private file storage', { concurrency: false }, () => {
     })) as typeof fetch;
 
     const storage = new PrivateFileStorage({ requestTimeoutMs: 10 });
-    await assert.rejects(() => storage.store('shop-1', 'stalled.pdf', 'application/pdf', Buffer.from('%PDF')));
+    await assert.rejects(
+      () => storage.store('shop-1', 'stalled.pdf', 'application/pdf', Buffer.from('%PDF')),
+      /Private storage request timed out/
+    );
     assert.ok(observedSignal?.aborted, 'the storage request signal must abort after the configured deadline');
+  });
+
+  it('keeps the storage deadline active while reading a downloaded object body', async () => {
+    process.env.NODE_ENV = 'test';
+    process.env.STORAGE_DRIVER = 'supabase';
+    process.env.SUPABASE_URL = 'https://project.supabase.co';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'server-only-secret';
+    process.env.SUPABASE_STORAGE_BUCKET = 'customer-print-files';
+    let observedSignal: AbortSignal | undefined;
+    globalThis.fetch = (async (_input: any, init: any = {}) => {
+      observedSignal = init.signal;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          observedSignal?.addEventListener('abort', () => controller.error(observedSignal?.reason), { once: true });
+        },
+      });
+      return new Response(body, { status: 200 });
+    }) as typeof fetch;
+
+    const storage = new PrivateFileStorage({ requestTimeoutMs: 10 });
+    await assert.rejects(
+      () => storage.read('uploads/shop-1/stalled.pdf', 'shop-1'),
+      /Private storage request timed out/
+    );
+    assert.ok(observedSignal?.aborted, 'download body consumption must use the same request deadline');
   });
 
   it('treats missing object metadata as absent while preserving authorization failures', async () => {

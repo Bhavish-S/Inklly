@@ -481,25 +481,28 @@ export class AdminController {
 
   public updateMerchantStatus = (req: Request, res: Response) => {
     const id = String(req.params.id);
+    const actorId = req.user?.userId;
+    if (!actorId) return res.status(401).json({ error: 'Unauthenticated' });
+
+    const current = this.db.queryOne<any>(`SELECT id, plan_status, plan_tier FROM organizations WHERE id = ?`, [id]);
+    if (!current) return res.status(404).json({ error: 'Organization not found.' });
+
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     const hasPlanStatus = Object.prototype.hasOwnProperty.call(body, 'planStatus');
     const hasPlanTier = Object.prototype.hasOwnProperty.call(body, 'planTier');
     const planStatus = typeof body.planStatus === 'string' ? body.planStatus.trim().toUpperCase() : undefined;
     const planTier = typeof body.planTier === 'string' ? body.planTier.trim().toUpperCase() : undefined;
+    const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
 
     if ((!hasPlanStatus && !hasPlanTier) ||
         (hasPlanStatus && (!planStatus || !ALLOWED_PLAN_STATUSES.has(planStatus))) ||
-        (hasPlanTier && (!planTier || !SAAS_PLANS.some((plan) => plan.tier === planTier)))) {
-      return res.status(400).json({ error: 'Provide at least one valid planStatus or planTier.' });
+        (hasPlanTier && (!planTier || !SAAS_PLANS.some((plan) => plan.tier === planTier))) ||
+        reason.length < 10 || reason.length > 500) {
+      return res.status(400).json({ error: 'Provide valid planStatus/planTier values and a 10 to 500 character reason.' });
     }
-    const actorId = req.user?.userId;
-    if (!actorId) return res.status(401).json({ error: 'Unauthenticated' });
 
     const now = new Date().toISOString();
     const updated = this.db.transaction(() => {
-      const current = this.db.queryOne<any>(`SELECT id, plan_status, plan_tier FROM organizations WHERE id = ?`, [id]);
-      if (!current) return null;
-
       const nextPlanStatus = planStatus ?? current.plan_status;
       const nextPlanTier = planTier ?? current.plan_tier;
       this.db.execute(
@@ -519,13 +522,13 @@ export class AdminController {
         details: {
           previous: { planStatus: current.plan_status, planTier: current.plan_tier },
           next: { planStatus: nextPlanStatus, planTier: nextPlanTier },
+          reason,
         },
         createdAt: now,
       });
       return { planStatus: nextPlanStatus, planTier: nextPlanTier };
     });
 
-    if (!updated) return res.status(404).json({ error: 'Organization not found.' });
     return res.json({ success: true, organization: { id, ...updated } });
   };
 

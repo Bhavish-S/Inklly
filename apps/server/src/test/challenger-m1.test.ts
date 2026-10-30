@@ -72,6 +72,7 @@ describe('Milestone 1 Challenger Adversarial Stress Suite', { concurrency: false
       body: JSON.stringify({
         planTier: 'STARTER',
         planStatus: 'ACTIVE',
+        reason: 'Adversarial suite tenant 1 subscription activation',
       }),
     });
 
@@ -170,6 +171,7 @@ describe('Milestone 1 Challenger Adversarial Stress Suite', { concurrency: false
       body: JSON.stringify({
         planTier: 'STARTER',
         planStatus: 'ACTIVE',
+        reason: 'Adversarial suite tenant 1 subscription activation',
       }),
     });
 

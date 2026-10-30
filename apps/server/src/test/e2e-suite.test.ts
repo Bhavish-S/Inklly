@@ -158,6 +158,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
         body: JSON.stringify({
           planTier: 'STARTER',
           planStatus: 'ACTIVE',
+          reason: 'E2E test suite subscription activation',
         }),
       });
       assert.equal(activateRes.status, 200);
@@ -1073,6 +1074,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
         body: JSON.stringify({
           planTier: 'PRO',
           planStatus: 'ACTIVE',
+          reason: 'E2E test suite plan tier update',
         }),
       });
       assert.equal(res.status, 200);
@@ -1117,6 +1119,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
         body: JSON.stringify({
           planTier: 'STARTER',
           planStatus: 'ACTIVE',
+          reason: 'E2E test suite subscription activation',
         }),
       });
       assert.equal(activateRes.status, 200);
@@ -1797,6 +1800,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
         body: JSON.stringify({
           planTier: 'STARTER',
           planStatus: 'ACTIVE',
+          reason: 'E2E test suite subscription activation',
         }),
       });
       assert.equal(activateRes.status, 200);
@@ -2003,7 +2007,7 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
           'Content-Type': 'application/json',
           Authorization: `Bearer ${adminToken}`,
         },
-        body: JSON.stringify({ planTier: 'STARTER', planStatus: 'ACTIVE' }),
+        body: JSON.stringify({ planTier: 'STARTER', planStatus: 'ACTIVE', reason: 'E2E test suite subscription activation' }),
       });
 
       // 3. Merchant logs in
