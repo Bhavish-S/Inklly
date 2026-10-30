@@ -572,3 +572,25 @@ describe('platform agent fleet index migration', () => {
     }
   });
 });
+
+describe('platform organization directory index migration', () => {
+  it('restores the stable organization cursor index for an existing database', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'inklly-organization-directory-migration-'));
+    const databasePath = path.join(directory, 'existing.sqlite');
+    try {
+      const initial = new DatabaseService(databasePath);
+      seedDatabase(initial);
+      initial.execute(`DROP INDEX idx_organizations_created`);
+      initial.execute(`DELETE FROM inklly_schema_migrations WHERE version = 27`);
+      initial.close();
+
+      const upgraded = new DatabaseService(databasePath);
+      const indexes = upgraded.query<{ name: string }>(`SELECT name FROM sqlite_master WHERE type = 'index'`);
+      assert.ok(indexes.some((index) => index.name === 'idx_organizations_created'));
+      assert.ok(upgraded.queryOne(`SELECT version FROM inklly_schema_migrations WHERE version = 27`));
+      upgraded.close();
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});

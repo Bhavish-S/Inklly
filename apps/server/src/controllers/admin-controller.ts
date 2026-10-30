@@ -295,17 +295,68 @@ export class AdminController {
   };
 
   public getMerchants = (req: Request, res: Response) => {
-    const rows = this.db.query<any>(
-      `SELECT o.*, u.full_name as owner_name, u.email as owner_email,
-              (SELECT COUNT(*) FROM shops s WHERE s.organization_id = o.id) as shops_count,
-              (SELECT COUNT(*) FROM orders ord JOIN shops s ON ord.shop_id = s.id WHERE s.organization_id = o.id) as orders_count
-       FROM organizations o
-       LEFT JOIN users u ON o.owner_user_id = u.id
-       ORDER BY o.created_at DESC`
+    const paginationRequested = req.query.limit !== undefined || req.query.cursor !== undefined || req.query.search !== undefined || req.query.status !== undefined;
+    const rawLimit = req.query.limit === undefined ? (paginationRequested ? 50 : 100) : typeof req.query.limit === 'string' ? Number(req.query.limit) : NaN;
+    if (!Number.isInteger(rawLimit) || rawLimit < 1 || rawLimit > 100) return res.status(400).json({ error: 'limit must be an integer from 1 to 100.' });
+    const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+    if (search.length > 120 || (req.query.search !== undefined && typeof req.query.search !== 'string')) return res.status(400).json({ error: 'search must be at most 120 characters.' });
+    const status = typeof req.query.status === 'string' ? req.query.status : 'ALL';
+    if (!['ALL', 'ACTIVE', 'TRIAL', 'SUSPENDED', 'PAST_DUE'].includes(status) || (req.query.status !== undefined && typeof req.query.status !== 'string')) {
+      return res.status(400).json({ error: 'Unsupported organization status filter.' });
+    }
+    let cursor: { createdAt: string; id: string } | null = null;
+    if (req.query.cursor !== undefined) {
+      const rawCursor = typeof req.query.cursor === 'string' ? req.query.cursor : '';
+      if (!/^[A-Za-z0-9_-]{1,512}$/.test(rawCursor)) return res.status(400).json({ error: 'Invalid organization cursor.' });
+      try {
+        const decoded = JSON.parse(Buffer.from(rawCursor, 'base64url').toString('utf8'));
+        if (!decoded || typeof decoded.createdAt !== 'string' || decoded.createdAt.length > 64 || typeof decoded.id !== 'string' || decoded.id.length < 1 || decoded.id.length > 128) {
+          return res.status(400).json({ error: 'Invalid organization cursor.' });
+        }
+        cursor = { createdAt: decoded.createdAt, id: decoded.id };
+      } catch {
+        return res.status(400).json({ error: 'Invalid organization cursor.' });
+      }
+    }
+    const basePredicates: string[] = [];
+    const baseParams: Array<string | number> = [];
+    if (status !== 'ALL') { basePredicates.push('o.plan_status = ?'); baseParams.push(status); }
+    if (search) {
+      const escaped = search.toLowerCase().replace(/[\\%_]/g, (character) => `\\${character}`);
+      const term = `%${escaped}%`;
+      basePredicates.push(`(LOWER(o.name) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(u.full_name, '')) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(u.email, '')) LIKE ? ESCAPE '\\')`);
+      baseParams.push(term, term, term);
+    }
+    const baseWhere = basePredicates.length ? `WHERE ${basePredicates.join(' AND ')}` : '';
+    const predicates = [...basePredicates];
+    const params = [...baseParams];
+    if (cursor) {
+      predicates.push('(o.created_at < ? OR (o.created_at = ? AND o.id < ?))');
+      params.push(cursor.createdAt, cursor.createdAt, cursor.id);
+    }
+    const where = predicates.length ? `WHERE ${predicates.join(' AND ')}` : '';
+    const total = this.db.queryOne<{ count: number | string }>(
+      `SELECT COUNT(*) AS count FROM organizations o LEFT JOIN users u ON o.owner_user_id = u.id ${baseWhere}`,
+      baseParams
     );
-
-    res.json(
-      rows.map((r) => ({
+    const pageRows = this.db.query<any>(
+      `WITH merchant_page AS (
+         SELECT o.id, o.name, o.plan_tier, o.plan_status, o.billing_currency, o.owner_user_id, o.created_at,
+                u.full_name AS owner_name, u.email AS owner_email
+         FROM organizations o LEFT JOIN users u ON o.owner_user_id = u.id
+         ${where}
+         ORDER BY o.created_at DESC, o.id DESC
+         LIMIT ?
+       )
+       SELECT p.*,
+              (SELECT COUNT(*) FROM shops s WHERE s.organization_id = p.id) AS shops_count,
+              (SELECT COUNT(*) FROM orders ord JOIN shops s ON ord.shop_id = s.id WHERE s.organization_id = p.id) AS orders_count
+       FROM merchant_page p ORDER BY p.created_at DESC, p.id DESC`,
+      [...params, rawLimit + 1]
+    );
+    const hasMore = pageRows.length > rawLimit;
+    const rows = pageRows.slice(0, rawLimit);
+    const merchants = rows.map((r) => ({
         id: r.id,
         name: r.name,
         planTier: r.plan_tier,
@@ -318,8 +369,19 @@ export class AdminController {
         shopsCount: r.shops_count,
         ordersCount: r.orders_count,
         createdAt: r.created_at,
-      }))
-    );
+      }));
+    const last = rows[rows.length - 1];
+    const nextCursor = hasMore && last
+      ? Buffer.from(JSON.stringify({ createdAt: last.created_at, id: last.id })).toString('base64url')
+      : null;
+    if (!paginationRequested) {
+      res.setHeader('X-Total-Count', String(total?.count || 0));
+      res.setHeader('X-Page-Size', String(rawLimit));
+      res.setHeader('X-Has-More', String(hasMore));
+      if (nextCursor) res.setHeader('Link', `</api/v1/platform/merchants?limit=${rawLimit}&cursor=${encodeURIComponent(nextCursor)}>; rel="next"`);
+      return res.json(merchants);
+    }
+    return res.json({ merchants, total: Number(total?.count || 0), nextCursor, hasMore, limit: rawLimit });
   };
 
   public onboardMerchant = (req: Request, res: Response) => {
@@ -837,8 +899,36 @@ export class AdminController {
 
   // Subscription management
   public listSubscriptions = (req: Request, res: Response) => {
-    const rows = this.db.query<any>(`SELECT * FROM subscriptions ORDER BY created_at DESC`);
-    res.json(rows.map((r) => ({
+    if (req.query.summary === 'true') {
+      const rows = this.db.query<any>(
+        `SELECT plan_tier, status, COUNT(*) AS count FROM subscriptions GROUP BY plan_tier, status ORDER BY plan_tier, status`
+      );
+      return res.json({ summary: rows.map((row) => ({ planTier: row.plan_tier, status: row.status, count: Number(row.count) })) });
+    }
+    const paginationRequested = req.query.limit !== undefined || req.query.cursor !== undefined;
+    const rawLimit = req.query.limit === undefined ? 100 : typeof req.query.limit === 'string' ? Number(req.query.limit) : NaN;
+    if (!Number.isInteger(rawLimit) || rawLimit < 1 || rawLimit > 100) return res.status(400).json({ error: 'limit must be an integer from 1 to 100.' });
+    let cursor: { createdAt: string; id: string } | null = null;
+    if (req.query.cursor !== undefined) {
+      const rawCursor = typeof req.query.cursor === 'string' ? req.query.cursor : '';
+      if (!/^[A-Za-z0-9_-]{1,512}$/.test(rawCursor)) return res.status(400).json({ error: 'Invalid subscription cursor.' });
+      try {
+        const decoded = JSON.parse(Buffer.from(rawCursor, 'base64url').toString('utf8'));
+        if (!decoded || typeof decoded.createdAt !== 'string' || decoded.createdAt.length > 64 || typeof decoded.id !== 'string' || decoded.id.length < 1 || decoded.id.length > 128) {
+          return res.status(400).json({ error: 'Invalid subscription cursor.' });
+        }
+        cursor = { createdAt: decoded.createdAt, id: decoded.id };
+      } catch {
+        return res.status(400).json({ error: 'Invalid subscription cursor.' });
+      }
+    }
+    const where = cursor ? 'WHERE (created_at < ? OR (created_at = ? AND id < ?))' : '';
+    const params: Array<string | number> = cursor ? [cursor.createdAt, cursor.createdAt, cursor.id] : [];
+    const total = this.db.queryOne<{ count: number | string }>(`SELECT COUNT(*) AS count FROM subscriptions`);
+    const pageRows = this.db.query<any>(`SELECT * FROM subscriptions ${where} ORDER BY created_at DESC, id DESC LIMIT ?`, [...params, rawLimit + 1]);
+    const hasMore = pageRows.length > rawLimit;
+    const rows = pageRows.slice(0, rawLimit);
+    const subscriptions = rows.map((r) => ({
       id: r.id,
       organizationId: r.organization_id,
       planId: r.plan_id,
@@ -852,7 +942,19 @@ export class AdminController {
       currency: r.currency,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
-    })));
+    }));
+    const last = rows[rows.length - 1];
+    const nextCursor = hasMore && last
+      ? Buffer.from(JSON.stringify({ createdAt: last.created_at, id: last.id })).toString('base64url')
+      : null;
+    if (!paginationRequested) {
+      res.setHeader('X-Total-Count', String(total?.count || 0));
+      res.setHeader('X-Page-Size', String(rawLimit));
+      res.setHeader('X-Has-More', String(hasMore));
+      if (nextCursor) res.setHeader('Link', `</api/v1/platform/subscriptions?limit=${rawLimit}&cursor=${encodeURIComponent(nextCursor)}>; rel="next"`);
+      return res.json(subscriptions);
+    }
+    return res.json({ subscriptions, total: Number(total?.count || 0), nextCursor, hasMore, limit: rawLimit });
   };
 
   public createSubscription = (req: Request, res: Response) => {

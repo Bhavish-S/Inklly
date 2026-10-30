@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api/client';
 import { ShieldIcon, SearchIcon, DownloadIcon, CheckCircleIcon, PrinterIcon, UsersIcon, FileTextIcon, SlidersIcon } from '../components/icons';
 
@@ -45,6 +45,12 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
   const [selectedDomain, setSelectedDomain] = useState<string>('ALL');
   const [merchantSearchQuery, setMerchantSearchQuery] = useState<string>('');
   const [merchantStatusFilter, setMerchantStatusFilter] = useState<string>('ALL');
+  const [merchantCursor, setMerchantCursor] = useState<string | null>(null);
+  const [merchantHasMore, setMerchantHasMore] = useState(false);
+  const [merchantTotal, setMerchantTotal] = useState(0);
+  const [merchantListLoading, setMerchantListLoading] = useState(false);
+  const [merchantListError, setMerchantListError] = useState('');
+  const merchantRequestSequence = useRef(0);
   const [selectedMerchantDetail, setSelectedMerchantDetail] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -66,8 +72,12 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
   const [agentFleetError, setAgentFleetError] = useState('');
   const [agentFleetUpdatedAt, setAgentFleetUpdatedAt] = useState<string | null>(null);
   const [platformPlans, setPlatformPlans] = useState<any[]>([]);
-  const [subscriptions, setSubscriptions] = useState<any[]>([]);
+  const [subscriptionSummary, setSubscriptionSummary] = useState<Array<{ planTier: string; status: string; count: number }>>([]);
   const [billingOrganizationId, setBillingOrganizationId] = useState('');
+  const [billingOrganizations, setBillingOrganizations] = useState<any[]>([]);
+  const [billingOrganizationsCursor, setBillingOrganizationsCursor] = useState<string | null>(null);
+  const [billingOrganizationsHasMore, setBillingOrganizationsHasMore] = useState(false);
+  const [billingOrganizationsLoading, setBillingOrganizationsLoading] = useState(false);
   const [billingTariffs, setBillingTariffs] = useState<any[]>([]);
   const [pilotInvoices, setPilotInvoices] = useState<any[]>([]);
   const [billingBaseRupees, setBillingBaseRupees] = useState('');
@@ -249,8 +259,8 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
   }, [platformAccessReady, isPlatformOwner, currentPermissions.join('|')]);
 
   useEffect(() => {
-    if (!billingOrganizationId && merchants.length > 0) setBillingOrganizationId(merchants[0].id);
-  }, [merchants, billingOrganizationId]);
+    if (!billingOrganizationId && billingOrganizations.length > 0) setBillingOrganizationId(billingOrganizations[0].id);
+  }, [billingOrganizations, billingOrganizationId]);
 
   useEffect(() => {
     if (activeTab !== 'plans' || !billingOrganizationId) return;
@@ -283,22 +293,58 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
     return () => { cancelled = true; };
   }, [activeTab, isPlatformOwner]);
 
+  const refreshMerchantPage = async (append = false) => {
+    if (append && (!merchantCursor || merchantListLoading)) return;
+    const requestSequence = ++merchantRequestSequence.current;
+    setMerchantListLoading(true);
+    setMerchantListError('');
+    try {
+      const page = await api.getPlatformMerchants(
+        100,
+        append ? merchantCursor || undefined : undefined,
+        merchantSearchQuery,
+        merchantStatusFilter
+      );
+      if (requestSequence !== merchantRequestSequence.current) return;
+      setMerchants((current) => {
+        if (!append) return page.merchants;
+        const seen = new Set(current.map((merchant) => merchant.id));
+        return [...current, ...page.merchants.filter((merchant) => !seen.has(merchant.id))];
+      });
+      setMerchantCursor(page.nextCursor);
+      setMerchantHasMore(page.hasMore);
+      setMerchantTotal(page.total);
+    } catch (error) {
+      if (requestSequence === merchantRequestSequence.current) {
+        setMerchantListError(error instanceof Error ? error.message : 'Could not load merchant organizations.');
+      }
+    } finally {
+      if (requestSequence === merchantRequestSequence.current) setMerchantListLoading(false);
+    }
+  };
+
   const loadPlatformData = async () => {
     try {
       setLoading(true);
-      const [ovData, merData, ledData, audData, enquiryData, agentData, retentionData, plansData, subscriptionData] = await Promise.all([
+      const [ovData, merData, ledData, audData, enquiryData, agentData, retentionData, plansData, subscriptionData, billingOrgData] = await Promise.all([
         hasPlatformPermission('platform:view') ? api.getPlatformOverview() : Promise.resolve(null),
-        hasPlatformPermission('platform:view') ? api.getPlatformMerchants() : Promise.resolve(null),
+        hasPlatformPermission('platform:view') ? api.getPlatformMerchants(100, undefined, merchantSearchQuery, merchantStatusFilter) : Promise.resolve(null),
         hasPlatformPermission('finance:view') ? api.getPlatformLedger(selectedDomain === 'ALL' ? undefined : selectedDomain) : Promise.resolve(null),
         hasPlatformPermission('security:audit') ? api.getAuditLogs() : Promise.resolve(null),
         hasPlatformPermission('support:view') ? api.getPlatformEnquiries() : Promise.resolve(null),
         hasPlatformPermission('platform:view') ? api.getPlatformAgents(100) : Promise.resolve(null),
         hasPlatformPermission('platform:view') ? api.getPlatformRetentionStats() : Promise.resolve(null),
         hasPlatformPermission('platform:view') ? api.getPlatformPlans() : Promise.resolve(null),
-        hasPlatformPermission('billing:view') ? api.getSubscriptions() : Promise.resolve(null),
+        hasPlatformPermission('billing:view') ? api.getSubscriptionSummary() : Promise.resolve(null),
+        hasPlatformPermission('platform:view') ? api.getPlatformMerchants(100) : Promise.resolve(null),
       ]);
       if (ovData) setOverview(ovData);
-      if (merData) setMerchants(merData);
+      if (merData) {
+        setMerchants(merData.merchants);
+        setMerchantCursor(merData.nextCursor);
+        setMerchantHasMore(merData.hasMore);
+        setMerchantTotal(merData.total);
+      }
       if (ledData) {
         setLedgerEntries(Array.isArray(ledData.entries) ? ledData.entries : []);
         setLedgerNextCursor(typeof ledData.nextCursor === 'string' ? ledData.nextCursor : null);
@@ -317,13 +363,42 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
       }
       if (retentionData) setStorageStats(retentionData);
       if (plansData) setPlatformPlans(plansData);
-      if (subscriptionData) setSubscriptions(subscriptionData);
+      if (subscriptionData) setSubscriptionSummary(subscriptionData);
+      if (billingOrgData) {
+        setBillingOrganizations(billingOrgData.merchants);
+        setBillingOrganizationsCursor(billingOrgData.nextCursor);
+        setBillingOrganizationsHasMore(billingOrgData.hasMore);
+      }
     } catch (err: any) {
       console.error('Failed to load platform data:', err);
     } finally {
       setLoading(false);
     }
   };
+
+  const loadMoreBillingOrganizations = async () => {
+    if (!billingOrganizationsCursor || !billingOrganizationsHasMore || billingOrganizationsLoading) return;
+    setBillingOrganizationsLoading(true);
+    try {
+      const page = await api.getPlatformMerchants(100, billingOrganizationsCursor);
+      setBillingOrganizations((current) => {
+        const seen = new Set(current.map((organization) => organization.id));
+        return [...current, ...page.merchants.filter((organization) => !seen.has(organization.id))];
+      });
+      setBillingOrganizationsCursor(page.nextCursor);
+      setBillingOrganizationsHasMore(page.hasMore);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not load more organizations.');
+    } finally {
+      setBillingOrganizationsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!platformAccessReady || activeTab !== 'merchants') return;
+    const timer = window.setTimeout(() => { void refreshMerchantPage(false); }, 250);
+    return () => window.clearTimeout(timer);
+  }, [activeTab, merchantSearchQuery, merchantStatusFilter, platformAccessReady]);
 
   const parseRupees = (value: string): number | null => {
     const match = /^(0|[1-9]\d*)(?:\.(\d{1,2}))?$/.exec(value.trim());
@@ -394,9 +469,7 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
     const nextStatus = currentStatus === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE';
     try {
       await api.updateMerchantStatus(orgId, { planStatus: nextStatus });
-      setMerchants((prev) =>
-        prev.map((m) => (m.id === orgId ? { ...m, planStatus: nextStatus } : m))
-      );
+      await refreshMerchantPage(false);
       showToast(`Tenant status updated to ${nextStatus}. Audit event logged.`);
     } catch (err: any) {
       showToast(`Error: ${err.message}`);
@@ -420,9 +493,11 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
     }
   };
 
-  const handleExportMerchantsCsv = () => {
+  const handleExportMerchantsCsv = async () => {
+    try {
+    const allMerchants = await api.getAllPlatformMerchants(merchantSearchQuery, merchantStatusFilter);
     const headers = ['Merchant ID', 'Organization Name', 'Shop Code', 'Owner Name', 'Owner Email', 'Plan Tier', 'Status', 'Shops Count', 'Created At'];
-    const rows = merchants.map((m) => [
+    const rows = allMerchants.map((m) => [
       m.id,
       `"${(m.name || '').replace(/"/g, '""')}"`,
       m.shopCode,
@@ -443,7 +518,10 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    showToast('📥 Exported Merchants Directory CSV.');
+    showToast(`Exported ${allMerchants.length} matching merchants.`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not export the merchant directory.');
+    }
   };
 
   const loadMoreLedger = async () => {
@@ -574,8 +652,18 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
       const inviteUrl = new URL('/accept-invitation', window.location.origin);
       inviteUrl.hash = new URLSearchParams({ token: result.invitationToken }).toString();
       setProvisionedInvitationLink(inviteUrl.toString());
-      const [updatedMerchants, updatedAuditLogs] = await Promise.all([api.getPlatformMerchants(), api.getAuditLogs()]);
-      setMerchants(updatedMerchants);
+      const [updatedMerchants, updatedAuditLogs, updatedBillingOrganizations] = await Promise.all([
+        api.getPlatformMerchants(100, undefined, merchantSearchQuery, merchantStatusFilter),
+        api.getAuditLogs(),
+        api.getPlatformMerchants(100),
+      ]);
+      setMerchants(updatedMerchants.merchants);
+      setMerchantCursor(updatedMerchants.nextCursor);
+      setMerchantHasMore(updatedMerchants.hasMore);
+      setMerchantTotal(updatedMerchants.total);
+      setBillingOrganizations(updatedBillingOrganizations.merchants);
+      setBillingOrganizationsCursor(updatedBillingOrganizations.nextCursor);
+      setBillingOrganizationsHasMore(updatedBillingOrganizations.hasMore);
       setAuditLogs(Array.isArray(updatedAuditLogs.events) ? updatedAuditLogs.events : []);
       setAuditNextCursor(typeof updatedAuditLogs.nextCursor === 'string' ? updatedAuditLogs.nextCursor : null);
       showToast(`Tenant created. Share the one-time owner setup link with ${result.merchant?.owner?.email || newOwnerEmail}.`);
@@ -589,16 +677,6 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
       setIsOnboarding(false);
     }
   };
-
-  const filteredMerchants = merchants.filter((m) => {
-    const matchesSearch =
-      m.name.toLowerCase().includes(merchantSearchQuery.toLowerCase()) ||
-      m.owner.name.toLowerCase().includes(merchantSearchQuery.toLowerCase()) ||
-      m.owner.email.toLowerCase().includes(merchantSearchQuery.toLowerCase());
-    const matchesStatus =
-      merchantStatusFilter === 'ALL' || m.planStatus === merchantStatusFilter;
-    return matchesSearch && matchesStatus;
-  });
 
   if (loading && !overview) {
     return (
@@ -881,7 +959,7 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {filteredMerchants.map((m) => (
+                {merchants.map((m) => (
                   <tr key={m.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
                     <td className="p-3.5 pl-5 font-bold text-slate-900 dark:text-white">
                       <div>{m.name}</div>
@@ -936,10 +1014,15 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
                     </td>
                   </tr>
                 ))}
+                {merchants.length === 0 && <tr><td colSpan={6} className="p-8 text-center text-slate-500">{merchantListLoading ? 'Loading organizations…' : 'No organizations match these filters.'}</td></tr>}
               </tbody>
             </table>
           </div>
-          {agentFleetHasMore && <div className="border-t border-slate-100 p-4 text-center dark:border-slate-800"><button type="button" onClick={() => void loadMoreAgentFleet()} disabled={agentFleetRefreshing || !agentFleetCursor} className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">{agentFleetRefreshing ? 'Loading…' : 'Load older agents'}</button></div>}
+          {merchantListError && <p role="alert" className="border-t border-rose-100 bg-rose-50 px-5 py-3 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950/20 dark:text-rose-200">{merchantListError}</p>}
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-5 py-3 text-xs text-slate-500 dark:border-slate-800">
+            <span>{merchantListLoading ? 'Refreshing organizations…' : `Showing ${merchants.length} of ${merchantTotal} matching organizations`}</span>
+            {merchantHasMore && <button type="button" onClick={() => void refreshMerchantPage(true)} disabled={merchantListLoading || !merchantCursor} className="rounded-lg border border-slate-200 px-4 py-2 font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200">{merchantListLoading ? 'Loading…' : 'Load more organizations'}</button>}
+          </div>
         </div>
       )}
 
@@ -996,7 +1079,7 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
               <article key={plan.id} className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
                 <div className="flex items-start justify-between gap-3">
                   <div><h3 className="font-bold text-slate-900 dark:text-white">{plan.name}</h3><p className="text-xs text-slate-500">{plan.tier}</p></div>
-                  <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-300">{subscriptions.filter((sub: any) => sub.planTier === plan.tier && ['ACTIVE', 'TRIALING', 'GRACE'].includes(sub.status)).length} active or trial</span>
+                  <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-300">{subscriptionSummary.filter((item) => item.planTier === plan.tier && ['ACTIVE', 'TRIALING', 'GRACE'].includes(item.status)).reduce((sum, item) => sum + item.count, 0)} active or trial</span>
                 </div>
                 <p className="mt-3 text-sm font-semibold text-slate-700 dark:text-slate-200">Pricing: configured per pilot</p>
                 <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">Listed quotas and features are catalog values; enforcement and entitlement editing are not active.</p>
@@ -1018,8 +1101,9 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
               <label className="w-full text-xs font-bold text-slate-600 dark:text-slate-300 sm:max-w-xs">Organization
                 <select value={billingOrganizationId} onChange={(event) => setBillingOrganizationId(event.target.value)} className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-900">
                   <option value="">Choose organization</option>
-                  {merchants.map((merchant: any) => <option key={merchant.id} value={merchant.id}>{merchant.name} · {merchant.id}</option>)}
+                  {billingOrganizations.map((merchant: any) => <option key={merchant.id} value={merchant.id}>{merchant.name} · {merchant.id}</option>)}
                 </select>
+                {billingOrganizationsHasMore && <button type="button" onClick={() => void loadMoreBillingOrganizations()} disabled={billingOrganizationsLoading} className="mt-2 text-[11px] font-semibold text-indigo-700 underline disabled:opacity-50 dark:text-indigo-300">{billingOrganizationsLoading ? 'Loading organizations…' : 'Load more organizations'}</button>}
               </label>
             </div>
             {billingError && <p role="alert" className="mt-3 rounded-lg bg-rose-50 p-3 text-xs text-rose-800 dark:bg-rose-950/30 dark:text-rose-200">{billingError}</p>}

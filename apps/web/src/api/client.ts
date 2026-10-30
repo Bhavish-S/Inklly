@@ -711,11 +711,31 @@ export const api = {
     return body;
   },
 
-  async getPlatformMerchants() {
-    const res = await fetch(`${API_BASE}/platform/merchants`, { headers: getHeaders() });
+  async getPlatformMerchants(limit = 100, cursor?: string, search = '', status = 'ALL') {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (cursor) params.set('cursor', cursor);
+    if (search.trim()) params.set('search', search.trim());
+    if (status !== 'ALL') params.set('status', status);
+    const res = await fetch(`${API_BASE}/platform/merchants?${params}`, { headers: getHeaders() });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || 'Failed to load merchant organizations');
-    return body;
+    if (!body || !Array.isArray(body.merchants) || typeof body.hasMore !== 'boolean' || !Number.isInteger(body.total) || (body.nextCursor !== null && typeof body.nextCursor !== 'string')) {
+      throw new Error('The merchant organizations response is invalid.');
+    }
+    return body as { merchants: any[]; total: number; nextCursor: string | null; hasMore: boolean; limit: number };
+  },
+
+  async getAllPlatformMerchants(search = '', status = 'ALL') {
+    const merchants: any[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await api.getPlatformMerchants(100, cursor, search, status);
+      merchants.push(...page.merchants);
+      cursor = page.nextCursor || undefined;
+      if (!page.hasMore) break;
+      if (!cursor) throw new Error('The merchant organizations cursor is missing.');
+    } while (cursor);
+    return merchants;
   },
 
   async createPlatformMerchant(payload: { organizationName: string; shopCode?: string; ownerName: string; ownerEmail: string; planTier: string }) {
@@ -817,6 +837,14 @@ export const api = {
     const res = await fetch(`${API_BASE}/platform/subscriptions`, { headers: getHeaders() });
     if (!res.ok) throw new Error('Failed to load subscriptions');
     return res.json();
+  },
+
+  async getSubscriptionSummary() {
+    const res = await fetch(`${API_BASE}/platform/subscriptions?summary=true`, { headers: getHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to load subscription summary');
+    if (!body || !Array.isArray(body.summary)) throw new Error('The subscription summary response is invalid.');
+    return body.summary as Array<{ planTier: string; status: string; count: number }>;
   },
 
   async getSubscriptionInvoices() {

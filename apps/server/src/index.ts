@@ -102,7 +102,7 @@ export function createApp(db?: DatabaseService): express.Express {
 
   // Public marketing enquiries are validated and stored without logging PII.
   const enquiryController = new EnquiryController(new EnquiryRepository(database));
-  app.post('/api/v1/enquiry', createEnquiryRateLimit(), enquiryController.submit);
+  app.post('/api/v1/enquiry', createEnquiryRateLimit(database), enquiryController.submit);
 
   // Mount API routers
   app.use('/api/v1/portal', createPortalRoutes(database, fileStorage));

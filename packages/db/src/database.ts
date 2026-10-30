@@ -53,6 +53,7 @@ export class DatabaseService {
       this.ensureSqliteAgentPrintReadinessMigration();
       this.ensureSqliteMerchantVaultDeletionMigration();
       this.ensureSqliteAgentFleetIndexesMigration();
+      this.ensureSqliteOrganizationDirectoryMigration();
     }
   }
 
@@ -173,6 +174,33 @@ export class DatabaseService {
     this.ensurePostgresAgentPrintReadinessMigration();
     this.ensurePostgresMerchantVaultDeletionMigration();
     this.ensurePostgresAgentFleetIndexesMigration();
+    this.ensurePostgresOrganizationDirectoryMigration();
+  }
+
+  private ensureSqliteOrganizationDirectoryMigration(): void {
+    if (this.db!.prepare(`SELECT version FROM inklly_schema_migrations WHERE version = 27`).get()) return;
+    this.db!.exec('BEGIN');
+    try {
+      this.db!.exec(`CREATE INDEX IF NOT EXISTS idx_organizations_created ON organizations(created_at DESC, id DESC)`);
+      this.db!.prepare(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (27, ?)`).run(new Date().toISOString());
+      this.db!.exec('COMMIT');
+    } catch (error) {
+      try { this.db!.exec('ROLLBACK'); } catch { /* preserve the original error */ }
+      throw new Error(`[Inklly DB] Organization directory migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+
+  private ensurePostgresOrganizationDirectoryMigration(): void {
+    if (this.queryPostgres(`SELECT version FROM inklly_schema_migrations WHERE version = ?`, [27]).length) return;
+    this.queryPostgres('BEGIN');
+    try {
+      this.queryPostgres(`CREATE INDEX IF NOT EXISTS idx_organizations_created ON organizations(created_at DESC, id DESC)`);
+      this.queryPostgres(`INSERT INTO inklly_schema_migrations (version, applied_at) VALUES (?, ?)`, [27, new Date().toISOString()]);
+      this.queryPostgres('COMMIT');
+    } catch (error) {
+      try { this.queryPostgres('ROLLBACK'); } catch { /* preserve the original error */ }
+      throw new Error(`[Inklly DB] PostgreSQL organization directory migration failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
   }
 
   private ensureSqliteAgentFleetIndexesMigration(): void {

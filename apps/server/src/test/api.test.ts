@@ -1678,6 +1678,62 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     assert.equal(oversizedAudit.status, 400);
   });
 
+  it('paginates platform organizations with stable ordering, filters, and legacy response headers', async () => {
+    const createdAt = '2001-02-03T04:05:06.000Z';
+    const ownerId = db.queryOne<any>(`SELECT owner_user_id FROM organizations WHERE id = 'org-campus-network'`)?.owner_user_id;
+    assert.ok(ownerId);
+    const ids = Array.from({ length: 105 }, (_, index) => `org-page-${String(index).padStart(3, '0')}`);
+    for (let index = 0; index < ids.length; index += 1) {
+      db.execute(
+        `INSERT INTO organizations (id, name, owner_user_id, plan_tier, plan_status, created_at, updated_at)
+         VALUES (?, ?, ?, 'STARTER', ?, ?, ?)`,
+        [ids[index], `Cursor Tenant ${String(index).padStart(3, '0')}`, ownerId, index % 2 ? 'ACTIVE' : 'TRIAL', createdAt, createdAt]
+      );
+    }
+    try {
+      const headers = { Authorization: `Bearer ${adminToken}` };
+      const received: any[] = [];
+      let cursor: string | undefined;
+      let expectedTotal: number | undefined;
+      do {
+        const url = new URL(`${baseUrl}/api/v1/platform/merchants`);
+        url.searchParams.set('limit', '17');
+        url.searchParams.set('search', 'cursor tenant');
+        if (cursor) url.searchParams.set('cursor', cursor);
+        const response = await fetch(url, { headers });
+        assert.equal(response.status, 200);
+        const page = await response.json() as any;
+        assert.ok(page.merchants.length <= 17);
+        expectedTotal ??= page.total;
+        assert.equal(page.total, expectedTotal, 'total remains the filtered count across cursor pages');
+        received.push(...page.merchants);
+        cursor = page.nextCursor || undefined;
+        assert.equal(page.hasMore, Boolean(cursor));
+      } while (cursor);
+      const expectedIds = [...ids].sort((a, b) => b.localeCompare(a));
+      assert.deepEqual(received.map((merchant) => merchant.id), expectedIds);
+      assert.equal(expectedTotal, ids.length);
+
+      const trial = await fetch(`${baseUrl}/api/v1/platform/merchants?limit=100&search=cursor%20tenant&status=TRIAL`, { headers });
+      assert.equal(trial.status, 200);
+      const trialPage = await trial.json() as any;
+      assert.equal(trialPage.total, 53);
+      assert.ok(trialPage.merchants.every((merchant: any) => merchant.planStatus === 'TRIAL'));
+      const invalidLimit = await fetch(`${baseUrl}/api/v1/platform/merchants?limit=101`, { headers });
+      assert.equal(invalidLimit.status, 400);
+
+      const legacy = await fetch(`${baseUrl}/api/v1/platform/merchants`, { headers });
+      assert.equal(legacy.status, 200);
+      assert.ok(Array.isArray(await legacy.json()));
+      assert.equal(legacy.headers.get('X-Page-Size'), '100');
+      assert.equal(legacy.headers.get('X-Has-More'), 'true');
+      assert.ok(Number(legacy.headers.get('X-Total-Count')) >= ids.length);
+      assert.match(legacy.headers.get('Link') || '', /rel="next"/);
+    } finally {
+      db.execute(`DELETE FROM organizations WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
+    }
+  });
+
   it('paginates the complete platform audit history with stable same-timestamp ordering', async () => {
     const createdAt = '2001-01-01T00:00:00.000Z';
     const expectedIds = Array.from({ length: 205 }, (_, index) => `audit-page-${String(index).padStart(3, '0')}`);
@@ -3478,8 +3534,17 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       headers: { Authorization: `Bearer ${adminToken}` },
     });
     assert.equal(res.status, 200);
-    const subs = await res.json();
+    const subs = await res.json() as any[];
     assert.ok(Array.isArray(subs));
+    assert.ok(subs.length <= 100);
+    assert.equal(res.headers.get('X-Page-Size'), '100');
+    const summaryResponse = await fetch(`${baseUrl}/api/v1/platform/subscriptions?summary=true`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    assert.equal(summaryResponse.status, 200);
+    const summary = await summaryResponse.json() as any;
+    assert.ok(Array.isArray(summary.summary));
+    assert.equal(summary.summary.reduce((sum: number, item: any) => sum + item.count, 0), Number(res.headers.get('X-Total-Count')));
   });
 
   it('does not allow unverified subscription status changes', async () => {
