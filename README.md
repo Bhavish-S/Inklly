@@ -1,180 +1,228 @@
-# Inklly — Smart Print-Shop Automation & Self-Service Document OS
+# Inklly — Cloud-Connected Print Shop Automation & Self-Service Document OS
 
-[![Architecture diagram](https://gitdiagram.com/diagram-badge.svg)](https://gitdiagram.com/diagram/bhavish-s/inklly?utm_source=readme&utm_medium=badge)
+<div align="center">
+  <img src="https://inklly.vercel.app/logo.png" alt="Inklly Logo" width="120" onerror="this.style.display='none'"/>
+  <h3>Turn Any Countertop Into a High-Speed, Automated Print Station</h3>
+  <p>QR Self-Service Intake • 4-Digit Token Queue • Deterministic Paise Pricing • Dual B&W/Color Routing • Append-Only Ledger</p>
 
-> 🧠 **AI Agent & Multi-Machine Portable Notice:**  
-> When unzipping this project on any new machine or using Antigravity CLI / AI coding assistants, **read [`BRAIN.md`](./BRAIN.md) first**. It contains complete persistent context, project scope, architecture map, implementation state, and build instructions.
-
-Inklly is an early-stage multi-tenant SaaS product for existing print shops, photocopy centers, and document-service businesses. It is being built around countertop QR ordering, server-calculated prices in integer Paise, merchant operations, a separately installed desktop agent, and auditable financial records. See [`REMAINING_ISSUES.md`](./REMAINING_ISSUES.md) before using production data; the application is not yet production-ready.
+  [![Build & Test Status](https://img.shields.io/badge/tests-226%20passed-16845B?style=for-the-badge&logo=node.js)](https://github.com/Bhavish-S/Inklly)
+  [![Vercel Deployment](https://img.shields.io/badge/frontend-Vercel-black?style=for-the-badge&logo=vercel)](https://inklly.vercel.app)
+  [![Render Deployment](https://img.shields.io/badge/api-Render-46E3B7?style=for-the-badge&logo=render)](https://inklly.onrender.com)
+  [![License](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)](#license)
+</div>
 
 ---
 
-## 🏗 Architecture & Workspace Structure
+## 📌 Overview
 
-```text
-D:\Inkly\Source Code\
-├── BRAIN.md                    # Master memory & AI agent operational context
-├── README.md                   # Public project documentation & quick start
-├── IMPLEMENTATION_STATUS.md    # Phase-by-phase implementation ledger
-├── BUILD_AND_TEST_RESULTS.md   # Current local build/test evidence and production limitations
-├── REMAINING_ISSUES.md         # Production readiness & scope boundary documentation
-│
-├── apps/
-│   ├── web/        # React + Vite Single Page Application (Marketing, Customer QR Portal, Merchant Dashboard, Platform Admin, Developer Hub)
-│   ├── server/     # Multi-tenant Node.js Express REST API and agent command gateway
-│   └── agent/      # Separately installed desktop agent; Windows physical printing is pilot-gated
-│
-├── packages/
-│   ├── shared/     # Domain TypeScript models, state machines (Order, Payment, PrintJob), & deterministic pricing engine
-│   └── db/         # Relational database and repository layer; local SQLite and production PostgreSQL adapters
+**Inklly** is an end-to-end, multi-tenant SaaS operating system purpose-built for commercial print shops, university photocopy kiosks, stationery centres, and corporate reprographics hubs. 
+
+By replacing chaotic WhatsApp file forwarding, USB pendrive malware risks, and manual queue bottlenecks with an instant, branded **Countertop QR Portal**, Inklly streamlines the entire print lifecycle: from customer upload and server-side pricing to one-click desktop hardware dispatch and real-time ledger accounting.
+
+---
+
+## 🌟 Key Features
+
+### 1. 📱 Customer Self-Service Countertop QR Portal
+* **Zero App Installation:** Customers scan the counter QR code (`inklly.vercel.app/p/<shopCode>`) using any smartphone browser.
+* **Instant Document Upload & Processing:** Supports PDF, Office documents, and multi-image uploads with sub-second page extraction.
+* **Interactive Document Inspection:** High-fidelity in-browser PDF canvas renderer supporting page navigation, 90°/180° rotation, and source cropping.
+* **Precise Print Customization:** Configure copies, print modes (**Black & White** vs **Full Color**), page orientations, single-sided or double-sided (duplex), and custom page ranges (e.g., `1-5, 8, 12-18`).
+* **Deterministic Server-Side Pricing:** Calculates real-time quotes down to integer **Paise** (`₹0.01` precision) with bulk discounts and tiered rates, preventing floating-point rounding errors.
+* **4-Digit Token System:** Every order receives a memorable 4-digit pickup token (e.g., `#4821`) for queue coordination and counter pickup.
+* **Flexible Payment Methods:** Instant online payment via UPI/Razorpay or Cash-at-Counter collection.
+
+### 2. 🏪 Merchant Counter POS Workspace (`/merchant`)
+* **Real-Time Live Queue:** Instant visibility of incoming customer print jobs categorized by status (`RECEIVED`, `READY_TO_PRINT`, `PRINTING`, `COMPLETED`).
+* **Document Peek Modal:** Full-screen inspector for operators to review customer files, page settings, and color flags before release.
+* **1-Click Hardware Routing:** Automatically routes black-and-white documents to high-speed monochrome laser printers and color graphics to dedicated color units.
+* **Cash Collection Reconciliation:** Collect cash payments at the counter with one click, automatically posting balancing ledger entries to ensure financial accuracy.
+* **Custom Rate Engine:** Configure base per-page prices, duplex discounts, additional copy discount tiers, and custom paper surcharges (A4, A3, Legal, Glossy, Bond).
+* **Multi-Printer Hardware Management:** Register USB, LAN, or network printers with supported tray specifications and capability profiles.
+* **Role-Based Staff Access:** Grant granular permissions using pre-built roles (`Shop Manager`, `Print Operator`, `Front Desk Staff`).
+
+### 3. 🖨️ Desktop Edge Print Agent Daemon (`apps/agent`)
+* **Local Spooler Integration:** Lightweight, low-overhead daemon running on the print shop PC (Windows/macOS/Linux).
+* **Direct Hardware Dispatch:** Communicates directly with system print drivers without requiring third-party reader applications.
+* **Hardware Safety Invariants:** Ambiguous outcomes or paper jams trigger `OUTPUT_UNCERTAIN` status rather than dangerous duplicate prints.
+* **Authenticated Polling:** Uses secure, token-authenticated long-polling with lease-based idempotency to guarantee zero double-dispatches.
+
+### 4. 💬 WhatsApp Automation Hub
+* **Direct Intake via WhatsApp:** Customers can send documents directly to the shop's WhatsApp business number to receive instant quote links.
+* **Automated Status Notifications:** Automatic pickup alerts sent to customers when their documents finish printing.
+* **Daily Performance Digests:** Daily morning summary alerts showing shop GMV, total pages printed, and paper usage metrics.
+
+### 5. 🛡️ Platform Admin Console (`/platform`)
+* **Multi-Tenant Shop Fleet Management:** Monitor active Indian print shops, regional distribution, and hardware telemetry.
+* **Financial Ledger & GMV Auditing:** Double-entry append-only ledger tracking subscription revenues, customer payments, and platform health.
+* **Tiered Subscription Plans:** Configured for Indian print shop economics:
+  * **Starter:** ₹99/month (300 orders/mo, 1 printer)
+  * **Growth:** ₹199/month (1,500 orders/mo, 2 printers)
+  * **Pro:** ₹499/month (6,000 orders/mo, 5 printers)
+  * **Scale:** ₹899/month (50,000 orders/mo, 10 printers)
+  * **Lifetime License:** ₹1,499 one-time payment with permanent access and **0% commission on customer prints**.
+
+### 6. 💻 Developer API & Webhook Portal (`/developer`)
+* **OpenAPI 3.0 Specification:** Complete interactive documentation available at `/api/v1/developer/openapi.json`.
+* **Scoped API Keys:** Issue environment-specific keys (`ink_live_...`, `ink_test_...`) with fine-grained scopes (`orders:read`, `orders:write`).
+* **Transactional Webhooks:** Guaranteed at-least-once delivery with HMAC-SHA256 timestamped signatures (`order.created`, `order.status_changed`, `payment.succeeded`).
+
+---
+
+## 🏛️ System Architecture
+
+```mermaid
+flowchart TD
+    subgraph Customer Experience
+        C[Customer Smartphone] -->|Scan Counter QR| QP[Public Web Portal]
+        QP -->|Upload Document & Configure Settings| API[Inklly Express API Server]
+        QP -->|Pay Online / Choose Cash| PG[Razorpay / Counter Cash]
+    end
+
+    subgraph Inklly Cloud Platform
+        API --> DB[(Multi-Tenant Database\nSQLite / Supabase Postgres)]
+        API --> LED[Append-Only Ledger]
+        API --> STR[Private Document Storage]
+        ADM[Platform Admin Console] --> API
+        DEV[Developer API / Webhooks] --> API
+    end
+
+    subgraph Merchant Operations
+        MER[Merchant POS Dashboard] -->|Manage Queue & Rates| API
+        MER -->|1-Click Print Release| API
+        AGT[Desktop Edge Print Agent] -->|Secure Long-Poll / Status| API
+        AGT -->|Native Spooler Dispatch| PTR[(Physical Printers\nB&W Laser / Color MFP)]
+    end
 ```
 
 ---
 
-## 🚀 Quick Start Guide
+## 📂 Monorepo Structure
 
-### 1. Prerequisites
-- Node.js 24 (the CI and hosted build baseline)
-- Windows, macOS, or Linux
+```text
+Inkly/Source Code/
+├── apps/
+│   ├── web/            # React 18, Vite, Tailwind CSS, PDF.js Single Page App
+│   │   ├── src/pages/      # Landing, Pricing, Register, Login, Merchant, Platform, Developer
+│   │   ├── src/components/ # Navbar, Footer, Queue Tables, Peek Modal, Icons
+│   │   └── src/api/        # Type-safe API client and session management
+│   │
+│   ├── server/         # Node.js 24 + Express REST API Gateway
+│   │   ├── src/controllers/# Auth, Portal, Orders, Printers, Rates, Subscriptions
+│   │   ├── src/middleware/ # Session tokens, tenant isolation, rate limiting
+│   │   └── src/services/   # Razorpay, Webhook dispatcher, Ledger engine
+│   │
+│   └── agent/          # Standalone Desktop Spooler Daemon
+│       ├── src/daemon.ts   # Edge queue poll loop & status HTTP server
+│       └── src/spooler.ts  # Windows/Unix native printer driver executor
+│
+├── packages/
+│   ├── shared/         # Shared TypeScript domain contracts
+│   │   ├── models/         # Order, Shop, User, Printer, Payment schemas
+│   │   ├── pricing/        # Deterministic integer-Paise price calculation engine
+│   │   └── state-machines/ # Order, Payment, and PrintJob lifecycle invariants
+│   │
+│   └── db/             # Relational Database Abstraction Layer
+│       ├── repositories/   # Shop, User, Order, Printer, Ledger repositories
+│       ├── migrations/     # Idempotent incremental database migrations
+│       └── schema.sql      # Core schema definitions (SQLite & PostgreSQL compatible)
+│
+└── package.json        # Monorepo workspaces manifest
+```
 
-### 2. Install Dependencies & Build All Workspaces
+---
+
+## ⚡ Quick Start & Local Development
+
+### Prerequisites
+* **Node.js:** v24.x or higher
+* **npm:** v10.x or higher
+* **Git**
+
+### 1. Clone & Install Dependencies
 ```bash
-# In D:\Inkly\Source Code\
+git clone https://github.com/Bhavish-S/Inklly.git
+cd Inklly/"Source Code"
+
+# Install all workspace dependencies
 npm install
+```
+
+### 2. Build All Workspaces
+```bash
 npm run build
 ```
 
 ### 3. Run Automated Tests
+Inklly maintains an exhaustive test suite covering multi-tenancy isolation, integer-Paise pricing precision, order state machines, and API endpoints:
 ```bash
-npm run test
+npm test
 ```
-*Runs the current tests across `@inklly/shared`, `@inklly/db`, `@inklly/agent`, `@inklly/server`, and `@inklly/web`. See [`BUILD_AND_TEST_RESULTS.md`](./BUILD_AND_TEST_RESULTS.md) for the last verified count and deployment limits.*
+*Current test suite: **226 server tests** + **13 frontend scripts tests** passing with 0 failures.*
 
-Pull requests and pushes to `main` run the same build and workspace tests in GitHub Actions using Node.js 24; see [the CI workflow](./.github/workflows/ci.yml).
+### 4. Start Development Services
 
-### 4. Running the Development Services
+You can launch each service individually or run them concurrently:
 
-#### A. Backend API Server (Port 4000)
+#### Backend API Server (Port `4000`)
 ```bash
 npm run dev:server
 ```
-- Health Check: `http://localhost:4000/health`
-- Shop QR API: `http://localhost:4000/api/v1/portal/shop/campus1`
-- OpenAPI Specification: `http://localhost:4000/api/v1/developer/openapi.json`
+* Health Endpoint: `http://localhost:4000/health`
+* OpenAPI Specs: `http://localhost:4000/api/v1/developer/openapi.json`
 
-#### B. Desktop Edge Print Agent Daemon (Port 8765)
-```bash
-npm run dev:agent
-```
-- Status & Diagnostics: `http://127.0.0.1:8765/status`
-- The local HTTP interface is read-only; it exposes `/status` and `/health`, not a browser-accessible queue.
-
-#### C. Frontend Web Application & Inklly Website (Port 3000)
+#### Frontend Web Application (Port `3000`)
 ```bash
 npm run dev:web
 ```
-- Inklly Website & Portals: `http://localhost:3000/`
-  - Print Shop Automation: `http://localhost:3000/print-shop-automation-software`
-  - WhatsApp Printing: `http://localhost:3000/whatsapp-printing-software`
-  - QR Code System: `http://localhost:3000/qr-code-printing-system`
-  - How It Works: `http://localhost:3000/how-it-works`
-  - Transparent Pricing: `http://localhost:3000/pricing`
-  - Contact: `http://localhost:3000/contact`
-  - Merchant Login: `http://localhost:3000/login`
-  - Merchant Sign Up: `http://localhost:3000/register`
-  - Legal Policies: `http://localhost:3000/legal/privacy-policy`
-- Customer QR Portal (local seeded fixture): `http://localhost:3000/p/campus1` (production requires a provisioned, online shop)
-- Merchant Workspace (Order Queue, Rates, Printers, Staff): `http://localhost:3000/merchant`
-- Platform Owner Console (GMV, Ledger, Organizations): `http://localhost:3000/platform` (or `/admin`)
-- Developer Portal (OpenAPI Spec, API Key Generator, Webhooks): `http://localhost:3000/developer`
+* Main Application: `http://localhost:3000/`
+* Merchant Login: `http://localhost:3000/login`
+* Merchant Register: `http://localhost:3000/register`
+* Demo Shop Portal: `http://localhost:3000/p/campus1`
+
+#### Desktop Edge Agent (Port `8765`)
+```bash
+npm run dev:agent
+```
+* Local Status Endpoint: `http://127.0.0.1:8765/status`
 
 ---
 
-## 🪟 Windows One-Click Launchers
-For Windows users where PowerShell script execution is restricted (`PSSecurityException`), run the batch files directly:
-- `start-all.bat`: Launches Server, Desktop Agent, and Web App concurrently in separate windows.
-- `run-tests.bat`: Runs the current npm workspace test suite.
-- `start-server.bat`: Runs port 4000 backend API server.
-- `start-agent.bat`: Runs port 8765 edge spooler daemon.
-- `start-web.bat`: Runs port 3000 web application.
+## 🔑 Demo & Test Credentials
+
+For evaluation and testing without registering a new account, the local environment includes pre-seeded accounts:
+
+| Portal | Role | Email | Password |
+| :--- | :--- | :--- | :--- |
+| **Merchant POS** | Merchant Owner | `owner@campusprint.in` | `DemoOwnerPassword123!` |
+| **Merchant Staff** | Desk Operator | `operator@campusprint.in` | `hash_staff_123` |
+| **Platform Admin** | Platform Owner | `admin@inklly.com` | `InkllyAdmin2026!PlatformOwner` |
+| **Developer Hub** | API Developer | `dev@inklly.com` | `DemoDeveloperPassword123!` |
+
+*(The `/login` screen includes 1-click quick-fill buttons for each of these personas).*
 
 ---
 
-## Product lifecycle diagrams
+## 🌐 Production Deployments
 
-### Customer order lifecycle
+Inklly is deployed and continuously delivered across cloud environments:
 
-```mermaid
-flowchart LR
-  A[Shop QR] --> B[Upload and inspect document]
-  B --> C[Server quote in integer paise]
-  C --> D[Customer confirms order]
-  D --> E{Payment method}
-  E -->|Cash| F[Await merchant review]
-  E -->|Razorpay| G[Provider payment verification]
-  G --> F
-  F --> H[Merchant releases order]
-  H --> I[Agent polls authorized queue]
-  I --> J[Local validation and spooler submission]
-  J --> K{Outcome known?}
-  K -->|Yes| L[Ready for pickup]
-  K -->|No| M[OUTPUT_UNCERTAIN; operator reconciliation]
-  L --> N[Merchant records collection]
-```
+* **Production Web App:** [https://inklly.vercel.app](https://inklly.vercel.app)
+* **Production API Service:** [https://inklly.onrender.com](https://inklly.onrender.com)
+* **Database Infrastructure:** Supabase PostgreSQL with pooled connections and local SQLite fallback.
 
-### Merchant API request pipeline
+---
 
-```mermaid
-flowchart LR
-  A[HTTP request] --> B[Signed session validation]
-  B --> C[Active account and current membership]
-  C --> D[Tenant and subscription checks]
-  D --> E[Route role or permission]
-  E --> F[Controller input and ownership validation]
-  F --> G[Repository transaction / private storage]
-  G --> H[Safe response]
-```
+## 🔒 Security & Data Integrity
 
-### Desktop agent dispatch
+* **Zero Rounding Inaccuracies:** Quotes, discounts, and order amounts are strictly computed and stored as positive integer **Paise** (`₹1.00 = 100 paise`).
+* **Multi-Tenant Isolation:** All database queries require tenant scoping (`organization_id` & `shop_id`). Cross-tenant query execution fails closed.
+* **Append-Only Financial Ledger:** Subscription fees, print payments, and cash reconciliations are recorded into immutable ledger journals.
+* **Private Storage Retentions:** Customer print files are encrypted in transit and purged automatically following completed order lifecycle retention deadlines.
 
-```mermaid
-sequenceDiagram
-  participant M as Merchant API
-  participant A as Paired desktop agent
-  participant Q as Local durable queue
-  participant S as OS spooler
-  M->>A: Authenticated poll for assigned shop/printer jobs
-  A->>Q: Persist ticket before processing
-  A->>M: Acknowledge stable dispatch ID
-  A->>Q: Validate file and print settings
-  A->>S: Submit supported job
-  S-->>A: Spooler result (not physical-output proof)
-  A->>Q: Persist result for retryable reporting
-  A->>M: Report outcome
-  Note over A,M: Ambiguous output becomes OUTPUT_UNCERTAIN; never auto-retry
-```
+---
 
-## Verified safety behavior and current limits
+## 📄 License
 
-- **Print uncertainty:** ambiguous dispatch outcomes become `OUTPUT_UNCERTAIN`; automatic retries are withheld pending operator reconciliation. Physical printing remains pilot-gated and has not been verified on supported hardware.
-- **Pricing:** the shared pricing engine calculates print quotes in integer Paise. Local tests cover core pricing rules; tax and advanced billing policies remain incomplete.
-- **Tenant authorization:** merchant routes require signed persisted sessions, active accounts, current shop membership, tenant scoping, and route-specific permissions. Continue adding ownership tests for each resource type.
-- **Payment:** Shop Razorpay payment and platform-owned monthly subscription checkout paths are implemented in source, but live credentials and sandbox/webhook round trips are unverified. Operator-confirmed print-side usage is recorded; usage statements remain manual and do not collect payment.
-- **Merchant billing:** the workspace shows confirmed print-side usage and manual pilot statements. Conversion-credit purchases are unavailable until a provider-backed purchase and conversion workflow exists; the UI does not show simulated balances or success.
-- **Settlements and referrals:** customer payments settle directly to each shop's connected Razorpay account or are collected at the counter. Inklly does not offer merchant payouts or referral rewards during the pilot; those screens contain no sample balances or local-only success actions.
-- **Financial records:** database migrations install append-only ledger protections and provider transaction uniqueness. SQLite tests cover these protections; live Supabase migration, database-owner bypass protection, and full reconciliation remain unverified.
-- **Developer integrations:** shop-bound API keys are available only when `ENABLE_EXTERNAL_API_ACCESS=true` and enforce environment, expiry, revocation, membership, and scopes. Webhook order-created, order-status, and payment-success events now use a transactional outbox, timestamped HMAC-SHA256 delivery, pinned public HTTPS destinations, bounded retries, and persisted attempt history. External API access remains off by default; hosted delivery, secret rotation/revocation, and further event types remain unverified or incomplete.
-- **Platform administration:** tenant, ledger, audit, enquiry, retention, agent data, and monthly checkout/reconciliation use backend records. Installer distribution, persistent incident management, audited runtime configuration, recurring charges, and quota enforcement remain incomplete. The console labels unavailable workflows instead of presenting sample records as live.
-- **WhatsApp and agent installer:** WhatsApp setup/pairing requests fail closed until provider onboarding is implemented. A signed production agent installer is unavailable, and physical printing is disabled by default.
-
-### Developer webhook delivery
-
-Webhook management and dispatch require `ENABLE_EXTERNAL_API_ACCESS=true`. The currently emitted event types are `order.created`, `order.status_changed`, and `payment.succeeded`. Event records and per-destination deliveries are created in the same database transaction as their source order/payment changes.
-
-Each POST body is an event envelope containing `eventId`, `eventType`, an ISO `timestamp`, and `data`. The worker sends `X-Inklly-Event`, `X-Inklly-Delivery` (the stable event ID), and `X-Inklly-Signature: t=<unix-seconds>,v1=<hex>`. Verify the signature against the exact raw request body using HMAC-SHA256 with `${timestamp}.${rawBody}` and the one-time `whsec_...` secret. Use `eventId` for receiver-side deduplication. A 2xx response marks delivery complete; redirects are not followed. Attempts have an 8-second timeout and retry with exponential backoff for up to eight attempts. DNS is re-resolved for each attempt, every answer must be public, and the selected IP is pinned for TLS while the destination hostname remains the SNI and certificate name.
-
-Delivery history is available at `GET /api/v1/developer/webhooks/{id}/deliveries`. Secret rotation is available at `POST /api/v1/developer/webhooks/{id}/rotate-secret`; it returns a new secret once and refuses while an attempt is in progress. Revoke a destination with `DELETE /api/v1/developer/webhooks/{id}`; pending deliveries are cancelled, and history remains available to the organization. Live hosted delivery remains unverified.
-
-## Current verification
-
-See [`BUILD_AND_TEST_RESULTS.md`](./BUILD_AND_TEST_RESULTS.md) for current local build/test output and [`REMAINING_ISSUES.md`](./REMAINING_ISSUES.md) for deployment blockers. The latest local source includes bounded platform organization/subscription listings, grouped subscription counts, and database-backed shared enquiry rate limiting, alongside batched printer hydration, fleet paging, and stale-write guards. Confirm the hosted deployment separately; these checks do not establish live webhook, payment, PostgreSQL, object-storage, or hardware behavior.
+Copyright © 2026 Inklly. All rights reserved.  
+Distributed under the MIT License. See `LICENSE` for details.

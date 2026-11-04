@@ -2,6 +2,7 @@
   "name": "inklly",
   "version": "1.0.0",
   "description": "Inklly — Modern Print-Shop Automation & Self-Service Document OS",
+  "license": "MIT",
   "private": true,
   "workspaces": [
     "packages/*",
