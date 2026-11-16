@@ -27,7 +27,7 @@ export const PricingPage: React.FC<PricingPageProps> = ({ onNavigate }) => {
     {
       question: 'Is there a free trial, and do I need to enter credit card details?',
       answer:
-        'Yes! The Growth plan includes a completely free 7-day trial with full feature access. You can test customer QR ordering, WhatsApp automation, and counter printing with zero risk.',
+        'Yes! The Growth plan includes a completely free 7-day trial with full feature access. You can test customer QR ordering, online payment and counter printing before you pay anything.',
     },
     {
       question: 'Do you charge any per-page commission or transaction percentage?',

@@ -3,6 +3,32 @@
 **Status:** Not ready for production; development and verification continue.
 **Updated:** 2026-10-30
 
+## 2026-11-16 launch-readiness pass (branch `launch-readiness`, uncommitted)
+
+Verified locally only: `npm run build` passes and `npm test` passes 299 tests (database 25, shared 16, agent 15, server 230, web 13). Screens were checked in headless Chrome against a local SQLite server. Nothing here was verified against Render, Supabase, Razorpay or a physical printer.
+
+Fixed in this pass, from an end-to-end audit of the scan → upload → pay → print loop:
+
+- An agent-discovered printer can now be made dispatchable: `PUT /merchant/printers/:id` saves colour, duplex and paper sizes, and Business Setup → Printers has a setup panel with a pairing-code generator. Previously no printer could be dispatched to through the UI.
+- A dispatch the agent reports as `FAILED` can be retried with Print (`DISPATCH_FAILED` jobs only; `OUTPUT_UNCERTAIN` is still never retried).
+- An order printed without the agent can be completed: reconcile accepts `printedManually: true` for never-dispatched or agent-failed jobs, audited as `OPERATOR_MANUAL_PRINT`. The queue has a "Printed ✓" action.
+- Agent document URLs use the origin the agent called, instead of a hard-coded Render host that any other deployment's agent rejected. Set `SERVER_BASE_URL` to override.
+- An agent heartbeat no longer overwrites the merchant's default printer.
+- Merchant queue: payment badges come from the payment record (unpaid cash orders no longer show "Paid"), online-unpaid orders no longer offer cash buttons, Peek and Direct use the API host (they returned the app shell on Vercel) and Direct opens every file, multi-file orders are flagged, fetch failures show an error instead of an empty queue, and the current screen is kept in the URL.
+- Customer portal: only PDF/JPG/PNG are offered (the server rejected the Word/Excel types the picker advertised), files upload one at a time with retry on 429 and keep the ones that succeeded, quote errors are shown beside the total, copies are capped at the agent's limit of 99, a stuck online payment can be cancelled, and the address bar points at the tracker after ordering so a refresh keeps the token.
+- Pickup tokens are unique among a shop's open orders.
+
+Still open from the same audit:
+
+- Online payment is offered as soon as Razorpay keys are saved, even if the credential test fails. Gate `onlinePaymentAvailable` on a stored successful test.
+- An online order abandoned at checkout stays `AWAITING_PAYMENT` forever; add expiry, and a pay button on the tracker.
+- Crop is a fixed 8% margin trim; there is no drag-to-crop, per-page edit, reorder or merge.
+- The agent discovers printers only at startup.
+- The merchant review drawer still shows settings for the first file only.
+- Shop code lookups are case-sensitive; `campus1` remains a hard-coded fallback in several places.
+- Seed data: the `operator@campusprint.in` login has an invalid password hash, and seeded demo files do not exist in storage.
+- Pricing and product pages still advertise a WhatsApp bot that is not built.
+
 ## Current verification
 
 - `npm run build` passes all workspaces. PDF rendering is a separate 484.31 kB lazy-loaded chunk and no oversized-chunk warning remains.

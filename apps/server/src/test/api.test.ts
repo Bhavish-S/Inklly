@@ -1386,7 +1386,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       let competingOperatorWon = false;
       (db as any).query = function (sql: string, params?: any[]) {
         const rows = originalQuery.call(this, sql, params);
-        if (!competingOperatorWon && /SELECT id, order_file_id, status FROM print_jobs WHERE order_id = \? ORDER BY id/i.test(sql)) {
+        if (!competingOperatorWon && /SELECT id, order_file_id, status, printer_id FROM print_jobs WHERE order_id = \? ORDER BY id/i.test(sql)) {
           competingOperatorWon = true;
           this.execute(`UPDATE print_jobs SET status = 'PRINT_CONFIRMED' WHERE id = ? AND status = 'OUTPUT_UNCERTAIN'`, [pendingJobId]);
         }

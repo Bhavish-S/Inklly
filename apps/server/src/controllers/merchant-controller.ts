@@ -34,8 +34,8 @@ export class MerchantController {
 
   private presentOrder(order: any, printJobs?: any[]) {
     const jobs = printJobs || this.db.query<any>(
-      `SELECT id, order_file_id, status FROM print_jobs WHERE order_id = ? ORDER BY id`, [order.id]
-    ).map((job) => ({ id: job.id, orderFileId: job.order_file_id, status: job.status }));
+      `SELECT id, order_file_id, status, printer_id AS assigned_printer_id FROM print_jobs WHERE order_id = ? ORDER BY id`, [order.id]
+    ).map((job) => ({ id: job.id, orderFileId: job.order_file_id, status: job.status, printerId: job.assigned_printer_id || null }));
     return { ...order, printJobs: jobs, files: (order.files || []).map((file: any) => {
       const { storageKey: _storageKey, ...safeFile } = file;
       return { ...safeFile, fileUrl: `/api/v1/merchant/orders/${encodeURIComponent(order.id)}/files/${encodeURIComponent(file.id)}` };
@@ -45,13 +45,13 @@ export class MerchantController {
   private presentOrders(orders: any[]) {
     if (!orders.length) return [];
     const rows = this.db.query<any>(
-      `SELECT order_id, id, order_file_id, status FROM print_jobs WHERE order_id IN (${orders.map(() => '?').join(', ')}) ORDER BY order_id, id`,
+      `SELECT order_id, id, order_file_id, status, printer_id FROM print_jobs WHERE order_id IN (${orders.map(() => '?').join(', ')}) ORDER BY order_id, id`,
       orders.map((order) => order.id)
     );
     const jobsByOrder = new Map<string, any[]>();
     for (const row of rows) {
       const jobs = jobsByOrder.get(row.order_id) || [];
-      jobs.push({ id: row.id, orderFileId: row.order_file_id, status: row.status });
+      jobs.push({ id: row.id, orderFileId: row.order_file_id, status: row.status, printerId: row.printer_id || null });
       jobsByOrder.set(row.order_id, jobs);
     }
     return orders.map((order) => this.presentOrder(order, jobsByOrder.get(order.id) || []));
@@ -253,13 +253,25 @@ export class MerchantController {
       return res.status(400).json({ error: 'confirmedJobIds must contain 1–100 unique print job IDs that you physically inspected.' });
     }
 
+    // A shop without a working desktop agent (or whose dispatch failed) still
+    // has to be able to finish an order it printed by hand. That path is an
+    // explicit, separately audited declaration, and it only ever covers jobs
+    // that were never handed to an agent or that the agent reported as failed.
+    const printedManually = req.body?.printedManually === true;
+    const reconcilableOrderStatuses: OrderStatus[] = printedManually
+      ? ['SUBMITTED', 'AWAITING_REVIEW', 'READY_FOR_PRINT', 'IN_PROGRESS', 'PRINT_FAILED', 'PRINT_UNCONFIRMED', 'READY_FOR_COLLECTION']
+      : ['IN_PROGRESS', 'PRINT_UNCONFIRMED', 'READY_FOR_COLLECTION'];
+    const confirmationSource = printedManually ? 'OPERATOR_MANUAL_PRINT' : 'OPERATOR_PHYSICAL_INSPECTION';
+
     const order = this.orderRepo.getOrderByIdForShop(orderId, shopId);
     if (!order) return res.status(404).json({ error: 'Order not found.' });
     if (order.paymentMethod === 'ONLINE_RAZORPAY' && order.paymentStatus !== 'VERIFIED') {
       return res.status(409).json({ error: 'Online payment must be verified before print output can be reconciled.' });
     }
-    if (!['IN_PROGRESS', 'PRINT_UNCONFIRMED', 'READY_FOR_COLLECTION'].includes(order.status)) {
-      return res.status(409).json({ error: 'Only an order with a dispatched print attempt can be reconciled.' });
+    if (!reconcilableOrderStatuses.includes(order.status)) {
+      return res.status(409).json({ error: printedManually
+        ? 'This order is not in a state that can be completed as printed manually.'
+        : 'Only an order with a dispatched print attempt can be reconciled.' });
     }
 
     const allowedStatuses: PrintJobStatus[] = [
@@ -275,15 +287,19 @@ export class MerchantController {
         const current = this.db.queryOne<any>(
           `SELECT id, status FROM orders WHERE id = ? AND shop_id = ?`, [orderId, shopId]
         );
-        if (!current || !['IN_PROGRESS', 'PRINT_UNCONFIRMED', 'READY_FOR_COLLECTION'].includes(current.status)) {
+        if (!current || !reconcilableOrderStatuses.includes(current.status)) {
           throw new Error('RECONCILIATION_CONFLICT: order state changed; refresh and review it.');
         }
         const jobs = this.db.query<any>(
-          `SELECT id, order_file_id, status FROM print_jobs WHERE order_id = ? ORDER BY id`, [orderId]
+          `SELECT id, order_file_id, status, printer_id FROM print_jobs WHERE order_id = ? ORDER BY id`, [orderId]
         );
+        // Never-dispatched jobs (no printer assigned) and agent-reported
+        // failures produced no agent output, so a manual print cannot double up.
+        // A job already queued for or held by an agent is deliberately excluded.
+        const isManualOnlyJob = (job: any) => (job.status === 'RECEIVED' && !job.printer_id) || job.status === 'DISPATCH_FAILED';
         const jobIdsToConfirm: string[] = requestedJobIds ?? jobs.map((job) => job.id);
         const selectedJobs = jobs.filter((job) => jobIdsToConfirm.includes(job.id));
-        if (!jobs.length || selectedJobs.length !== jobIdsToConfirm.length || selectedJobs.some((job) => !allowedStatuses.includes(job.status as PrintJobStatus))) {
+        if (!jobs.length || selectedJobs.length !== jobIdsToConfirm.length || selectedJobs.some((job) => !allowedStatuses.includes(job.status as PrintJobStatus) && !(printedManually && isManualOnlyJob(job)))) {
           throw new Error('RECONCILIATION_CONFLICT: one or more selected print jobs do not belong to this order or are not eligible for physical-output confirmation. Do not retry them blindly.');
         }
 
@@ -310,6 +326,16 @@ export class MerchantController {
         for (const job of selectedJobs) {
           if (job.status === 'PRINT_CONFIRMED') continue;
           let from = job.status as PrintJobStatus;
+          if (printedManually && isManualOnlyJob(job)) {
+            const manuallyConfirmed = this.db.query<{ id: string }>(
+              `UPDATE print_jobs SET status = 'PRINT_CONFIRMED', updated_at = ?
+               WHERE id = ? AND ((status = 'RECEIVED' AND printer_id IS NULL) OR status = 'DISPATCH_FAILED') RETURNING id`,
+              [now, job.id]
+            );
+            if (manuallyConfirmed.length !== 1) throw new Error('RECONCILIATION_CONFLICT: a selected print job was sent to a printer in the meantime. Refresh the order before confirming it.');
+            changedJobs.push({ id: job.id, previousStatus: job.status });
+            continue;
+          }
           if (from === 'OUTPUT_UNCERTAIN') {
             validatePrintJobTransition(from, 'NEEDS_PHYSICAL_VERIFICATION');
             const claimed = this.db.query<{ id: string }>(
@@ -332,7 +358,7 @@ export class MerchantController {
         const orderComplete = currentJobStates.length > 0 && currentJobStates.every((job) => job.status === 'PRINT_CONFIRMED');
         let confirmedSides: number | null = null;
         if (orderComplete) {
-          if (current.status !== 'READY_FOR_COLLECTION') this.orderRepo.updateOrderStatus(orderId, 'READY_FOR_COLLECTION');
+          this.advanceOrderStatus(orderId, current.status as OrderStatus, 'READY_FOR_COLLECTION');
           // Usage events are order-scoped and append-only; meter only once every file is confirmed.
           const totalConfirmedSides = files.reduce((total, file) => {
             const options = JSON.parse(String(file.print_options));
@@ -346,16 +372,19 @@ export class MerchantController {
           confirmedSides = totalConfirmedSides;
           this.db.execute(
             `INSERT INTO subscription_usage_events (id, organization_id, shop_id, order_id, confirmed_sides, confirmation_source, created_at)
-             VALUES (?, ?, ?, ?, ?, 'OPERATOR_PHYSICAL_INSPECTION', ?) ON CONFLICT (order_id) DO NOTHING`,
-            [crypto.randomUUID(), org.organization_id, shopId, orderId, totalConfirmedSides, now]
+             VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (order_id) DO NOTHING`,
+            [crypto.randomUUID(), org.organization_id, shopId, orderId, totalConfirmedSides, confirmationSource, now]
           );
+        } else if (changedJobs.length) {
+          // Part of a multi-file order is done: the order is now in progress.
+          this.advanceOrderStatus(orderId, current.status as OrderStatus, 'IN_PROGRESS');
         }
         this.userRepo.logAuditEvent({
           id: crypto.randomUUID(), actorUserId: actorId, actorRole: req.user?.role,
           shopId, organizationId: req.user?.organizationId,
           action: 'MERCHANT_PRINT_OUTPUT_RECONCILED', targetType: 'ORDER', targetId: orderId,
           outcome: 'SUCCESS', ipAddress: req.ip,
-          details: { confirmationSource: 'OPERATOR_PHYSICAL_INSPECTION', physicalOutputConfirmed: true, physicallyConfirmedSides, orderComplete, meteredSides: confirmedSides, usageMeter: 'selected document pages multiplied by copies after all files are confirmed', reason, changedJobs },
+          details: { confirmationSource, printedManually, physicalOutputConfirmed: true, physicallyConfirmedSides, orderComplete, meteredSides: confirmedSides, usageMeter: 'selected document pages multiplied by copies after all files are confirmed', reason, changedJobs },
           createdAt: now,
         });
         return { order: this.orderRepo.getOrderByIdForShop(orderId, shopId), reconciledJobs: changedJobs.length, confirmedJobIds: selectedJobs.map((job) => job.id), pendingJobIds: currentJobStates.filter((job) => job.status !== 'PRINT_CONFIRMED').map((job) => job.id), orderComplete, physicallyConfirmedSides, confirmedSides };
@@ -402,27 +431,37 @@ export class MerchantController {
       });
     }
 
+    let retriedJobs = 0;
     try {
       // Assignment and order-state changes must commit together so an agent
       // cannot see an in-progress order without a real, shop-owned target.
       this.db.transaction(() => {
         const jobs = this.db.query<any>(`SELECT id, printer_id, status FROM print_jobs WHERE order_id = ?`, [id]);
-        if (!jobs.length || jobs.some((job) => job.status !== 'RECEIVED' || job.printer_id)) {
+        // Dispatchable: never released, or released and reported FAILED by the
+        // agent (nothing reached the spooler, so a retry cannot duplicate
+        // output). OUTPUT_UNCERTAIN and every in-flight state stay untouched and
+        // must go through operator reconciliation.
+        const dispatchable = jobs.filter((job) => (job.status === 'RECEIVED' && !job.printer_id) || job.status === 'DISPATCH_FAILED');
+        if (!dispatchable.length) {
           throw new Error('PRINT_DISPATCH_CONFLICT: no unassigned jobs are available; inspect the existing print state.');
         }
-        for (const job of jobs) {
-          this.db.execute(`UPDATE print_jobs SET printer_id = ?, updated_at = ? WHERE id = ? AND status = 'RECEIVED' AND printer_id IS NULL`, [printer.id, new Date().toISOString(), job.id]);
+        const nowIso = new Date().toISOString();
+        let released = 0;
+        for (const job of dispatchable) {
+          released += this.db.query<{ id: string }>(
+            `UPDATE print_jobs SET printer_id = ?, status = 'RECEIVED', updated_at = ?
+             WHERE id = ? AND ((status = 'RECEIVED' AND printer_id IS NULL) OR status = 'DISPATCH_FAILED') RETURNING id`,
+            [printer.id, nowIso, job.id]
+          ).length;
         }
-        const assignedJobs = this.db.query<any>(`SELECT id FROM print_jobs WHERE order_id = ? AND printer_id = ? AND status = 'RECEIVED'`, [id, printer.id]);
-        if (assignedJobs.length !== jobs.length) throw new Error('PRINT_DISPATCH_CONFLICT: another release changed the printer assignment.');
-        if (order.status === 'AWAITING_REVIEW' || order.status === 'SUBMITTED') {
-          this.orderRepo.updateOrderStatus(id, 'READY_FOR_PRINT');
-        }
-        this.orderRepo.updateOrderStatus(id, 'IN_PROGRESS');
+        if (released !== dispatchable.length) throw new Error('PRINT_DISPATCH_CONFLICT: another release changed the printer assignment.');
+        retriedJobs = dispatchable.filter((job) => job.status === 'DISPATCH_FAILED').length;
+        const current = this.db.queryOne<any>(`SELECT status FROM orders WHERE id = ?`, [id]);
+        this.advanceOrderStatus(id, current.status as OrderStatus, 'IN_PROGRESS');
       });
 
       const updated = this.getOrderForAuthenticatedMerchant(id, req);
-      res.json({ success: true, message: `Print jobs queued for ${printer.name}.`, printerId: printer.id, order: updated });
+      res.json({ success: true, message: `Print jobs queued for ${printer.name}.`, printerId: printer.id, retriedJobs, order: updated });
     } catch (err: any) {
       if (typeof err?.message === 'string' && err.message.startsWith('PRINT_DISPATCH_CONFLICT:')) {
         return res.status(409).json({ error: err.message.slice('PRINT_DISPATCH_CONFLICT:'.length).trim() });
@@ -557,6 +596,66 @@ export class MerchantController {
       bulkDiscount: this.pricingRepo.getBulkDiscountRule(shopId),
       copyDiscounts: this.pricingRepo.getCopyDiscountRules(shopId),
     });
+  };
+
+  /**
+   * Walk an order forward to `target` through the legal state-machine steps.
+   * A no-op when the order is already there; throws if no forward path exists.
+   */
+  private advanceOrderStatus(orderId: string, from: OrderStatus, target: 'IN_PROGRESS' | 'READY_FOR_COLLECTION'): void {
+    const next: Partial<Record<OrderStatus, OrderStatus>> = {
+      SUBMITTED: 'AWAITING_REVIEW',
+      AWAITING_REVIEW: 'READY_FOR_PRINT',
+      READY_FOR_PRINT: 'IN_PROGRESS',
+      PENDING_RELEASE: 'IN_PROGRESS',
+      PENDING_AGENT_SPOOL: 'IN_PROGRESS',
+      PRINT_FAILED: 'IN_PROGRESS',
+      PRINT_UNCONFIRMED: target === 'READY_FOR_COLLECTION' ? 'READY_FOR_COLLECTION' : 'IN_PROGRESS',
+      IN_PROGRESS: 'READY_FOR_COLLECTION',
+    };
+    let status = from;
+    for (let step = 0; step < 6 && status !== target; step++) {
+      if (status === 'READY_FOR_COLLECTION') return; // already past IN_PROGRESS
+      const following = next[status];
+      if (!following) throw new Error(`Illegal order transition from ${status} to ${target}`);
+      this.orderRepo.updateOrderStatus(orderId, following);
+      status = following;
+    }
+  }
+
+  public updatePrinter = (req: Request, res: Response) => {
+    const shopId = this.getShopId(req);
+    const printerId = typeof req.params.id === 'string' ? req.params.id.trim() : '';
+    if (!printerId || printerId.length > 128) return res.status(400).json({ error: 'A valid printer ID is required.' });
+    const { supportsColor, supportsDuplex, paperSizes } = req.body || {};
+    if (typeof supportsColor !== 'boolean' || typeof supportsDuplex !== 'boolean') {
+      return res.status(400).json({ error: 'supportsColor and supportsDuplex must be booleans.' });
+    }
+    const allowedSizes = ['A4', 'A3', 'PHOTO_4X6', 'PHOTO_5X7', 'GLOSSY', 'PLAIN'];
+    if (!Array.isArray(paperSizes) || paperSizes.length < 1 || paperSizes.length > allowedSizes.length ||
+        paperSizes.some((size: unknown) => typeof size !== 'string' || !allowedSizes.includes(size)) ||
+        new Set(paperSizes).size !== paperSizes.length) {
+      return res.status(400).json({ error: `paperSizes must list at least one of: ${allowedSizes.join(', ')}.` });
+    }
+    const updated = this.printerRepo.updatePrinterProfile(shopId, printerId, {
+      supportsColor,
+      supportsDuplex,
+      trays: [{ name: 'Main tray', supportedSizes: paperSizes as string[], isDefault: true }],
+    });
+    if (!updated) return res.status(404).json({ error: 'Printer not found for this shop.' });
+    this.userRepo.logAuditEvent({
+      id: crypto.randomUUID(), actorUserId: req.user?.userId, actorRole: req.user?.role,
+      shopId, organizationId: req.user?.organizationId,
+      action: 'MERCHANT_PRINTER_PROFILE_UPDATED', targetType: 'PRINTER', targetId: printerId,
+      outcome: 'SUCCESS', ipAddress: req.ip,
+      details: { supportsColor, supportsDuplex, paperSizes },
+      createdAt: new Date().toISOString(),
+    });
+    const printers = this.printerRepo.getPrintersByShop(shopId).map((printer) => ({
+      ...printer,
+      healthStatus: getPrinterHealthStatus(printer.isOnline, printer.lastHeartbeat),
+    }));
+    return res.json({ success: true, printer: printers.find((printer) => printer.id === printerId), printers });
   };
 
   public getPrinters = (req: Request, res: Response) => {

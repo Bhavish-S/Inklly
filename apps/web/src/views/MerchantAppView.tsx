@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import QRCode from 'qrcode';
 import { api } from '../api/client';
+import { PrinterSetupPanel } from '../components/PrinterSetupPanel';
 import { checkMerchantConnections, formatMerchantConnectionResult } from '../merchant-health-check.mjs';
 import { parseRupeesToPaise } from '../money-input.mjs';
 import {
@@ -118,6 +119,17 @@ type MerchantStorageFileView = {
   mimeType: string;
 };
 
+const MERCHANT_VIEWS = ['dashboard', 'orders', 'live_print', 'whatsapp_setup', 'storage', 'credits', 'withdraw', 'refunds', 'referrals', 'employees', 'train_bot', 'business_setup', 'shop_qr'] as const;
+const SETUP_TABS = ['profile', 'printers', 'pricing', 'discounts', 'portal', 'automation'] as const;
+const ORDER_TABS = ['pending', 'payment_pending', 'processing', 'printing', 'rejected', 'print_failed', 'done', 'all'] as const;
+
+/** Read one workspace screen selector from the query string, ignoring unknown values. */
+function readWorkspaceParam<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
+  if (typeof window === 'undefined') return fallback;
+  const value = new URLSearchParams(window.location.search).get(key);
+  return value && (allowed as readonly string[]).includes(value) ? (value as T) : fallback;
+}
+
 export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) => {
   // Sidebar state
   const [sidebarExpanded, setSidebarExpanded] = useState<boolean>(true);
@@ -135,7 +147,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     | 'train_bot'
     | 'business_setup'
     | 'shop_qr'
-  >('dashboard');
+  >(() => readWorkspaceParam('view', MERCHANT_VIEWS, 'dashboard'));
 
   // Business Setup tab state
   const [merchantMenuOpen, setMerchantMenuOpen] = useState<boolean>(false);
@@ -327,7 +339,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
 
   const [setupTab, setSetupTab] = useState<
     'profile' | 'printers' | 'pricing' | 'discounts' | 'portal' | 'automation'
-  >('profile');
+  >(() => readWorkspaceParam('setup', SETUP_TABS, 'profile'));
 
   // Dark mode
   // Interactive Guided Product Tour State
@@ -411,7 +423,19 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   // Orders queue state
   const [ordersTab, setOrdersTab] = useState<
     'pending' | 'payment_pending' | 'processing' | 'printing' | 'rejected' | 'print_failed' | 'done' | 'all'
-  >('pending');
+  >(() => readWorkspaceParam('tab', ORDER_TABS, 'pending'));
+
+  // Keep the current screen in the address bar so a refresh, a bookmark or a
+  // shared link reopens the same place instead of dropping back to the dashboard.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const assign = (key: string, value: string, fallback: string) => (value === fallback ? params.delete(key) : params.set(key, value));
+    assign('view', activeView, 'dashboard');
+    if (activeView === 'orders') assign('tab', ordersTab, 'pending'); else params.delete('tab');
+    if (activeView === 'business_setup') assign('setup', setupTab, 'profile'); else params.delete('setup');
+    const query = params.toString();
+    window.history.replaceState(window.history.state, '', `${window.location.pathname}${query ? `?${query}` : ''}`);
+  }, [activeView, ordersTab, setupTab]);
   const [dateFilter, setDateFilter] = useState<string>('today');
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
   const [reconcileReason, setReconcileReason] = useState('');
@@ -1001,6 +1025,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [queueOrders, setQueueOrders] = useState<any[]>([]);
   const [queuePage, setQueuePage] = useState(1);
   const [queueLoading, setQueueLoading] = useState(false);
+  const [queueError, setQueueError] = useState('');
   const [queuePagination, setQueuePagination] = useState({ page: 1, pageSize: 25, total: 0, totalPages: 0, revenuePaise: 0, pageCount: 0 });
   const queueRequestSequence = useRef(0);
   const [isRefreshingOrders, setIsRefreshingOrders] = useState<boolean>(false);
@@ -1044,7 +1069,17 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       tokenNumber: tokenDigits,
       tokenDisplay,
       files: o.files || [],
+      fileCount: (o.files || []).length,
       printJobs: o.printJobs || [],
+      hasFailedDispatch: (o.printJobs || []).some((job: any) => job.status === 'DISPATCH_FAILED'),
+      // True while every job is either untouched or failed by the agent, i.e.
+      // staff may still print the order themselves without risking a duplicate.
+      canPrintManually: ['SUBMITTED', 'AWAITING_REVIEW', 'READY_FOR_PRINT', 'IN_PROGRESS', 'PRINT_FAILED'].includes(o.status)
+        && (o.paymentMethod !== 'ONLINE_RAZORPAY' || o.paymentStatus === 'VERIFIED')
+        && (o.printJobs || []).length > 0
+        && (o.printJobs || []).some((job: any) => (job.status === 'RECEIVED' && !job.printerId) || job.status === 'DISPATCH_FAILED')
+        && (o.printJobs || []).every((job: any) => (job.status === 'RECEIVED' && !job.printerId) || job.status === 'DISPATCH_FAILED' || job.status === 'PRINT_CONFIRMED'),
+      isPaid: o.paymentStatus === 'VERIFIED',
       customer: o.customerName || 'Walk-in Customer',
       phone: o.customerPhone || 'Counter QR',
       document: file?.fileName || 'Customer_Document.pdf',
@@ -1100,6 +1135,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       if (requestSequence !== queueRequestSequence.current) return;
       const mapped = rawOrders.map(mapServerOrderToUiOrder);
       setQueueOrders(mapped);
+      setQueueError('');
       if (Array.isArray(response)) {
         setQueuePagination({
           page: 1,
@@ -1122,13 +1158,10 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     } catch (err) {
       if (requestSequence !== queueRequestSequence.current) return;
       console.warn('[MerchantAppView] Could not fetch paginated order queue:', err);
-      if (ordersList.length > 0 && (tab === 'all' || tab === 'pending')) {
-        setQueueOrders(ordersList);
-        setQueuePagination((prev) => ({ ...prev, page: 1, total: ordersList.length, totalPages: 1 }));
-      } else {
-        setQueueOrders([]);
-        setQueuePagination((previous) => ({ ...previous, page, total: 0, totalPages: 0, revenuePaise: 0, pageCount: 0 }));
-      }
+      // Keep whatever is on screen: an empty list here would read as "no
+      // orders" when the truth is "could not reach the server".
+      setQueueError(err instanceof Error && err.message ? err.message : 'Could not load orders.');
+      return;
     } finally {
       if (requestSequence === queueRequestSequence.current) setQueueLoading(false);
     }
@@ -1523,56 +1556,45 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     setTimeout(() => setOrderActionToast(null), 3500);
   };
 
-  const handleCollectCashAndPrint = async (ord: any) => {
-    try {
-      setOrderActionToast(`Recording cash payment of ${ord.amount} for Token ${ord.tokenDisplay}…`);
-      await api.collectCash(ord.rawId);
-      setOrderActionToast(`Cash payment verified! Dispatching Token ${ord.tokenDisplay} to printer…`);
-      await handleOneClickPrint(ord.rawId);
-    } catch (e: any) {
-      console.error('Cash collect and print error:', e);
-      setOrderActionToast(e instanceof Error ? e.message : 'Cash collection failed.');
-      setTimeout(() => setOrderActionToast(null), 3500);
-    }
-  };
-
-  const handleCollectCashOnly = async (ord: any) => {
-    try {
-      setOrderActionToast(`Recording cash payment of ${ord.amount}…`);
-      await api.collectCash(ord.rawId);
-      setOrderActionToast(`Payment of ${ord.amount} recorded for Token ${ord.tokenDisplay}!`);
-      await fetchLiveOrdersFromApi();
-    } catch (e: any) {
-      setOrderActionToast(e instanceof Error ? e.message : 'Could not record cash payment.');
-    }
-    setTimeout(() => setOrderActionToast(null), 3000);
-  };
-
   const handleBrowserPrint = async (ord: any) => {
-    const file = ord.files?.[0];
-    if (!file) {
+    const files: any[] = ord.files || [];
+    if (!files.length) {
       setOrderActionToast('No document attached to this order.');
       return;
     }
     try {
-      setOrderActionToast(`Opening Token ${ord.tokenDisplay} in Browser Print…`);
-      const token = typeof window !== 'undefined' ? localStorage.getItem('inklly_token') : null;
-      const res = await fetch(`/api/v1/merchant/orders/${ord.rawId}/files/${file.id}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (!res.ok) throw new Error('Could not download print file');
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-
-      const printWin = window.open(blobUrl, '_blank');
-      if (printWin) {
-        printWin.focus();
-      }
-      setOrderActionToast(`Document opened! Use browser print dialog to print to any installed printer.`);
+      setOrderActionToast(`Opening ${files.length > 1 ? `${files.length} documents` : 'the document'} for Token ${ord.tokenDisplay}…`);
+      // Open the tabs synchronously (inside the click) so pop-up blockers allow them.
+      const tabs = files.map(() => window.open('', '_blank'));
+      if (tabs.some((tab) => !tab)) throw new Error('Allow pop-ups for this site to open every document');
+      await Promise.all(files.map(async (file, index) => {
+        const blobUrl = URL.createObjectURL(await api.fetchOrderFileBlob(ord.rawId, file.id));
+        tabs[index]!.location.href = blobUrl;
+        window.setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000);
+      }));
+      setOrderActionToast(ord.canPrintManually
+        ? 'Print from the browser dialog, then press “Printed ✓” on this order so the customer is told it is ready.'
+        : 'Document opened. Use the browser print dialog to print to any installed printer.');
     } catch (err: any) {
       setOrderActionToast(`Browser print failed: ${err.message}`);
     }
-    setTimeout(() => setOrderActionToast(null), 4000);
+    setTimeout(() => setOrderActionToast(null), 6000);
+  };
+
+  /** Staff printed the order themselves; record that and move it to pickup. */
+  const handleMarkPrintedManually = async (ord: any) => {
+    const fileSummary = (ord.files || []).map((file: any) => `• ${file.fileName}`).join('\n');
+    if (!window.confirm(`Confirm you printed every file for Token ${ord.tokenDisplay} and checked the pages:\n\n${fileSummary}\n\nThe customer will be told the order is ready for pickup.`)) return;
+    try {
+      await api.reconcilePrintOutput(ord.rawId, 'Printed manually at the counter and checked by staff.', undefined, true);
+      await fetchLiveOrdersFromApi();
+      setOrderActionToast(ord.isPaid
+        ? `Token ${ord.tokenDisplay} is ready for pickup.`
+        : `Token ${ord.tokenDisplay} is ready for pickup. Collect ${ord.amount} in cash when the customer arrives.`);
+    } catch (error) {
+      setOrderActionToast(error instanceof Error ? error.message : 'Could not mark this order as printed.');
+    }
+    setTimeout(() => setOrderActionToast(null), 5000);
   };
 
   const handleQuickPreview = async (ord: any) => {
@@ -1586,14 +1608,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     setPreviewBlobUrl(null);
 
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('inklly_token') : null;
-      const res = await fetch(`/api/v1/merchant/orders/${ord.rawId}/files/${file.id}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (!res.ok) throw new Error('Could not load document preview');
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      setPreviewBlobUrl(blobUrl);
+      setPreviewBlobUrl(URL.createObjectURL(await api.fetchOrderFileBlob(ord.rawId, file.id)));
     } catch (err: any) {
       setOrderActionToast(`Preview load failed: ${err.message}`);
     } finally {
@@ -2822,6 +2837,15 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
               </div>
             </div>
 
+            {queueError && (
+              <div role="alert" className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/40 px-4 py-3 text-xs font-semibold text-red-700 dark:text-red-300">
+                <span>Could not refresh orders ({queueError}). The list below may be out of date.</span>
+                <button type="button" onClick={() => void fetchOrdersPage()} className="shrink-0 rounded-lg bg-red-600 px-3 py-1.5 font-bold text-white hover:bg-red-700 cursor-pointer">
+                  Try again
+                </button>
+              </div>
+            )}
+
             {/* Table or Empty State */}
             {queueLoading && activeFilteredOrders.length === 0 ? (
               <div className="py-20 text-center text-sm text-slate-500" role="status">Loading orders…</div>
@@ -2877,6 +2901,16 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                               <span className="font-semibold text-gray-800 dark:text-gray-200 truncate max-w-[180px] sm:max-w-xs" title={ord.document}>
                                 {ord.document}
                               </span>
+                              {ord.fileCount > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedOrder(ord)}
+                                  className="text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950/50 text-amber-800 dark:text-amber-200 cursor-pointer"
+                                  title={`This order has ${ord.fileCount} files. The settings shown are for the first one; open Review to see all of them.`}
+                                >
+                                  +{ord.fileCount - 1} more {ord.fileCount === 2 ? 'file' : 'files'}
+                                </button>
+                              )}
                             </div>
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${
@@ -2902,73 +2936,77 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                             <div className="font-bold text-gray-900 dark:text-white flex items-center gap-1.5">
                               <span className="text-sm font-black text-emerald-600 dark:text-emerald-400">{ord.amount}</span>
                             </div>
-                            {ord.tab === 'payment_pending' ? (
-                              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 border border-amber-200 dark:border-amber-800 flex items-center gap-1 w-max">
-                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-                                💵 Cash Pending
-                              </span>
-                            ) : ord.tab === 'pending' ? (
-                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 flex items-center gap-1 w-max">
-                                <span>✓</span> Paid ({ord.paymentMode})
-                              </span>
-                            ) : ord.tab === 'processing' ? (
-                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 flex items-center gap-1 w-max">
-                                <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" /> Ready
-                              </span>
-                            ) : ord.tab === 'printing' ? (
-                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 flex items-center gap-1 w-max">
-                                <span className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-ping" /> Spooling
-                              </span>
-                            ) : ord.tab === 'print_failed' ? (
-                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 dark:bg-red-950/50 text-red-700 dark:text-red-300 flex items-center gap-1 w-max">
-                                <span>⚠️</span> Jam Alert
-                              </span>
-                            ) : ord.tab === 'done' ? (
-                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-300 flex items-center gap-1 w-max">
-                                <span>✓</span> Collected
-                              </span>
+                            {/* Money first: is this order paid? Derived from the payment record, never from the tab. */}
+                            {ord.rawStatus === 'CANCELLED' ? null : ord.isPaid ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 flex items-center gap-1 w-max">✓ Paid · {ord.paymentMode}</span>
+                            ) : ord.paymentMethod === 'ONLINE_RAZORPAY' ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 border border-amber-200 dark:border-amber-800 flex items-center gap-1 w-max">Awaiting online payment</span>
                             ) : (
-                              <span className="text-[10px] text-gray-400">{ord.tab}</span>
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 border border-amber-200 dark:border-amber-800 flex items-center gap-1 w-max">💵 Cash due at counter</span>
                             )}
+                            {/* Then: where is the print? */}
+                            {ord.hasFailedDispatch ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 dark:bg-red-950/50 text-red-700 dark:text-red-300 flex items-center gap-1 w-max">⚠️ Print failed · retry</span>
+                            ) : ord.tab === 'processing' ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 flex items-center gap-1 w-max">Ready to print</span>
+                            ) : ord.tab === 'printing' ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 flex items-center gap-1 w-max"><span className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse" /> Sent to printer</span>
+                            ) : ord.tab === 'print_failed' ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 dark:bg-red-950/50 text-red-700 dark:text-red-300 flex items-center gap-1 w-max">⚠️ Needs attention</span>
+                            ) : ord.rawStatus === 'READY_FOR_COLLECTION' ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 flex items-center gap-1 w-max">Printed · ready for pickup</span>
+                            ) : ord.rawStatus === 'COLLECTED' ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 flex items-center gap-1 w-max">✓ Collected</span>
+                            ) : ord.rawStatus === 'CANCELLED' ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 flex items-center gap-1 w-max">Cancelled</span>
+                            ) : null}
                           </div>
                         </td>
 
                         {/* One-Click Counter Actions */}
                         <td className="py-3.5 px-4 text-right align-top">
                           <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                            {/* If Cash Pending at Counter: Provide 1-tap Collect & Print */}
+                            {/* Unpaid online orders cannot be printed or settled in cash; the customer has to finish paying. */}
                             {ord.tab === 'payment_pending' && (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => handleCollectCashAndPrint(ord)}
-                                  className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black transition-all shadow-xs flex items-center gap-1 cursor-pointer"
-                                  title="Record cash received and dispatch print in 1 tap"
-                                >
-                                  <span>💵</span>
-                                  <span>Collect {ord.amount} & Print</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleCollectCashOnly(ord)}
-                                  className="px-2.5 py-1.5 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 text-amber-800 dark:text-amber-200 text-xs font-bold transition-all cursor-pointer"
-                                  title="Mark cash received without sending to printer yet"
-                                >
-                                  Cash Only
-                                </button>
-                              </>
+                              <span className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 max-w-[150px] text-right leading-tight">
+                                Waiting for the customer to pay online
+                              </span>
                             )}
 
-                            {/* If Paid / Awaiting Action: 1-click Print */}
-                            {ord.tab === 'pending' && (
+                            {/* Send to the shop printer: new orders, paid orders, and retries after a failed attempt */}
+                            {(ord.tab === 'pending' || ord.tab === 'processing' || ord.hasFailedDispatch) && (
                               <button
                                 type="button"
                                 onClick={() => handleOneClickPrint(ord.id)}
                                 className="px-3.5 py-1.5 rounded-xl bg-[#4D64E6] hover:bg-[#3F54D1] text-white text-xs font-black transition-all shadow-xs flex items-center gap-1 cursor-pointer"
-                                title="Send print job to default printer matching document specs"
+                                title={ord.hasFailedDispatch ? 'The printer rejected this job. Send it again.' : 'Send to the printer that matches this document'}
                               >
                                 <span>🖨️</span>
-                                <span>Print</span>
+                                <span>{ord.hasFailedDispatch ? 'Retry print' : 'Print'}</span>
+                              </button>
+                            )}
+
+                            {/* Printed outside the desktop agent (browser print, another PC) */}
+                            {ord.canPrintManually && (
+                              <button
+                                type="button"
+                                onClick={() => handleMarkPrintedManually(ord)}
+                                className="px-2.5 py-1.5 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 text-emerald-800 dark:text-emerald-200 text-xs font-bold transition-all cursor-pointer"
+                                title="You printed this order yourself. Mark it printed and ready for pickup."
+                              >
+                                Printed ✓
+                              </button>
+                            )}
+
+                            {/* Ready for pickup: take cash if it is still owed, then hand over */}
+                            {ord.rawStatus === 'READY_FOR_COLLECTION' && (
+                              <button
+                                type="button"
+                                onClick={() => handleMarkCollected(ord.id)}
+                                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+                                title={ord.isPaid ? 'Hand the pages over and close the order' : 'Record the cash received and close the order'}
+                              >
+                                {ord.isPaid ? 'Hand over ✓' : `💵 Collect ${ord.amount}`}
                               </button>
                             )}
 
@@ -3254,17 +3292,9 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                         <span>🖨️ Direct Browser Print</span>
                       </button>
                       {previewDocOrder.tab === 'payment_pending' ? (
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            const ord = previewDocOrder;
-                            setPreviewDocOrder(null);
-                            await handleCollectCashAndPrint(ord);
-                          }}
-                          className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
-                        >
-                          <span>💵 Collect {previewDocOrder.amount} & Print</span>
-                        </button>
+                        <span className="px-3 py-2 text-xs font-semibold text-gray-500 dark:text-gray-400">
+                          Waiting for the customer to pay online
+                        </span>
                       ) : (
                         <button
                           type="button"
@@ -4366,6 +4396,8 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                     </div>
                   </div>
                 </section>
+
+                <PrinterSetupPanel onChanged={() => void handleRefreshPrinters(false)} />
 
                 {/* Card 2: Your Printers */}
                 <div className="bg-white dark:bg-gray-800 border border-[#E8EAF3] dark:border-gray-800 rounded-2xl p-6 shadow-xs space-y-5">

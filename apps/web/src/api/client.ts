@@ -43,7 +43,11 @@ export const api = {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Upload failed' }));
-      throw new Error(err.error || 'Upload failed');
+      // Callers retry a busy server (429) after the delay it asks for.
+      throw Object.assign(new Error(err.error || 'Upload failed'), {
+        status: res.status,
+        retryAfterSeconds: Number(res.headers.get('Retry-After')) || undefined,
+      });
     }
     return res.json();
   },
@@ -392,11 +396,16 @@ export const api = {
     return body;
   },
 
-  async reconcilePrintOutput(orderId: string, reason: string, confirmedJobIds?: string[]) {
+  /**
+   * `printedManually` declares that staff printed the files themselves (browser
+   * print, USB, another PC) rather than through the desktop agent. The server
+   * only accepts it for jobs that were never sent to, or were failed by, the agent.
+   */
+  async reconcilePrintOutput(orderId: string, reason: string, confirmedJobIds?: string[], printedManually = false) {
     const res = await fetch(`${API_BASE}/merchant/orders/${encodeURIComponent(orderId)}/reconcile-output`, {
       method: 'POST',
       headers: getHeaders(),
-      body: JSON.stringify({ physicalOutputConfirmed: true, reason, ...(confirmedJobIds ? { confirmedJobIds } : {}) }),
+      body: JSON.stringify({ physicalOutputConfirmed: true, reason, ...(confirmedJobIds ? { confirmedJobIds } : {}), ...(printedManually ? { printedManually: true } : {}) }),
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || 'Could not reconcile print output');
@@ -411,6 +420,26 @@ export const api = {
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || 'Could not save printer');
+    return body;
+  },
+
+  /** Fetch one private order file as a Blob through the authenticated API. */
+  async fetchOrderFileBlob(orderId: string, fileId: string): Promise<Blob> {
+    const res = await fetch(`${API_BASE}/merchant/orders/${encodeURIComponent(orderId)}/files/${encodeURIComponent(fileId)}`, { headers: getHeaders({ 'Content-Type': '' }) });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || 'Could not load this document');
+    }
+    return res.blob();
+  },
+
+  /** Save what a printer can do (colour, duplex, paper sizes) so orders can be sent to it. */
+  async updatePrinter(printerId: string, profile: { supportsColor: boolean; supportsDuplex: boolean; paperSizes: string[] }) {
+    const res = await fetch(`${API_BASE}/merchant/printers/${encodeURIComponent(printerId)}`, {
+      method: 'PUT', headers: getHeaders(), body: JSON.stringify(profile),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not save the printer profile');
     return body;
   },
 

@@ -114,7 +114,12 @@ export class AgentDispatchController {
 
   public pollCommands = (req: Request, res: Response) => {
     const identity = (req as any).agent as { agentId: string; shopId: string };
-    const tickets = this.agentRepo.getPendingPrintTickets(identity.shopId, identity.agentId);
+    // The agent only downloads from the origin it is paired with, so hand back
+    // document URLs on the origin this request arrived at ('trust proxy' makes
+    // req.protocol honour the hosting platform's X-Forwarded-Proto).
+    const host = req.get('host');
+    const requestOrigin = host && /^[A-Za-z0-9.\-:\[\]]{1,255}$/.test(host) ? `${req.protocol}://${host}` : undefined;
+    const tickets = this.agentRepo.getPendingPrintTickets(identity.shopId, identity.agentId, requestOrigin);
     res.json(tickets);
   };
 

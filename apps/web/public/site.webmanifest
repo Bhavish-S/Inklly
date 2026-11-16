@@ -1,0 +1,10 @@
+{
+  "name": "Inklly",
+  "short_name": "Inklly",
+  "description": "QR ordering, online payment and one-click printing for print shops.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#080D18",
+  "theme_color": "#4D64E6",
+  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

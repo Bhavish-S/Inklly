@@ -4,6 +4,7 @@ import { Footer } from './components/Footer';
 import { FloatingWhatsApp } from './components/FloatingWhatsApp';
 
 import { ProtectedRoute } from './components/ProtectedRoute';
+import { applyRouteMeta } from './seo';
 import { QrCodeIcon, PrinterIcon, Logo, ShieldIcon, CodeIcon } from './components/icons';
 
 // Keep each route's code out of the initial marketing bundle. The customer
@@ -67,7 +68,11 @@ export const App: React.FC = () => {
       setTrackedOrderId(destination.searchParams.get('order') || '');
       setTrackedShopCode(destination.searchParams.get('shop') || 'campus1');
     }
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (destination.hash) {
+      window.setTimeout(() => document.getElementById(destination.hash.slice(1))?.scrollIntoView({ behavior: 'smooth' }), 350);
+    } else {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
   };
 
   const handleOrderSubmitted = (orderId: string, shopCode = 'campus1') => {
@@ -130,6 +135,18 @@ export const App: React.FC = () => {
     knownRoutes.includes(currentPath) ||
     currentPath.startsWith('/p/') ||
     ['/merchat', '/merchants', '/admins', '/platform-admin', '/dev', '/devs', '/developers'].includes(currentPath.toLowerCase().replace(/\/$/, ''));
+
+  useEffect(() => {
+    applyRouteMeta(currentPath, isKnown);
+  }, [currentPath, isKnown]);
+
+  // Honour in-page anchors such as /#faq once the lazily loaded page has rendered.
+  useEffect(() => {
+    const hash = window.location.hash.slice(1);
+    if (!hash) return;
+    const timer = window.setTimeout(() => document.getElementById(hash)?.scrollIntoView({ behavior: 'smooth' }), 350);
+    return () => window.clearTimeout(timer);
+  }, [currentPath]);
 
   return (
     <div className="min-h-screen flex flex-col bg-ink-app dark:bg-ink-dark-app text-ink-text dark:text-ink-dark-text transition-colors duration-150">

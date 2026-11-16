@@ -18,6 +18,9 @@ function stableJson(value: any): string {
   return JSON.stringify(value) ?? 'null';
 }
 
+/** The desktop agent refuses more than 99 copies, so never accept an order it cannot print. */
+const MAX_COPIES_PER_FILE = 99;
+
 export class PortalController {
   constructor(
     private db: DatabaseService,
@@ -27,6 +30,24 @@ export class PortalController {
     private paymentCredentials: ShopPaymentCredentialsService,
     private fileStorage: PrivateFileStorage
   ) {}
+
+  /**
+   * A 4-digit counter token that no other open order in this shop is using,
+   * so staff calling out "4821" can only mean one customer. Falls back to a
+   * random token if the shop somehow has thousands of open orders.
+   */
+  private allocatePickupToken(shopId: string): string {
+    let token = '';
+    for (let attempt = 0; attempt < 25; attempt++) {
+      token = `T-${1000 + crypto.randomInt(9000)}`;
+      const clash = this.db.queryOne<any>(
+        `SELECT 1 AS found FROM orders WHERE shop_id = ? AND token_number = ? AND status NOT IN ('COLLECTED', 'CANCELLED') LIMIT 1`,
+        [shopId, token]
+      );
+      if (!clash) break;
+    }
+    return token;
+  }
 
   private hasShopAccess(organizationId: string): boolean {
     const organization = this.shopRepo.getOrganizationById(organizationId);
@@ -233,8 +254,8 @@ export class PortalController {
         if (typeof file.fileName !== 'string' || !file.fileName.trim() || file.fileName.length > 180 ||
             !Number.isInteger(Number(file.pageCount)) || Number(file.pageCount) < 1 || Number(file.pageCount) > 50000 ||
             !file.options || typeof file.options !== 'object' || !Number.isInteger(Number(file.options.copies)) ||
-            Number(file.options.copies) < 1 || Number(file.options.copies) > 500) {
-          throw new Error('A file has invalid print settings. Please review the order and try again.');
+            Number(file.options.copies) < 1 || Number(file.options.copies) > MAX_COPIES_PER_FILE) {
+          throw new Error(`Each file can be printed 1 to ${MAX_COPIES_PER_FILE} times. Please review the order and try again.`);
         }
         // The client may display a page count, but server-derived metadata is the
         // sole input used for quotes, persisted order files, and payment amounts.
@@ -315,7 +336,7 @@ export class PortalController {
       shopId,
       orderNumber,
       // 4-digit counter pickup token (1000-9999) for quick callouts at shop counter
-      tokenNumber: `T-${Math.floor(1000 + (crypto.randomBytes(2).readUInt16BE(0) % 9000))}`,
+      tokenNumber: this.allocatePickupToken(shopId),
       customerName: customerName || 'Counter Customer',
       customerPhone,
       customerEmail,

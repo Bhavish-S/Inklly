@@ -35,7 +35,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
               <Logo size={22} />
             </div>
             <p className="text-[#7E8DA3] text-sm leading-relaxed">
-              Streamline your print shop operations — from customer orders and pricing to production tracking, all in one platform.
+              QR ordering, online payment and one-click printing for print shops. Customers order from their phone; you print from one queue.
             </p>
           </div>
 
@@ -56,8 +56,6 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
               <li><button onClick={() => handleLink('/qr-code-printing-system')} className={linkClasses}>QR ordering system</button></li>
               <li><button onClick={() => handleLink('/p/campus1')} className={linkClasses}>Customer portal demo</button></li>
               <li><button onClick={() => handleLink('/developer')} className={linkClasses}>Developer portal &amp; API</button></li>
-              <li><button onClick={() => handleLink('/platform')} className={linkClasses}>Platform owner console</button></li>
-              <li><button onClick={() => handleLink('/')} className={linkClasses}>Small print shops</button></li>
             </ul>
           </div>
 

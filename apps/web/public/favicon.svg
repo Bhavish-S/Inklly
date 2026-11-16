@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
+  <defs>
+    <linearGradient id="a" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4361EE"/><stop offset=".5" stop-color="#4F46E5"/><stop offset="1" stop-color="#7928CA"/></linearGradient>
+    <linearGradient id="b" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#00DFD8"/><stop offset=".5" stop-color="#38BDF8"/><stop offset="1" stop-color="#3B82F6"/></linearGradient>
+  </defs>
+  <rect x="2" y="2" width="32" height="32" rx="9" fill="url(#a)"/>
+  <rect x="13.5" y="7" width="12" height="16" rx="2" fill="#fff" fill-opacity=".38" transform="rotate(9 19.5 15)"/>
+  <rect x="8.5" y="8.5" width="14.5" height="18" rx="2.5" fill="#fff"/>
+  <rect x="11.5" y="12.5" width="8.5" height="1.6" rx=".8" fill="#4361EE"/>
+  <rect x="11.5" y="16" width="6" height="1.6" rx=".8" fill="#6366F1"/>
+  <rect x="11.5" y="19.5" width="7" height="1.6" rx=".8" fill="#93C5FD"/>
+  <path d="M23.5 17s5 4.8 5 7.5-2.2 4.700-5 4.700-5-2-5-4.700 5-7.500 5-7.500Z" fill="url(#b)"/>
+  <circle cx="22.500" cy="23.800" r="1.100" fill="#fff" fill-opacity=".9"/>
+</svg>

@@ -127,11 +127,43 @@ export class PrinterRepository {
     return updated;
   }
 
+  /**
+   * Save the capability profile a merchant confirmed for one of their queues.
+   * This is what makes an agent-discovered printer dispatchable: discovery
+   * alone proves the queue exists, not what it can print.
+   */
+  public updatePrinterProfile(
+    shopId: string,
+    printerId: string,
+    profile: { supportsColor: boolean; supportsDuplex: boolean; trays: Array<{ name: string; supportedSizes: string[]; isDefault: boolean }> }
+  ): boolean {
+    return this.db.transaction(() => {
+      const printer = this.db.queryOne<any>(`SELECT id FROM printers WHERE id = ? AND shop_id = ?`, [printerId, shopId]);
+      if (!printer) return false;
+      const now = new Date().toISOString();
+      this.db.execute(
+        `UPDATE printers SET supports_color = ?, supports_duplex = ?, updated_at = ? WHERE id = ? AND shop_id = ?`,
+        [profile.supportsColor ? 1 : 0, profile.supportsDuplex ? 1 : 0, now, printerId, shopId]
+      );
+      this.db.execute(`DELETE FROM paper_trays WHERE printer_id = ?`, [printerId]);
+      profile.trays.forEach((tray, index) => {
+        this.db.execute(
+          `INSERT INTO paper_trays (id, printer_id, name, supported_sizes, is_default) VALUES (?, ?, ?, ?, ?)`,
+          [`tray-${printerId}-${crypto.randomUUID().slice(0, 8)}-${index + 1}`, printerId, tray.name, JSON.stringify(tray.supportedSizes), tray.isDefault ? 1 : 0]
+        );
+      });
+      return true;
+    });
+  }
+
   /** Replace a shop's live queue inventory from an authenticated desktop agent. */
   public syncAgentInventory(shopId: string, agentId: string, queues: Array<{ name: string; driverName: string; isOnline: boolean; isDefault: boolean }>): void {
     const now = new Date().toISOString();
     this.db.transaction(() => {
       this.db.execute(`UPDATE printers SET is_online = 0, updated_at = ? WHERE shop_id = ? AND agent_id = ?`, [now, shopId, agentId]);
+      // The merchant's chosen default is authoritative. The operating-system
+      // default only seeds the choice while the shop has none.
+      let shopHasDefault = Boolean(this.db.queryOne<any>(`SELECT 1 AS found FROM printers WHERE shop_id = ? AND is_default = 1 LIMIT 1`, [shopId]));
       for (const queue of queues) {
         const name = queue.name.trim();
         if (!name || name.length > 256) continue;
@@ -155,9 +187,10 @@ export class PrinterRepository {
           `INSERT INTO printers (id, shop_id, name, system_driver_name, is_online, is_default, supports_color, supports_duplex, last_heartbeat, created_at, updated_at, agent_id)
            VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET name = excluded.name, system_driver_name = excluded.system_driver_name,
-             is_online = excluded.is_online, is_default = excluded.is_default, last_heartbeat = excluded.last_heartbeat, updated_at = excluded.updated_at, agent_id = excluded.agent_id`,
-          [id, shopId, name, queue.driverName.slice(0, 256), queue.isOnline ? 1 : 0, queue.isDefault ? 1 : 0, now, now, now, agentId]
+             is_online = excluded.is_online, last_heartbeat = excluded.last_heartbeat, updated_at = excluded.updated_at, agent_id = excluded.agent_id`,
+          [id, shopId, name, queue.driverName.slice(0, 256), queue.isOnline ? 1 : 0, queue.isDefault && !shopHasDefault ? 1 : 0, now, now, now, agentId]
         );
+        if (queue.isDefault && !shopHasDefault) shopHasDefault = true;
       }
     });
   }

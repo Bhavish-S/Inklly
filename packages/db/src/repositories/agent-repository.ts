@@ -174,7 +174,13 @@ export class AgentRepository {
     return row?.physical_printing_enabled === 1 || row?.physical_printing_enabled === '1';
   }
 
-  public getPendingPrintTickets(shopId: string, agentId: string): PrintCommandTicket[] {
+  /**
+   * `publicBaseUrl` is the origin the agent reached this API on. It is used to
+   * build the document URL when no explicit `SERVER_BASE_URL` is configured, so
+   * a self-hosted or local deployment hands the agent a URL on its own paired
+   * server rather than a hard-coded hosted address the agent would reject.
+   */
+  public getPendingPrintTickets(shopId: string, agentId: string, publicBaseUrl?: string): PrintCommandTicket[] {
     return this.db.transaction(() => {
       const now = new Date();
       const nowIso = now.toISOString();
@@ -237,13 +243,13 @@ export class AgentRepository {
           attemptId = `att-${crypto.randomUUID()}`;
           this.db.execute(
             `INSERT INTO print_attempts (id, print_job_id, printer_id, agent_id, attempt_number, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, 1, 'DISPATCHED_TO_AGENT', ?, ?)`,
-            [attemptId, r.job_id, r.target_printer_id, agentId, nowIso, nowIso]
+             VALUES (?, ?, ?, ?, (SELECT COUNT(*) + 1 FROM print_attempts WHERE print_job_id = ?), 'DISPATCHED_TO_AGENT', ?, ?)`,
+            [attemptId, r.job_id, r.target_printer_id, agentId, r.job_id, nowIso, nowIso]
           );
         }
         if (!attemptId) return [];
 
-        const cleanBase = (process.env.SERVER_BASE_URL || process.env.INKLLY_SERVER_URL || 'https://inklly.onrender.com').replace(/\/api\/v1\/?$/, '');
+        const cleanBase = (process.env.SERVER_BASE_URL || publicBaseUrl || process.env.INKLLY_SERVER_URL || 'https://inklly.onrender.com').replace(/\/api\/v1\/?$/, '').replace(/\/$/, '');
         return [{
           commandId: `cmd-${attemptId}`,
           jobId: r.job_id,

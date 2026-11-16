@@ -152,6 +152,13 @@ interface CustomerPortalOrderViewProps {
   onOrderSubmitted?: (orderId: string, shopCode?: string) => void;
 }
 
+/** The desktop agent prints at most 99 copies of a file; the server enforces the same limit. */
+const MAX_COPIES_PER_FILE = 99;
+
+const PRINTABLE_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
+const isPrintableUpload = (file: File): boolean =>
+  PRINTABLE_TYPES.has(file.type) || /\.(pdf|jpe?g|png)$/i.test(file.name);
+
 export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = ({
   shopCode = 'campus1',
   onNavigateHome,
@@ -282,9 +289,22 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
       return false;
     }
 
-    setUploadProgress(25);
-    try {
-      const newDocs = await Promise.all(fileList.map(async (file, index): Promise<DocumentItem> => {
+    // The print pipeline handles PDF, JPEG and PNG. Say so up front instead of
+    // letting the server reject a Word or Excel file after a slow upload.
+    const unsupported = fileList.find((file) => !isPrintableUpload(file));
+    if (unsupported) {
+      setUploadError(`"${unsupported.name}" cannot be printed directly. Save or export it as a PDF and upload that instead.`);
+      return false;
+    }
+
+    setUploadProgress(5);
+    const newDocs: DocumentItem[] = [];
+    let failure: string | null = null;
+    // One file at a time: the server limits simultaneous uploads, and a file
+    // that fails must not throw away the ones that already made it.
+    for (let index = 0; index < fileList.length; index++) {
+      const file = fileList[index];
+      try {
         const dataUrl = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
           reader.onerror = () => reject(new Error(`Failed to read file ${file.name}`));
@@ -292,18 +312,29 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
           reader.readAsDataURL(file);
         });
         const detectedPages = await detectPdfPageCount(file);
-        const upload = await api.uploadDocument({
-          fileName: file.name,
-          fileData: dataUrl,
-          mimeType: file.type || 'application/octet-stream',
-          shopId: shop.id,
-          pageCount: detectedPages,
-        });
+        let upload: any;
+        for (let attempt = 1; ; attempt++) {
+          try {
+            upload = await api.uploadDocument({
+              fileName: file.name,
+              fileData: dataUrl,
+              mimeType: file.type || 'application/octet-stream',
+              shopId: shop.id,
+              pageCount: detectedPages,
+            });
+            break;
+          } catch (error) {
+            const busy = (error as { status?: number }).status === 429;
+            if (!busy || attempt >= 4) throw error;
+            const waitSeconds = Math.min(10, (error as { retryAfterSeconds?: number }).retryAfterSeconds || attempt * 2);
+            await new Promise((resolve) => window.setTimeout(resolve, waitSeconds * 1000));
+          }
+        }
         if (typeof upload?.storageKey !== 'string' || !upload.storageKey) {
           throw new Error(`The server did not confirm private storage for "${file.name}".`);
         }
         const localBlobUrl = URL.createObjectURL(file);
-        return {
+        newDocs.push({
           id: `doc-${Date.now()}-${index}`,
           file,
           originalFile: file,
@@ -328,19 +359,26 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
             pageRange: 'All',
             ...optionOverrides,
           },
-        };
-      }));
-      setUploadProgress(100);
+        });
+        setUploadProgress(Math.round(((index + 1) / fileList.length) * 100));
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : 'Could not securely upload the document.';
+        const remaining = fileList.length - index - 1;
+        failure = fileList.length > 1
+          ? `"${file.name}" could not be uploaded: ${reason}${remaining ? ` The ${remaining} file${remaining > 1 ? 's' : ''} after it ${remaining > 1 ? 'were' : 'was'} not uploaded either; add ${remaining > 1 ? 'them' : 'it'} again.` : ''}`
+          : reason;
+        break;
+      }
+    }
+
+    setUploadProgress(null);
+    if (newDocs.length) {
       const firstNewIndex = documents.length;
       setDocuments((current) => [...current, ...newDocs]);
       setActiveDocIndex(firstNewIndex);
-      setUploadProgress(null);
-      return true;
-    } catch (error) {
-      setUploadProgress(null);
-      setUploadError(error instanceof Error ? error.message : 'Could not securely upload the document. Please try again.');
-      return false;
     }
+    if (failure) setUploadError(failure);
+    return newDocs.length > 0 && !failure;
   };
 
   const removeDocument = (index: number, e: React.MouseEvent) => {
@@ -941,6 +979,13 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
       setPendingOnlineOrder(null);
       orderAttemptRef.current = null;
       setReviewModalOpen(false);
+      // The token lives only in memory here. Point the address bar at the
+      // tracker so a refresh, or a phone that reloads the tab, lands on the
+      // order instead of an empty upload form.
+      try {
+        window.history.replaceState({}, '', `/track?order=${encodeURIComponent(order.orderId)}&shop=${encodeURIComponent(shop.shopCode || shopCode)}`);
+        localStorage.setItem('inklly_last_order', JSON.stringify({ orderId: order.orderId, token: cleanToken, shopCode: shop.shopCode || shopCode, placedAt: Date.now() }));
+      } catch { /* storage or history unavailable: the confirmation screen still shows the token */ }
     } catch (err) {
       const changedQuote = err instanceof Error ? (err as Error & { currentQuote?: any }).currentQuote : undefined;
       if (changedQuote && Number.isSafeInteger(changedQuote.totalPaise)) setServerQuote(changedQuote);
@@ -1083,6 +1128,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
               onClick={() => {
                 setOrderResult(null);
                 setDocuments([]);
+                try { window.history.replaceState({}, '', `/p/${encodeURIComponent(shop.shopCode || shopCode)}`); } catch { /* keep going */ }
               }}
               className="w-full py-3 bg-[#4D64E6] hover:bg-[#3F54D1] text-white font-bold rounded-xl shadow-xs transition-all text-xs"
             >
@@ -1270,7 +1316,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                 ref={fileInputRef}
                 type="file"
                 multiple
-                accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.png,.jpg,.jpeg,.zip"
+                accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
                 className="hidden"
                 onChange={(e) => handleFileSelect(e.target.files)}
               />
@@ -1281,7 +1327,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                 Tap to select documents or drop files here
               </div>
               <div className="text-[11px] text-slate-500">
-                PDF, Word, Excel, PowerPoint, TXT, Images • Max 25 MB per file
+                PDF, JPG or PNG • Max 25 MB per file • Export Word or Excel files as PDF first
               </div>
             </div>
 
@@ -2067,6 +2113,11 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
 
       {/* 3. STICKY BOTTOM ACTION BAR (44px min touch targets & safe area padding) */}
       <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 pt-3 pb-[max(12px,env(safe-area-inset-bottom))] px-3 sm:px-4 shadow-xl">
+        {quoteError && !pendingOnlineOrder && documents.length > 0 && (
+          <div role="alert" className="max-w-md mx-auto mb-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-[11px] font-semibold text-red-700">
+            This order cannot be priced yet: {quoteError} Change the print options above and the price will update.
+          </div>
+        )}
         <div className="max-w-md mx-auto flex items-center justify-between gap-2">
           {/* Left: Total Calculation */}
           <div className="flex-shrink-0 min-w-[70px]">
@@ -2097,8 +2148,8 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
             </span>
             <button
               type="button"
-              onClick={() => setGlobalCopies(Math.min(globalCopies + 1, ...documents.map((doc) => Math.floor(500 / Math.max(1, doc.options.copies || 1)))))}
-              disabled={documents.length === 0 || globalCopies >= Math.min(...documents.map((doc) => Math.floor(500 / Math.max(1, doc.options.copies || 1))))}
+              onClick={() => setGlobalCopies(Math.min(globalCopies + 1, ...documents.map((doc) => Math.floor(MAX_COPIES_PER_FILE / Math.max(1, doc.options.copies || 1)))))}
+              disabled={documents.length === 0 || globalCopies >= Math.min(...documents.map((doc) => Math.floor(MAX_COPIES_PER_FILE / Math.max(1, doc.options.copies || 1))))}
               className="w-10 h-10 min-w-[40px] min-h-[40px] sm:w-11 sm:h-11 sm:min-w-[44px] sm:min-h-[44px] rounded-lg bg-white text-slate-800 font-bold hover:bg-slate-50 flex items-center justify-center shadow-xs text-base active:bg-slate-200 transition-colors cursor-pointer"
               title="Increase copies"
               aria-label="Increase number of copies"
@@ -2268,13 +2319,30 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
               >
                 {isSubmitting ? 'Processing…' : pendingOnlineOrder ? 'Retry online payment →' : paymentMethod === 'ONLINE_RAZORPAY' ? 'Continue to secure payment →' : 'Confirm cash order →'}
               </button>
-              <button
-                type="button"
-                onClick={() => setReviewModalOpen(false)}
-                className="w-full min-h-[44px] bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs transition-colors"
-              >
-                Change Options
-              </button>
+              {pendingOnlineOrder ? (
+                <button
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={() => {
+                    // Drop the unpaid attempt so the customer can change options or pay cash instead.
+                    setPendingOnlineOrder(null);
+                    orderAttemptRef.current = null;
+                    setSubmitError(null);
+                    setReviewModalOpen(false);
+                  }}
+                  className="w-full min-h-[44px] bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs transition-colors disabled:opacity-50"
+                >
+                  Cancel this payment and start again
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setReviewModalOpen(false)}
+                  className="w-full min-h-[44px] bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs transition-colors"
+                >
+                  Change Options
+                </button>
+              )}
             </div>
           </div>
         </div>
