@@ -848,3 +848,7 @@ html, body {
   line-height: 1.65;
   color: var(--text-secondary);
 }
+
+/* Horizontal chip rows on phones: scroll without a visible bar. */
+.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }

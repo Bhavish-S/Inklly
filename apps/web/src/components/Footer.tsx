@@ -54,7 +54,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
               <li><button onClick={() => handleLink('/print-shop-automation-software')} className={linkClasses}>Print automation</button></li>
               <li><button onClick={() => handleLink('/whatsapp-printing-software')} className={linkClasses}>WhatsApp printing</button></li>
               <li><button onClick={() => handleLink('/qr-code-printing-system')} className={linkClasses}>QR ordering system</button></li>
-              <li><button onClick={() => handleLink('/p/campus1')} className={linkClasses}>Customer portal demo</button></li>
+              <li><button onClick={() => handleLink('/customer')} className={linkClasses}>Customer portal demo</button></li>
               <li><button onClick={() => handleLink('/developer')} className={linkClasses}>Developer portal &amp; API</button></li>
             </ul>
           </div>

@@ -50,6 +50,10 @@ export function createMerchantRoutes(db: DatabaseService, fileStorage: PrivateFi
   router.post('/orders/:id/reconcile-output', requirePermission('orders:process'), controller.reconcilePrintOutput);
   router.post('/orders/:id/print', requirePermission('live_print:manage'), controller.printOrder);
 
+  router.get('/operations', requirePermission('orders:view'), controller.getOperations);
+  router.put('/operations', requirePermission('orders:process'), controller.updateOperations);
+  router.get('/reports/daily', requirePermission('orders:view'), controller.getDailyReport);
+
   router.post('/agents/pairing-code', requireRole('MERCHANT_OWNER'), controller.createAgentPairingCode);
   router.delete('/agents/:id', requireRole('MERCHANT_OWNER'), controller.revokeAgent);
 

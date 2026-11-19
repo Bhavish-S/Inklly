@@ -29,7 +29,7 @@ export const QrOrderingPage: React.FC<QrOrderingPageProps> = ({ onNavigate }) =>
         <div className="flex flex-col sm:flex-row items-center justify-center gap-3.5">
           <button
             type="button"
-            onClick={() => onNavigate('/p/campus1')}
+            onClick={() => onNavigate('/customer')}
             className="w-full sm:w-auto px-7 py-3.5 rounded-xl bg-brand hover:bg-brand-hover text-white font-semibold text-sm shadow-brand transition-all duration-200 cursor-pointer inline-flex items-center justify-center gap-2"
           >
             <span>Open Sample QR Portal</span>

@@ -1,10 +1,22 @@
 {
-  "name": "Inklly",
+  "name": "Inklly — print shop orders",
   "short_name": "Inklly",
-  "description": "QR ordering, online payment and one-click printing for print shops.",
-  "start_url": "/",
+  "description": "Scan, upload and pay for prints at your local shop. Shop owners manage the counter queue and printers.",
+  "id": "/",
+  "start_url": "/?source=pwa",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#080D18",
-  "theme_color": "#4D64E6",
-  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+  "orientation": "portrait",
+  "background_color": "#F4F5FA",
+  "theme_color": "#4F46E5",
+  "categories": ["business", "productivity", "utilities"],
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "Shop counter", "short_name": "Counter", "url": "/merchant?view=orders", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] }
+  ]
 }

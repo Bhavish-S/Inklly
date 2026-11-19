@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import * as crypto from 'node:crypto';
 import { DatabaseService, OrderRepository, PricingRepository, ShopRepository } from '@inklly/db';
 import { calculateQuote, PriceQuoteRequest, OrderStatus, PaymentStatus } from '@inklly/shared';
+import { getOperatingStatus, getQueueEstimate } from '../services/shop-operations';
 import { ShopPaymentCredentialsService } from '../services/shop-payment-credentials';
 import { PrivateFileStorage } from '../services/private-file-storage';
 import { inspectDocument } from '../services/document-page-count';
@@ -78,6 +79,7 @@ export class PortalController {
       AGENT_SUPPORTED_PAPER_SIZES.has(rule.paperSize) && AGENT_SUPPORTED_DUPLEX_MODES.has(rule.duplexMode)
     );
     const paymentStatus = this.paymentCredentials.getRazorpayStatus(shop.id);
+    const operating = getOperatingStatus(this.db, shop.id);
     const bwSimplex = rates.find((r) => r.paperSize === 'A4' && r.colorMode === 'bw' && r.duplexMode === 'simplex')?.pricePerPrintedSidePaise;
     const bwDuplex = rates.find((r) => r.paperSize === 'A4' && r.colorMode === 'bw' && r.duplexMode === 'duplex_auto')?.pricePerPrintedSidePaise;
     const colorSimplex = rates.find((r) => r.paperSize === 'A4' && r.colorMode === 'color' && r.duplexMode === 'simplex')?.pricePerPrintedSidePaise;
@@ -101,6 +103,9 @@ export class PortalController {
       acceptCashOnCollection: shop.acceptCashOnCollection,
       portalSettings,
       onlinePaymentAvailable: shop.currency === 'INR' && paymentStatus.configured && paymentStatus.webhookConfigured && paymentStatus.verified,
+      acceptingOrders: operating.acceptingOrders,
+      pauseMessage: operating.pauseMessage,
+      queue: getQueueEstimate(this.db, shop.id),
       enabledPaperFormats: configuredPaperSizes,
       enabledColorModes: configuredColorModes,
       enabledSides: configuredSides,
@@ -174,6 +179,9 @@ export class PortalController {
 
     if (!shop || !Array.isArray(files) || files.length === 0 || files.length > 20) {
       return res.status(400).json({ error: 'Incomplete order submission payload' });
+    }
+    if (!getOperatingStatus(this.db, shop.id).acceptingOrders) {
+      return res.status(409).json({ error: getOperatingStatus(this.db, shop.id).pauseMessage || 'This shop is not taking new orders right now. Please ask at the counter.', shopPaused: true });
     }
     const portalSettings = this.shopRepo.getPortalSettings(shop.id);
     // Shop policy is enforced by the server for every caller. A client-provided
@@ -471,6 +479,11 @@ export class PortalController {
       tokenNumber: order.tokenNumber,
       shopCode: orderShop?.shopCode,
       shopName: orderShop?.name,
+      shopPhone: orderShop?.phone || null,
+      shopAddress: orderShop ? [orderShop.address, orderShop.city].filter(Boolean).join(', ') : null,
+      queue: ['COLLECTED', 'CANCELLED', 'READY_FOR_COLLECTION', 'AWAITING_PAYMENT'].includes(order.status)
+        ? null
+        : getQueueEstimate(this.db, order.shopId, order.createdAt),
       paymentMethod: order.paymentMethod,
       customerName: order.customerName,
       status: order.status,

@@ -16,6 +16,7 @@ import { ShopPaymentCredentialsService } from '../services/shop-payment-credenti
 import { PrivateFileStorage } from '../services/private-file-storage';
 import { getPrinterHealthStatus, hasFreshOnlinePrinterEvidence } from '../services/printer-health';
 import { chooseAutomaticPrinter, getPrinterCompatibilityIssues } from '../services/printer-compatibility';
+import { buildDailyReport, getOperatingStatus, getQueueEstimate, setOperatingStatus } from '../services/shop-operations';
 import { inspectDocument } from '../services/document-page-count';
 
 export class MerchantController {
@@ -1447,5 +1448,38 @@ export class MerchantController {
 
   public getWhatsAppEvents = (req: Request, res: Response) => {
     res.status(503).json({ error: 'WhatsApp event history is unavailable because Meta onboarding and event persistence are not configured.' });
+  };
+
+  /** Whether the shop is taking QR orders, plus the live queue length. */
+  public getOperations = (req: Request, res: Response) => {
+    const shopId = this.getShopId(req);
+    res.json({ ...getOperatingStatus(this.db, shopId), queue: getQueueEstimate(this.db, shopId) });
+  };
+
+  public updateOperations = (req: Request, res: Response) => {
+    const shopId = this.getShopId(req);
+    const { acceptingOrders, pauseMessage } = req.body || {};
+    if (typeof acceptingOrders !== 'boolean' || (pauseMessage !== undefined && pauseMessage !== null && (typeof pauseMessage !== 'string' || pauseMessage.length > 200))) {
+      return res.status(400).json({ error: 'acceptingOrders must be true or false; pauseMessage is optional text up to 200 characters.' });
+    }
+    const status = setOperatingStatus(this.db, shopId, acceptingOrders, pauseMessage ?? null);
+    this.db.execute(
+      `INSERT INTO audit_events (id, actor_user_id, actor_role, shop_id, organization_id, action, target_type, target_id, outcome, ip_address, details, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'SHOP', ?, 'SUCCESS', ?, ?, ?)`,
+      [crypto.randomUUID(), req.user?.userId || null, req.user?.role || null, shopId, req.user?.organizationId || null,
+        acceptingOrders ? 'SHOP_ORDERS_RESUMED' : 'SHOP_ORDERS_PAUSED', shopId, req.ip || null, JSON.stringify({ pauseMessage: status.pauseMessage }), new Date().toISOString()]
+    );
+    res.json({ ...status, queue: getQueueEstimate(this.db, shopId) });
+  };
+
+  /** End-of-day numbers for one local date (defaults to today in the caller's timezone). */
+  public getDailyReport = (req: Request, res: Response) => {
+    const shopId = this.getShopId(req);
+    const offset = Number(req.query.tzOffsetMinutes ?? 330);
+    if (!Number.isInteger(offset) || offset < -720 || offset > 840) return res.status(400).json({ error: 'tzOffsetMinutes must be a whole number of minutes between -720 and 840.' });
+    const today = new Date(Date.now() + offset * 60_000).toISOString().slice(0, 10);
+    const date = typeof req.query.date === 'string' && req.query.date ? req.query.date : today;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) return res.status(400).json({ error: 'date must be YYYY-MM-DD.' });
+    res.json(buildDailyReport(this.db, shopId, date, offset));
   };
 }

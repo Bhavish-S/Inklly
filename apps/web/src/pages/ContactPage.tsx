@@ -128,7 +128,7 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onNavigate }) => {
             <p className="text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary mb-3">Countertop QR rollouts for college bookstores and hubs.</p>
             <button
               type="button"
-              onClick={() => onNavigate('/p/campus1')}
+              onClick={() => onNavigate('/customer')}
               className="text-xs font-semibold text-brand dark:text-brand-dark hover:underline text-left cursor-pointer inline-flex items-center gap-1"
             >
               <span>Try customer demo portal</span>

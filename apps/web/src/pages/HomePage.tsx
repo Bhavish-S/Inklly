@@ -222,7 +222,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
                   </button>
                   <button
                     type="button"
-                    onClick={() => onNavigate('/p/campus1')}
+                    onClick={() => onNavigate('/customer')}
                     className="w-full sm:w-auto min-h-[52px] px-7 rounded-2xl bg-white/[0.06] hover:bg-white/[0.11] border border-white/[0.14] text-white font-medium text-[15px] transition-colors cursor-pointer inline-flex items-center justify-center gap-2"
                   >
                     <QrCodeIcon size={16} />
@@ -367,7 +367,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
                 </p>
                 <button
                   type="button"
-                  onClick={() => onNavigate('/p/campus1')}
+                  onClick={() => onNavigate('/customer')}
                   className="mt-7 btn btn-primary !rounded-xl cursor-pointer"
                 >
                   Open the demo order page <ArrowRightIcon size={15} />

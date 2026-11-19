@@ -38,7 +38,7 @@ export const MarketingView: React.FC<MarketingViewProps> = ({ onNavigate }) => {
               style={{ fontSize: '1rem', padding: '0.875rem 1.75rem' }}
             >
               <QrCodeIcon size={20} />
-              Open Customer QR Portal Demo (/p/campus1)
+              Open Customer QR Portal Demo (/customer)
             </button>
             <button
               onClick={() => onNavigate('merchant_dashboard')}
@@ -226,7 +226,7 @@ export const MarketingView: React.FC<MarketingViewProps> = ({ onNavigate }) => {
                     <QrCodeIcon size={80} />
                   </div>
                   <div style={{ fontWeight: 800, fontSize: '1.125rem' }}>Campus Print Express</div>
-                  <div style={{ color: '#98A2B3', fontSize: '0.8125rem', marginTop: '0.25rem' }}>Open shop order page • inklly.com/p/campus1</div>
+                  <div style={{ color: '#98A2B3', fontSize: '0.8125rem', marginTop: '0.25rem' }}>Open shop order page • inklly.vercel.app/customer</div>
                 </div>
               </div>
             )}

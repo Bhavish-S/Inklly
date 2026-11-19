@@ -10,7 +10,7 @@ const productItems = [
   { name: 'Print automation', desc: 'Auto spooler & job routing', path: '/print-shop-automation-software' },
   { name: 'WhatsApp printing', desc: 'No-app mobile intake', path: '/whatsapp-printing-software' },
   { name: 'QR ordering system', desc: 'Self-serve counter standees', path: '/qr-code-printing-system' },
-  { name: 'Customer demo portal', desc: 'Interactive live demo (/p/campus1)', path: '/p/campus1' },
+  { name: 'Customer demo portal', desc: 'Interactive live demo (/customer)', path: '/customer' },
 ] as const;
 
 const navLinks = [

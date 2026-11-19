@@ -984,7 +984,7 @@ export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) 
                   <tr key={m.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
                     <td className="p-3.5 pl-5 font-bold text-slate-900 dark:text-white">
                       <div>{m.name}</div>
-                      <div className="text-[10px] font-mono text-slate-400">code: {m.shopCode || 'campus1'}</div>
+                      <div className="text-[10px] font-mono text-slate-400">code: {m.shopCode || '—'}</div>
                     </td>
                     <td className="p-3.5">
                       <div className="font-semibold text-slate-800 dark:text-slate-200">{m.owner?.name || 'Store Owner'}</div>

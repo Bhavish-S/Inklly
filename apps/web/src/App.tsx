@@ -29,7 +29,7 @@ const DeveloperPortalView = lazy(() => import('./views/DeveloperPortalView').the
 
 // A showcase shop for marketing demo links. Production builds set
 // VITE_DEFAULT_SHOP_CODE to a real demo shop; customers never fall back to it.
-const DEMO_SHOP_CODE = ((import.meta.env.VITE_DEFAULT_SHOP_CODE as string) || (import.meta.env.DEV ? 'campus1' : '')).trim();
+const DEMO_SHOP_CODE = ((import.meta.env.VITE_DEFAULT_SHOP_CODE as string) || (import.meta.env.DEV ? 'campus1' : 'inklly-test-shop')).trim();
 
 export const App: React.FC = () => {
   const [currentPath, setCurrentPath] = useState<string>(() => {

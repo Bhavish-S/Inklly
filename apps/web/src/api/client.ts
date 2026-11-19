@@ -213,6 +213,31 @@ export const api = {
   },
 
   // Merchant Operating Workspace
+  async getOperations() {
+    const res = await fetch(`${API_BASE}/merchant/operations`, { headers: getHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not load shop status');
+    return body as { acceptingOrders: boolean; pauseMessage: string | null; queue: { ordersAhead: number; estimatedMinutes: number } };
+  },
+
+  async updateOperations(acceptingOrders: boolean, pauseMessage?: string | null) {
+    const res = await fetch(`${API_BASE}/merchant/operations`, {
+      method: 'PUT', headers: getHeaders(), body: JSON.stringify({ acceptingOrders, pauseMessage: pauseMessage ?? null }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not update shop status');
+    return body as { acceptingOrders: boolean; pauseMessage: string | null; queue: { ordersAhead: number; estimatedMinutes: number } };
+  },
+
+  async getDailyReport(date?: string) {
+    const params = new URLSearchParams({ tzOffsetMinutes: String(-new Date().getTimezoneOffset()) });
+    if (date) params.set('date', date);
+    const res = await fetch(`${API_BASE}/merchant/reports/daily?${params}`, { headers: getHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not load the report');
+    return body;
+  },
+
   async getDashboard() {
     const res = await fetch(`${API_BASE}/merchant/dashboard`, {
       headers: getHeaders(),

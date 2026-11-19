@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api/client';
 import { CheckCircleIcon, ClockIcon, PrinterIcon, FileTextIcon, ArrowRightIcon } from '../components/icons';
 import { stopCustomerOrderPollingIfFinal } from '../order-tracker-polling.mjs';
 import { loadRazorpayCheckout } from '../razorpay-checkout';
+import { notificationsSupported, playChime, primeAudio, requestNotificationPermission, showNotification, vibrate } from '../ready-alert';
 
 interface OrderTrackerViewProps {
   orderId: string;
@@ -10,13 +11,13 @@ interface OrderTrackerViewProps {
 }
 
 const ORDER_STEPS = [
-  { key: 'SUBMITTED', label: 'Submitted', description: 'Order received by system', icon: FileTextIcon },
-  { key: 'AWAITING_PAYMENT', label: 'Payment', description: 'Counter or UPI checkout', icon: ClockIcon },
-  { key: 'AWAITING_REVIEW', label: 'Review', description: 'Counter staff verification', icon: ClockIcon },
-  { key: 'READY_FOR_PRINT', label: 'Queued', description: 'Assigned to spooler', icon: PrinterIcon },
-  { key: 'IN_PROGRESS', label: 'Printing', description: 'Hardware spooling active', icon: PrinterIcon },
-  { key: 'READY_FOR_COLLECTION', label: 'Ready', description: 'Available at pickup counter', icon: CheckCircleIcon },
-  { key: 'COLLECTED', label: 'Completed', description: 'Handed over to customer', icon: CheckCircleIcon },
+  { key: 'SUBMITTED', label: 'Sent', description: 'Your files reached the shop', icon: FileTextIcon },
+  { key: 'AWAITING_PAYMENT', label: 'Payment', description: 'Pay online or at the counter', icon: ClockIcon },
+  { key: 'AWAITING_REVIEW', label: 'Checking', description: 'The shop is checking your files', icon: ClockIcon },
+  { key: 'READY_FOR_PRINT', label: 'In queue', description: 'Waiting for the printer', icon: PrinterIcon },
+  { key: 'IN_PROGRESS', label: 'Printing', description: 'Your pages are printing', icon: PrinterIcon },
+  { key: 'READY_FOR_COLLECTION', label: 'Ready', description: 'Collect at the counter', icon: CheckCircleIcon },
+  { key: 'COLLECTED', label: 'Done', description: 'Collected — thank you!', icon: CheckCircleIcon },
 ];
 
 export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onBackToPortal }) => {
@@ -25,6 +26,30 @@ export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onB
   const [error, setError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
   const [paying, setPaying] = useState(false);
+  const [alertsOn, setAlertsOn] = useState(false);
+  const alertsRef = useRef(false);
+  const previousStatus = useRef<string | null>(null);
+
+  // Tell the customer the moment their prints are ready: chime, vibration,
+  // a system notification when allowed, and a changed tab title.
+  useEffect(() => {
+    if (!order?.status) return;
+    const before = previousStatus.current;
+    previousStatus.current = order.status;
+    if (before && before !== order.status && order.status === 'READY_FOR_COLLECTION') {
+      playChime();
+      vibrate([300, 120, 300, 120, 300]);
+      showNotification('Your prints are ready', `Show token ${String(order.tokenNumber || '').replace(/^T-/, '')} at ${order.shopName || 'the counter'}.`, `inklly-${order.orderId}`);
+    }
+    document.title = order.status === 'READY_FOR_COLLECTION' ? '✅ Ready for pickup — Inklly' : 'Your order — Inklly';
+  }, [order?.status]);
+
+  const enableAlerts = async () => {
+    primeAudio();
+    alertsRef.current = true;
+    setAlertsOn(true);
+    await requestNotificationPermission();
+  };
   const [payError, setPayError] = useState<string | null>(null);
 
   // Resumes Razorpay checkout for an online order that was saved but not paid.
@@ -74,7 +99,7 @@ export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onB
       return;
     }
     const fetchStatus = async () => {
-      if (inFlight || document.visibilityState === 'hidden') return;
+      if (inFlight || (document.visibilityState === 'hidden' && !alertsRef.current)) return;
       inFlight = true;
       try {
         const data = await api.getOrderStatus(orderId);
@@ -162,7 +187,11 @@ export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onB
           ? 'Order collected'
           : order.status === 'READY_FOR_COLLECTION'
             ? 'Ready for pickup'
-            : 'Processing print job';
+            : order.status === 'IN_PROGRESS'
+              ? 'Printing now'
+              : order.status === 'READY_FOR_PRINT'
+                ? 'In the print queue'
+                : 'Order received';
 
   const statusDescription = order.status === 'AWAITING_PAYMENT'
     ? 'Complete payment at counter or online to send this order to the printer.'
@@ -174,7 +203,7 @@ export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onB
           ? 'This order has been verified and marked as collected.'
           : order.status === 'READY_FOR_COLLECTION'
             ? 'Show your pickup token at the counter to collect your printed documents.'
-            : `Hello ${order.customerName || 'there'}, this page will automatically update as your documents are printed.`;
+            : `Thanks${order.customerName ? `, ${order.customerName.split(' ')[0]}` : ''}! Keep this page open — it updates by itself and can alert you when your prints are ready.`;
 
   return (
     <div className="max-w-2xl mx-auto my-8 sm:my-12 px-4">
@@ -188,7 +217,7 @@ export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onB
         {order.status === 'READY_FOR_COLLECTION' 
           ? 'Your order is ready for pickup at the counter' 
           : order.status === 'IN_PROGRESS' 
-          ? 'Your documents are currently printing on the spooler' 
+          ? 'Your documents are printing now' 
           : `Order status: ${ORDER_STEPS[currentStep]?.label || order.status}`}
       </div>
 
@@ -229,6 +258,39 @@ export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onB
             <p className="text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary mt-1 font-medium">
               Tell counter staff: <strong className="text-brand dark:text-brand-dark font-bold font-mono">Token {order.tokenNumber.replace(/^T-/, '')}</strong>
             </p>
+          </div>
+        )}
+
+        {!terminalIssue && order.status !== 'COLLECTED' && (
+          <div className="mb-6 space-y-3 text-left">
+            {order.queue && order.status !== 'READY_FOR_COLLECTION' && (
+              <div className="flex items-center justify-between rounded-2xl bg-indigo-50 dark:bg-indigo-950/40 px-4 py-3">
+                <span className="text-sm font-semibold text-indigo-900 dark:text-indigo-100">
+                  {order.queue.ordersAhead === 0 ? 'You’re next in line' : `${order.queue.ordersAhead} order${order.queue.ordersAhead > 1 ? 's' : ''} ahead of you`}
+                </span>
+                <span className="text-sm font-bold text-indigo-700 dark:text-indigo-300">~{order.queue.estimatedMinutes} min</span>
+              </div>
+            )}
+            {order.status !== 'READY_FOR_COLLECTION' && (
+              <button
+                type="button"
+                onClick={() => void enableAlerts()}
+                disabled={alertsOn}
+                className="w-full min-h-[48px] rounded-2xl border border-indigo-200 bg-white dark:bg-slate-900 text-sm font-bold text-indigo-700 disabled:border-emerald-200 disabled:text-emerald-700"
+              >
+                {alertsOn ? '✓ We’ll alert you when it’s ready' : notificationsSupported() ? '🔔 Alert me when it’s ready' : '🔔 Play a sound when it’s ready'}
+              </button>
+            )}
+            {(order.shopPhone || order.shopAddress) && (
+              <div className="grid grid-cols-2 gap-2">
+                {order.shopPhone && (
+                  <a href={`tel:${String(order.shopPhone).replace(/[^\d+]/g, '')}`} className="min-h-[44px] rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-sm font-semibold text-slate-800 dark:text-slate-100">Call shop</a>
+                )}
+                {order.shopAddress && (
+                  <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${order.shopName || ''} ${order.shopAddress}`)}`} target="_blank" rel="noreferrer" className="min-h-[44px] rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-sm font-semibold text-slate-800 dark:text-slate-100">Directions</a>
+                )}
+              </div>
+            )}
           </div>
         )}
 

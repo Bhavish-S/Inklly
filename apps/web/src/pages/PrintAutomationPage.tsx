@@ -37,7 +37,7 @@ export const PrintAutomationPage: React.FC<PrintAutomationPageProps> = ({ onNavi
           </button>
           <button
             type="button"
-            onClick={() => onNavigate('/p/campus1')}
+            onClick={() => onNavigate('/customer')}
             className="w-full sm:w-auto px-7 py-3.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.15] text-white font-medium text-sm transition-all duration-200 cursor-pointer"
           >
             Explore Customer Demo

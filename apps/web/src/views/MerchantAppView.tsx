@@ -1,3 +1,6 @@
+import { DailyReportView } from '../components/DailyReportView';
+import { QrPosterButton } from '../components/QrPosterButton';
+import { playChime, primeAudio, requestNotificationPermission, showNotification, vibrate } from '../ready-alert';
 import React, { useState, useEffect, useRef } from 'react';
 import QRCode from 'qrcode';
 import { api } from '../api/client';
@@ -119,7 +122,7 @@ type MerchantStorageFileView = {
   mimeType: string;
 };
 
-const MERCHANT_VIEWS = ['dashboard', 'orders', 'live_print', 'whatsapp_setup', 'storage', 'credits', 'withdraw', 'refunds', 'referrals', 'employees', 'train_bot', 'business_setup', 'shop_qr'] as const;
+const MERCHANT_VIEWS = ['dashboard', 'reports', 'orders', 'live_print', 'whatsapp_setup', 'storage', 'credits', 'withdraw', 'refunds', 'referrals', 'employees', 'train_bot', 'business_setup', 'shop_qr'] as const;
 const SETUP_TABS = ['profile', 'printers', 'pricing', 'discounts', 'portal', 'automation'] as const;
 const ORDER_TABS = ['pending', 'payment_pending', 'processing', 'printing', 'rejected', 'print_failed', 'done', 'all'] as const;
 
@@ -132,9 +135,10 @@ function readWorkspaceParam<T extends string>(key: string, allowed: readonly T[]
 
 export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) => {
   // Sidebar state
-  const [sidebarExpanded, setSidebarExpanded] = useState<boolean>(true);
+  const [sidebarExpanded, setSidebarExpanded] = useState<boolean>(() => typeof window === 'undefined' || window.innerWidth >= 768);
   const [activeView, setActiveView] = useState<
     | 'dashboard'
+    | 'reports'
     | 'orders'
     | 'live_print'
     | 'whatsapp_setup'
@@ -360,7 +364,57 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   // Interactive Guided Product Tour State
   const [tourOpen, setTourOpen] = useState<boolean>(false);
   const [tourStep, setTourStep] = useState<number>(0);
-  const [showTourBanner, setShowTourBanner] = useState<boolean>(true);
+  const [showTourBanner, setShowTourBannerState] = useState<boolean>(() => {
+    try { return localStorage.getItem('inklly_tour_banner_dismissed') !== '1'; } catch { return true; }
+  });
+  const setShowTourBanner = (show: boolean) => {
+    setShowTourBannerState(show);
+    if (!show) { try { localStorage.setItem('inklly_tour_banner_dismissed', '1'); } catch { /* storage unavailable */ } }
+  };
+
+  // Shop open/paused for new QR orders.
+  const [shopOperations, setShopOperations] = useState<{ acceptingOrders: boolean; pauseMessage: string | null; queue?: { ordersAhead: number; estimatedMinutes: number } } | null>(null);
+  const [operationsBusy, setOperationsBusy] = useState(false);
+  useEffect(() => {
+    let active = true;
+    const load = () => api.getOperations().then((data) => { if (active) setShopOperations(data); }).catch(() => undefined);
+    void load();
+    const interval = window.setInterval(load, 30000);
+    return () => { active = false; window.clearInterval(interval); };
+  }, []);
+  const toggleAcceptingOrders = async () => {
+    if (!shopOperations || operationsBusy) return;
+    let message: string | null = null;
+    if (shopOperations.acceptingOrders) {
+      const answer = window.prompt('Pause new QR orders? Customers will see this message (optional):', 'Back in 30 minutes');
+      if (answer === null) return;
+      message = answer.trim() || null;
+    }
+    setOperationsBusy(true);
+    try {
+      const updated = await api.updateOperations(!shopOperations.acceptingOrders, message);
+      setShopOperations(updated);
+      setGlobalToast(updated.acceptingOrders ? 'Taking orders again. Customers can order from your QR code.' : 'New QR orders are paused. Orders already placed are not affected.');
+    } catch (error) {
+      setGlobalToast(error instanceof Error ? error.message : 'Could not change the shop status.');
+    } finally {
+      setOperationsBusy(false);
+    }
+  };
+
+  // New-order alerts: chime, system notification and a tab-title count.
+  const knownOrderIdsRef = useRef<Set<string> | null>(null);
+  const [newOrderAlertsOn, setNewOrderAlertsOn] = useState<boolean>(() => {
+    try { return localStorage.getItem('inklly_new_order_alerts') !== 'off'; } catch { return true; }
+  });
+  const newOrderAlertsRef = useRef(newOrderAlertsOn);
+  const toggleNewOrderAlerts = async () => {
+    const next = !newOrderAlertsOn;
+    newOrderAlertsRef.current = next;
+    setNewOrderAlertsOn(next);
+    try { localStorage.setItem('inklly_new_order_alerts', next ? 'on' : 'off'); } catch { /* ignore */ }
+    if (next) { primeAudio(); await requestNotificationPermission(); playChime(); }
+  };
 
   // Real Hardware Printer Connectivity & Detection State
   const [agentConnected, setAgentConnected] = useState<boolean>(false);
@@ -1188,6 +1242,21 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       const dashboard = await api.getDashboard();
       if (dashboard && Array.isArray(dashboard.recentOrders) && dashboard.metrics) {
         const mapped = dashboard.recentOrders.map(mapServerOrderToUiOrder);
+        const waiting = mapped.filter((order: any) => ['SUBMITTED', 'AWAITING_REVIEW', 'READY_FOR_PRINT'].includes(order.rawStatus));
+        if (knownOrderIdsRef.current) {
+          const fresh = waiting.filter((order: any) => !knownOrderIdsRef.current!.has(order.rawId));
+          if (fresh.length && newOrderAlertsRef.current) {
+            playChime();
+            vibrate([150, 80, 150]);
+            const first = fresh[0];
+            showNotification(fresh.length > 1 ? `${fresh.length} new print orders` : `New order ${first.tokenDisplay}`, `${first.customer} · ${first.amount}`, 'inklly-new-order');
+            setOrderActionToast(fresh.length > 1 ? `${fresh.length} new orders just arrived.` : `New order ${first.tokenDisplay} from ${first.customer}.`);
+            setTimeout(() => setOrderActionToast(null), 6000);
+          }
+        }
+        knownOrderIdsRef.current = new Set(mapped.map((order: any) => order.rawId));
+        const pendingCount = Number(dashboard.metrics.pendingReview || 0) + Number(dashboard.metrics.readyForPrint || 0);
+        document.title = pendingCount > 0 ? `(${pendingCount}) Orders — Inklly` : 'Inklly';
         setOrdersList(mapped);
         setDashboardMetrics(dashboard.metrics);
         setLastOrderSyncTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
@@ -1395,7 +1464,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     fetchLiveOrdersFromApi();
     const interval = setInterval(() => {
       fetchLiveOrdersFromApi();
-    }, 15000);
+    }, 8000);
     return () => clearInterval(interval);
   }, []);
 
@@ -2115,6 +2184,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       title: 'OVERVIEW',
       items: [
         { id: 'dashboard', label: 'Dashboard', icon: <PackageIcon size={18} /> },
+        { id: 'reports', label: 'Reports', icon: <TrendingUpIcon size={18} /> },
       ],
     },
     {
@@ -2128,7 +2198,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       title: 'CUSTOMER EXPERIENCE',
       items: [
         { id: 'shop_qr', label: 'Shop QR', icon: <QrCodeIcon size={18} /> },
-        { id: 'whatsapp_setup', label: 'WhatsApp Setup', icon: <WhatsAppIcon size={18} /> },
       ],
     },
     {
@@ -2141,9 +2210,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       title: 'FINANCE',
       items: [
         { id: 'credits', label: 'Billing & usage', icon: <DollarSignIcon size={18} /> },
-        { id: 'withdraw', label: 'Settlements', icon: <IndianRupeeIcon size={18} /> },
         { id: 'refunds', label: 'Refunds', icon: <IndianRupeeIcon size={18} /> },
-        { id: 'referrals', label: 'Referral program', icon: <UsersIcon size={18} /> },
       ],
     },
     {
@@ -2155,7 +2222,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     {
       title: 'CONFIGURATION',
       items: [
-        { id: 'train_bot', label: 'Train Bot', icon: <SlidersIcon size={18} /> },
         { id: 'business_setup', label: 'Business Setup', icon: <StoreIcon size={18} /> },
       ],
     },
@@ -2226,7 +2292,10 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                     <button
                       key={item.id}
                       type="button"
-                      onClick={() => setActiveView(item.id as any)}
+                      onClick={() => {
+                        setActiveView(item.id as any);
+                        if (window.innerWidth < 768) setSidebarExpanded(false);
+                      }}
                       className={`w-full flex items-center rounded-xl text-xs font-semibold transition-all duration-150 cursor-pointer ${
                         sidebarExpanded ? 'gap-3 px-3 py-2 text-left' : 'p-2.5 justify-center'
                       } ${
@@ -2341,7 +2410,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
             )}
 
             {/* Real Merchant Shop Identity & Plan Badge */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-brand/20 bg-brand-soft dark:bg-brand-dark-soft shadow-xs text-xs">
+            <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-xl border border-brand/20 bg-brand-soft dark:bg-brand-dark-soft shadow-xs text-xs">
               <span className="font-bold text-brand dark:text-brand-dark truncate max-w-[150px]">
                 {currentMerchant.name}
               </span>
@@ -2362,14 +2431,14 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
               title={agentOnline ? 'Print computer connected (click to re-check)' : 'Print computer not connected (click to re-check)'}
             >
               <span className={`w-2 h-2 rounded-full shrink-0 ${agentOnline ? 'bg-status-success animate-pulse' : 'bg-status-warning'}`} />
-              <span>{agentOnline ? 'Agent Online' : 'Agent Offline'}</span>
+              <span>{agentOnline ? 'Printer online' : 'Printer offline'}</span>
             </button>
 
             {/* Fast Counter Standee QR Pill */}
             <button
               type="button"
               onClick={() => setActiveView('shop_qr')}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-ink-border dark:border-ink-dark-border bg-ink-surface dark:bg-ink-dark-elevated text-ink-text dark:text-ink-dark-text font-semibold text-xs hover:bg-ink-surface-subtle transition-colors shadow-xs cursor-pointer"
+              className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-ink-border dark:border-ink-dark-border bg-ink-surface dark:bg-ink-dark-elevated text-ink-text dark:text-ink-dark-text font-semibold text-xs hover:bg-ink-surface-subtle transition-colors shadow-xs cursor-pointer"
               title="Open Counter QR Standee view"
             >
               <span>📱</span>
@@ -2387,14 +2456,29 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
               <span>Tour</span>
             </button>
 
-            {/* Plan Upgrade Trigger */}
+            {/* Taking orders / paused */}
+            {shopOperations && (
+              <button
+                type="button"
+                onClick={() => void toggleAcceptingOrders()}
+                disabled={operationsBusy}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold shadow-xs cursor-pointer transition-all disabled:opacity-60 ${shopOperations.acceptingOrders ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-amber-500 hover:bg-amber-600 text-white'}`}
+                title={shopOperations.acceptingOrders ? 'Customers can order from your QR code. Click to pause.' : `Paused${shopOperations.pauseMessage ? `: ${shopOperations.pauseMessage}` : ''}. Click to start taking orders.`}
+              >
+                <span className={`w-2 h-2 rounded-full bg-white ${shopOperations.acceptingOrders ? 'animate-pulse' : ''}`} />
+                {shopOperations.acceptingOrders ? 'Taking orders' : 'Orders paused'}
+              </button>
+            )}
+
+            {/* New-order sound and notification */}
             <button
               type="button"
-              onClick={() => onNavigate?.('/pricing')}
-              className="px-3.5 py-1.5 bg-brand hover:bg-brand-hover text-white rounded-full text-xs font-bold shadow-xs cursor-pointer flex items-center gap-1 transition-all"
-              title="View pilot pricing"
+              onClick={() => void toggleNewOrderAlerts()}
+              className="w-8 h-8 rounded-full bg-ink-surface-muted hover:bg-ink-border dark:bg-ink-dark-elevated flex items-center justify-center text-ink-text-secondary transition-colors cursor-pointer"
+              title={newOrderAlertsOn ? 'New-order alerts on (click to mute)' : 'New-order alerts muted (click to turn on)'}
+              aria-pressed={newOrderAlertsOn}
             >
-              <span>Pilot pricing</span>
+              <span className={newOrderAlertsOn ? '' : 'opacity-40'}><BellIcon size={15} /></span>
             </button>
 
             {/* Dark Mode Toggle */}
@@ -2481,7 +2565,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
 
         {/* Top Product Tour Banner */}
         {showTourBanner && (
-          <div className="bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white px-6 py-2.5 flex items-center justify-between text-xs shadow-xs animate-fadeIn">
+          <div className="hidden md:flex bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white px-6 py-2.5 items-center justify-between text-xs shadow-xs animate-fadeIn">
             <div className="flex items-center gap-2">
               <span className="text-base">🚀</span>
               <span>
@@ -2511,6 +2595,8 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
         {/* ─────────────────────────────────────────────────────────────
             VIEW 1: DASHBOARD (Matching Screenshot 2026-10-23 074343.png)
         ───────────────────────────────────────────────────────────── */}
+        {activeView === 'reports' && <DailyReportView />}
+
         {activeView === 'dashboard' && (
           <div className="p-6 max-w-7xl w-full mx-auto space-y-6">
             {/* Live data freshness and currency context */}
@@ -2762,8 +2848,8 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
               </div>
             )}
 
-            {/* Tab Pills with Counts matching Screenshot */}
-            <div className="flex flex-wrap items-center gap-2">
+            {/* Status filters: one swipeable row on phones, wrapped on larger screens */}
+            <div className="flex flex-nowrap md:flex-wrap items-center gap-2 overflow-x-auto no-scrollbar -mx-1 px-1 [&>button]:shrink-0">
               <button
                 type="button"
                 onClick={() => selectOrdersTab('pending')}
@@ -2888,7 +2974,48 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
             {queueLoading && activeFilteredOrders.length === 0 ? (
               <div className="py-20 text-center text-sm text-slate-500" role="status">Loading orders…</div>
             ) : activeFilteredOrders.length > 0 ? (
-              <div className="bg-white dark:bg-[#1E293B] border border-[#E8EAF3] dark:border-gray-800 rounded-2xl overflow-hidden shadow-xs">
+              <>
+              {/* Phones: one card per order with the next action up front. */}
+              <ul className="md:hidden space-y-3">
+                {activeFilteredOrders.map((ord) => (
+                  <li key={`card-${ord.id}`} className="rounded-2xl bg-white dark:bg-[#1E293B] border border-[#E8EAF3] dark:border-gray-800 p-4 shadow-xs">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <span className="font-mono font-black text-xl text-[#4D64E6] dark:text-[#8293FF]">{ord.tokenDisplay}</span>
+                        <p className="text-sm font-bold text-slate-900 dark:text-white truncate">{ord.customer}</p>
+                        <p className="text-[11px] text-slate-500">{ord.time} · {ord.phone}</p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-lg font-extrabold text-slate-900 dark:text-white">{ord.amount}</p>
+                        <p className={`text-[11px] font-bold ${ord.isPaid ? 'text-emerald-600' : 'text-amber-600'}`}>{ord.isPaid ? 'Paid' : ord.paymentMethod === 'ONLINE_RAZORPAY' ? 'Awaiting online payment' : 'Cash due'}</p>
+                      </div>
+                    </div>
+                    <button type="button" onClick={() => setSelectedOrder(ord)} className="mt-3 w-full text-left rounded-xl bg-slate-50 dark:bg-slate-800/60 px-3 py-2">
+                      <span className="block text-xs font-semibold text-slate-800 dark:text-slate-100 truncate">{ord.document}{ord.fileCount > 1 ? ` + ${ord.fileCount - 1} more` : ''}</span>
+                      <span className="block text-[11px] text-slate-500">{ord.colorMode} · {ord.duplex} · {ord.pageRangeDisplay}</span>
+                    </button>
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      {(ord.tab === 'pending' || ord.tab === 'processing' || ord.hasFailedDispatch) && (
+                        <button type="button" onClick={() => handleOneClickPrint(ord.id)} className="min-h-[44px] rounded-xl bg-[#4D64E6] text-white text-sm font-bold">{ord.hasFailedDispatch ? 'Retry print' : 'Print'}</button>
+                      )}
+                      {ord.canPrintManually && (
+                        <button type="button" onClick={() => handleMarkPrintedManually(ord)} className="min-h-[44px] rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-800 text-sm font-bold">Printed ✓</button>
+                      )}
+                      {ord.tab === 'printing' && (
+                        <button type="button" onClick={() => handleConfirmPrintedOutput(ord)} className="min-h-[44px] rounded-xl bg-emerald-600 text-white text-sm font-bold">Pages OK ✓</button>
+                      )}
+                      {ord.rawStatus === 'READY_FOR_COLLECTION' && (
+                        <button type="button" onClick={() => handleMarkCollected(ord.id)} className="min-h-[44px] rounded-xl bg-emerald-600 text-white text-sm font-bold">{ord.isPaid ? 'Hand over ✓' : `Collect ${ord.amount}`}</button>
+                      )}
+                      <button type="button" onClick={() => handleQuickPreview(ord)} className="min-h-[44px] rounded-xl border border-slate-200 dark:border-slate-700 text-sm font-semibold text-slate-700 dark:text-slate-200">View file</button>
+                      {(ord.tab === 'pending' || ord.tab === 'payment_pending') && (
+                        <button type="button" onClick={() => handleRejectOrder(ord.id)} className="min-h-[44px] rounded-xl border border-red-200 text-sm font-semibold text-red-600">Reject</button>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              <div className="hidden md:block bg-white dark:bg-[#1E293B] border border-[#E8EAF3] dark:border-gray-800 rounded-2xl overflow-hidden shadow-xs">
                 <table className="w-full text-xs text-left">
                   <thead className="bg-gray-50 dark:bg-gray-800/60 border-b border-gray-100 dark:border-gray-800 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
                     <tr>
@@ -3108,6 +3235,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                   </tbody>
                 </table>
               </div>
+              </>
             ) : (
               <div className="py-24 text-center">
                 <div className="w-10 h-10 rounded-full border border-slate-300 dark:border-slate-700 flex items-center justify-center text-slate-400 mx-auto mb-3">
@@ -5784,6 +5912,15 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                     >
                       <span>📥</span> Download QR (PNG)
                     </button>
+                    <QrPosterButton
+                      shopName={currentMerchant.name}
+                      shopUrl={liveShopUrl}
+                      rates={[
+                        { label: 'B&W', paise: Math.round(Number(rateBwSingle) * 100) },
+                        { label: 'Colour', paise: Math.round(Number(rateColorSingle) * 100) },
+                      ]}
+                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-60"
+                    />
                     <button
                       type="button"
                       onClick={handleCopyShopUrl}
@@ -5804,7 +5941,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
             </div>
 
             {/* Offline Toast Notification matching screenshot */}
-            {!agentOnline && showOfflineToast && <div className="fixed bottom-6 right-6 z-40 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-4 shadow-xl flex items-start gap-3 max-w-sm animate-fadeIn">
+            {!agentOnline && showOfflineToast && <div className="hidden md:flex fixed bottom-6 right-6 z-40 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-4 shadow-xl flex items-start gap-3 max-w-sm animate-fadeIn">
               <span className="text-amber-500 font-bold text-base mt-0.5">⚠</span>
               <div className="text-xs space-y-0.5">
                 <div className="font-extrabold text-[#172031] dark:text-white">Print computer is offline</div>
@@ -6060,7 +6197,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
           GLOBAL OFFLINE TOAST (Bottom-Right)
       ───────────────────────────────────────────────────────────── */}
       {showOfflineToast && !agentOnline && (
-        <div className="fixed bottom-4 right-4 bg-white dark:bg-gray-800 border border-amber-300 dark:border-amber-700 rounded-2xl p-4 shadow-xl z-50 max-w-sm flex items-start gap-3 animate-fade-in">
+        <div className="hidden md:flex fixed bottom-4 right-4 bg-white dark:bg-gray-800 border border-amber-300 dark:border-amber-700 rounded-2xl p-4 shadow-xl z-50 max-w-sm flex items-start gap-3 animate-fade-in">
           <span className="text-xl">⚠️</span>
           <div>
             <div className="flex items-center justify-between">
@@ -6106,23 +6243,23 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
         </button>
         <button
           type="button"
-          onClick={() => setActiveView('live_print')}
+          onClick={() => setActiveView('reports')}
           className={`flex flex-col items-center gap-1 py-1 px-2.5 rounded-xl transition-colors ${
-            activeView === 'live_print' ? 'text-[#4D64E6] font-black' : 'text-slate-400 hover:text-slate-600'
+            activeView === 'reports' ? 'text-[#4D64E6] font-black' : 'text-slate-400 hover:text-slate-600'
           }`}
         >
-          <PrinterIcon size={18} />
-          <span>Spooler</span>
+          <TrendingUpIcon size={18} />
+          <span>Reports</span>
         </button>
         <button
           type="button"
-          onClick={() => setActiveView('business_setup')}
+          onClick={() => setActiveView('shop_qr')}
           className={`flex flex-col items-center gap-1 py-1 px-2.5 rounded-xl transition-colors ${
-            activeView === 'business_setup' ? 'text-[#4D64E6] font-black' : 'text-slate-400 hover:text-slate-600'
+            activeView === 'shop_qr' ? 'text-[#4D64E6] font-black' : 'text-slate-400 hover:text-slate-600'
           }`}
         >
-          <SlidersIcon size={18} />
-          <span>Setup</span>
+          <QrCodeIcon size={18} />
+          <span>QR</span>
         </button>
         <button
           type="button"

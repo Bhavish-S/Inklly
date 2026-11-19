@@ -776,3 +776,12 @@ CREATE TABLE IF NOT EXISTS platform_subscription_payment_events (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_platform_subscription_events_attempt ON platform_subscription_payment_events(billing_attempt_id, created_at);
+
+-- Whether a shop is taking new QR orders right now (merchant "Pause orders").
+CREATE TABLE IF NOT EXISTS shop_operating_status (
+    shop_id TEXT PRIMARY KEY,
+    accepting_orders INTEGER NOT NULL DEFAULT 1,
+    pause_message TEXT,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE
+);

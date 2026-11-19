@@ -189,6 +189,10 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
           counter: data.address || '',
           rates: data.rates,
           onlinePaymentAvailable: Boolean(data.onlinePaymentAvailable),
+          acceptCashOnCollection: data.acceptCashOnCollection !== false,
+          acceptingOrders: data.acceptingOrders !== false,
+          pauseMessage: data.pauseMessage || null,
+          queue: data.queue || null,
           portalSettings: data.portalSettings,
           rateRules: data.rates.ratesList,
         });
@@ -217,8 +221,12 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
   const [globalCopies, setGlobalCopies] = useState<number>(1);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [customerName, setCustomerName] = useState<string>('');
-  const [customerPhone, setCustomerPhone] = useState<string>('');
+  // Repeat customers: remember the name and number on this phone only.
+  const savedCustomer = (() => {
+    try { return JSON.parse(localStorage.getItem('inklly_customer') || 'null') || {}; } catch { return {}; }
+  })();
+  const [customerName, setCustomerName] = useState<string>(typeof savedCustomer.name === 'string' ? savedCustomer.name : '');
+  const [customerPhone, setCustomerPhone] = useState<string>(typeof savedCustomer.phone === 'string' ? savedCustomer.phone : '');
   const [paymentMethod, setPaymentMethod] = useState<'CASH_ON_COLLECTION' | 'ONLINE_RAZORPAY'>('CASH_ON_COLLECTION');
   const [pendingOnlineOrder, setPendingOnlineOrder] = useState<{ orderId: string; orderNumber: string; totalAmountPaise: number; tokenNumber?: string } | null>(null);
   const [isDragging, setIsDragging] = useState<boolean>(false);
@@ -270,6 +278,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
   const passportInputRef = useRef<HTMLInputElement>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const cropFrameRef = useRef<HTMLDivElement | null>(null);
 
@@ -828,6 +837,10 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
 
   // Submit only with a fresh server quote; the server rechecks the amount against its current rates.
   const handlePlaceOrder = async () => {
+    if (shop?.acceptingOrders === false && !pendingOnlineOrder) {
+      setSubmitError(shop.pauseMessage || 'This shop is not taking online orders right now.');
+      return;
+    }
     const normalizedPhone = customerPhone.replace(/\D/g, '').replace(/^91(?=\d{10}$)/, '');
     const requiredFields = shop?.portalSettings?.requiredFields || { name: true, phone: true };
     if ((requiredFields.name && !customerName.trim()) || (requiredFields.phone && !/^[6-9]\d{9}$/.test(normalizedPhone))) {
@@ -944,7 +957,10 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
       try {
         window.history.replaceState({}, '', `/track?order=${encodeURIComponent(order.orderId)}&shop=${encodeURIComponent(shop.shopCode || shopCode)}`);
         localStorage.setItem('inklly_last_order', JSON.stringify({ orderId: order.orderId, token: cleanToken, shopCode: shop.shopCode || shopCode, placedAt: Date.now() }));
+        localStorage.setItem('inklly_customer', JSON.stringify({ name: customerName.trim(), phone: normalizedPhone }));
       } catch { /* storage or history unavailable: the confirmation screen still shows the token */ }
+      // Go straight to the live tracker: token, queue position and ready alerts.
+      onOrderSubmitted?.(order.orderId, shop.shopCode || shopCode);
     } catch (err) {
       const changedQuote = err instanceof Error ? (err as Error & { currentQuote?: any }).currentQuote : undefined;
       if (changedQuote && Number.isSafeInteger(changedQuote.totalPaise)) setServerQuote(changedQuote);
@@ -1122,173 +1138,142 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
     );
   }
 
-  return (
-    <div className="min-h-screen bg-ink-app dark:bg-ink-dark-app text-ink-text dark:text-ink-dark-text pb-28">
-      {/* 1. TOP HEADER BAR WITH GRADIENT (Matching Part 2 Video) */}
-      <header
-        className="w-full py-3.5 px-4 sticky top-0 z-30 shadow-xs border-b border-white/10"
-        style={{ background: 'linear-gradient(135deg, #4D64E6 0%, #3B50D4 100%)' }}
-      >
-        <div className="max-w-md mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="flex-shrink-0 drop-shadow-sm">
-              <InkllyMark size={32} />
-            </div>
-            <div>
-              <div className="text-white font-black text-sm tracking-tight flex items-center gap-1.5">
-                Inklly
-                <span className="bg-white/25 text-[10px] font-bold px-1.5 py-0.5 rounded text-white">
-                  FAST QR
-                </span>
-              </div>
-              <div className="text-indigo-100 text-xs font-medium">
-                {shop.name} secure print order
-              </div>
-            </div>
-          </div>
+  const rupees = (value: number | null | undefined) => (typeof value === 'number' ? `₹${value % 1 === 0 ? value : value.toFixed(2)}` : null);
+  const priceChips = [
+    rupees(shop.rates?.bw_simplex) && { label: 'B&W', value: `${rupees(shop.rates.bw_simplex)}/page` },
+    rupees(shop.rates?.color_simplex) && { label: 'Colour', value: `${rupees(shop.rates.color_simplex)}/page` },
+    rupees(shop.rates?.bw_duplex) && { label: 'Both sides', value: `${rupees(shop.rates.bw_duplex)}/side` },
+  ].filter(Boolean) as Array<{ label: string; value: string }>;
+  const showServiceTabs = idCardServiceEnabled || photoServiceEnabled;
 
-          <div className="text-right">
-            <span className="inline-flex items-center gap-1 text-[11px] font-semibold bg-emerald-500/25 border border-emerald-300/30 text-emerald-100 px-2 py-0.5 rounded-full">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-300"></span>
-              Order intake open
-            </span>
+  return (
+    <div className="min-h-screen bg-[#F4F5FA] dark:bg-ink-dark-app text-ink-text dark:text-ink-dark-text pb-32">
+      {/* Shop header: the customer is ordering from this shop, so its name leads. */}
+      <header className="bg-white dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 sticky top-0 z-30">
+        <div className="max-w-md mx-auto px-4 pt-[max(env(safe-area-inset-top),12px)] pb-3">
+          <div className="flex items-start gap-3">
+            <div className="w-11 h-11 shrink-0 rounded-2xl bg-indigo-600 text-white flex items-center justify-center text-lg font-black shadow-sm" aria-hidden="true">
+              {shop.name.trim().charAt(0).toUpperCase()}
+            </div>
+            <div className="min-w-0 flex-1">
+              <h1 className="text-[17px] leading-tight font-extrabold text-slate-900 dark:text-white truncate">{shop.name}</h1>
+              {shop.counter && <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{shop.counter}</p>}
+            </div>
+            {shop.acceptingOrders === false ? (
+              <span className="shrink-0 inline-flex items-center gap-1.5 rounded-full bg-amber-50 border border-amber-200 px-2.5 py-1 text-[11px] font-bold text-amber-800">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500" /> Paused
+              </span>
+            ) : (
+              <span className="shrink-0 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-1 text-[11px] font-bold text-emerald-800">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> Open
+              </span>
+            )}
+          </div>
+          <div className="mt-3 flex items-center gap-2 overflow-x-auto no-scrollbar text-[11px]">
+            {shop.acceptingOrders !== false && shop.queue && (
+              <span className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-indigo-50 px-2 py-1 font-semibold text-indigo-700">
+                <ClockIcon size={12} />
+                {shop.queue.ordersAhead === 0 ? 'No queue · ready in minutes' : `${shop.queue.ordersAhead} ahead · ~${shop.queue.estimatedMinutes} min`}
+              </span>
+            )}
+            {priceChips.map((chip) => (
+              <span key={chip.label} className="shrink-0 rounded-lg bg-slate-100 dark:bg-slate-800 px-2 py-1 text-slate-600 dark:text-slate-300">
+                {chip.label} <strong className="text-slate-900 dark:text-white">{chip.value}</strong>
+              </span>
+            ))}
           </div>
         </div>
       </header>
 
-      {/* 2. MAIN CENTERED CONTENT COLUMN (~440px) */}
       <div className="max-w-md mx-auto p-4 space-y-4">
-        {/* Toast Alerts */}
+        {shop.acceptingOrders === false && (
+          <div role="status" className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            <strong className="block">This shop isn’t taking online orders right now.</strong>
+            <span className="text-amber-800">{shop.pauseMessage || 'Please check back shortly or ask at the counter.'}</span>
+          </div>
+        )}
         {idCardToast && (
           <div className="p-3 bg-indigo-900 text-white rounded-xl text-xs font-bold shadow-lg flex items-center gap-2 animate-fadeIn">
-            <span>🪪</span>
             <span>{idCardToast}</span>
           </div>
         )}
         {passportToast && (
           <div className="p-3 bg-indigo-900 text-white rounded-xl text-xs font-bold shadow-lg flex items-center gap-2 animate-fadeIn">
-            <span>📸</span>
             <span>{passportToast}</span>
           </div>
         )}
 
-        {/* INTAKE MODE SELECTOR BAR (Indian Print Shop Workflow Parity) */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 p-1.5 bg-slate-200/90 rounded-2xl text-center text-xs font-bold shadow-inner">
-          <button
-            type="button"
-            onClick={() => setIntakeMode('documents')}
-            className={`min-h-[44px] py-2 px-1 rounded-xl transition-all flex flex-col items-center justify-center gap-1 cursor-pointer ${
-              intakeMode === 'documents'
-                ? 'bg-white text-indigo-700 shadow-md font-black ring-1 ring-black/5'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <FileTextIcon size={16} />
-            <span className="text-[11px]">Files</span>
-          </button>
-          {idCardServiceEnabled && <button
-            type="button"
-            onClick={() => setIntakeMode('id_card')}
-            className={`min-h-[44px] py-2 px-1 rounded-xl transition-all flex flex-col items-center justify-center gap-1 cursor-pointer ${
-              intakeMode === 'id_card'
-                ? 'bg-white text-indigo-700 shadow-md font-black ring-1 ring-black/5'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <IdCardIcon size={16} />
-            <span className="text-[11px]">ID Card 2-in-1</span>
-          </button>}
-          {photoServiceEnabled && <button
-            type="button"
-            onClick={() => setIntakeMode('passport_photo')}
-            className={`min-h-[44px] py-2 px-1 rounded-xl transition-all flex flex-col items-center justify-center gap-1 cursor-pointer ${
-              intakeMode === 'passport_photo'
-                ? 'bg-white text-indigo-700 shadow-md font-black ring-1 ring-black/5'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <CameraIcon size={16} />
-            <span className="text-[11px]">Passport (8x)</span>
-          </button>}
-          <button
-            type="button"
-            onClick={() => setIntakeMode('whatsapp_lookup')}
-            className={`min-h-[44px] py-2 px-1 rounded-xl transition-all flex flex-col items-center justify-center gap-1 cursor-pointer ${
-              intakeMode === 'whatsapp_lookup'
-                ? 'bg-white text-indigo-700 shadow-md font-black ring-1 ring-black/5'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <MessageSquareIcon size={16} />
-            <span className="text-[11px]">WhatsApp</span>
-          </button>
-        </div>
+        {/* Extra services appear only when the shop offers them. */}
+        {showServiceTabs && (
+          <div className="grid grid-cols-3 gap-1 p-1 bg-slate-200/70 dark:bg-slate-800 rounded-2xl text-center text-xs font-bold">
+            {([
+              { mode: 'documents', label: 'Documents', icon: <FileTextIcon size={16} />, show: true },
+              { mode: 'id_card', label: 'ID card', icon: <IdCardIcon size={16} />, show: idCardServiceEnabled },
+              { mode: 'passport_photo', label: 'Passport photo', icon: <CameraIcon size={16} />, show: photoServiceEnabled },
+            ] as const).filter((tab) => tab.show).map((tab) => (
+              <button
+                key={tab.mode}
+                type="button"
+                onClick={() => setIntakeMode(tab.mode)}
+                className={`min-h-[48px] rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all ${intakeMode === tab.mode ? 'bg-white dark:bg-slate-900 text-indigo-700 shadow-sm' : 'text-slate-600 dark:text-slate-300'}`}
+              >
+                {tab.icon}
+                <span className="text-[11px]">{tab.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
 
-        {/* 1A. STANDARD DOCUMENTS UPLOAD MODE */}
+        {/* 1A. DOCUMENT UPLOAD */}
         {intakeMode === 'documents' && (
-          <div className="bg-white rounded-2xl p-4 sm:p-5 shadow-sm border border-slate-100">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <span className="w-5 h-5 rounded-full bg-indigo-50 text-indigo-600 font-bold text-xs flex items-center justify-center">
-                  1
-                </span>
-                Upload your documents
-              </h2>
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-4 sm:p-5 shadow-sm border border-slate-100 dark:border-slate-800">
+            <h2 className="text-[15px] font-extrabold text-slate-900 dark:text-white">
+              {documents.length ? 'Add more files' : 'What would you like to print?'}
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5 mb-3">PDF, photos or screenshots · up to 25 MB each</p>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
+              className="hidden"
+              onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }}
+            />
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }}
+            />
+            <div
+              onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={(e) => { e.preventDefault(); setIsDragging(false); if (e.dataTransfer.files) handleFileSelect(e.dataTransfer.files); }}
+              className={`grid grid-cols-2 gap-2.5 rounded-2xl transition-all ${isDragging ? 'ring-2 ring-indigo-500 ring-offset-2' : ''}`}
+            >
               <button
                 type="button"
-                onClick={() => {
-                  if (activeDoc) {
-                    openEditorForActiveDoc();
-                  } else {
-                    fileInputRef.current?.click();
-                  }
-                }}
-                className="min-h-[36px] text-xs font-bold text-indigo-600 hover:text-indigo-700 bg-indigo-50 hover:bg-indigo-100/80 px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1"
+                disabled={shop.acceptingOrders === false}
+                onClick={() => fileInputRef.current?.click()}
+                className={`${documents.length ? 'min-h-[52px] flex-row' : 'min-h-[104px] flex-col'} rounded-2xl bg-indigo-600 active:bg-indigo-700 text-white flex items-center justify-center gap-2 font-bold text-sm shadow-sm disabled:opacity-40`}
               >
-                <CropIcon size={13} />
-                Auto-crop & enhance
+                <UploadCloudIcon size={26} />
+                Choose files
+              </button>
+              <button
+                type="button"
+                disabled={shop.acceptingOrders === false}
+                onClick={() => cameraInputRef.current?.click()}
+                className={`${documents.length ? 'min-h-[52px] flex-row' : 'min-h-[104px] flex-col'} rounded-2xl bg-indigo-50 dark:bg-indigo-950/50 active:bg-indigo-100 text-indigo-700 dark:text-indigo-200 border border-indigo-100 dark:border-indigo-900 flex items-center justify-center gap-2 font-bold text-sm disabled:opacity-40`}
+              >
+                <CameraIcon size={26} />
+                Take photo
               </button>
             </div>
-
-            {/* Drag & Drop Zone */}
-            <div
-              onClick={() => fileInputRef.current?.click()}
-              onDragOver={(e) => {
-                e.preventDefault();
-                setIsDragging(true);
-              }}
-              onDragLeave={() => setIsDragging(false)}
-              onDrop={(e) => {
-                e.preventDefault();
-                setIsDragging(false);
-                if (e.dataTransfer.files) {
-                  handleFileSelect(e.dataTransfer.files);
-                }
-              }}
-              className={`border-2 border-dashed rounded-2xl p-5 sm:p-6 text-center cursor-pointer transition-all duration-200 group ${
-                isDragging
-                  ? 'border-indigo-600 bg-indigo-100/70 scale-[1.01] shadow-md shadow-indigo-500/10'
-                  : 'border-indigo-200 hover:border-indigo-500 bg-indigo-50/30 hover:bg-indigo-50/60'
-              }`}
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
-                className="hidden"
-                onChange={(e) => handleFileSelect(e.target.files)}
-              />
-              <div className="w-12 h-12 rounded-2xl bg-indigo-100 text-indigo-600 mx-auto flex items-center justify-center mb-3 group-hover:scale-110 transition-transform shadow-xs">
-                <UploadCloudIcon size={24} />
-              </div>
-              <div className="text-sm font-bold text-slate-800 mb-1">
-                Tap to select documents or drop files here
-              </div>
-              <div className="text-[11px] text-slate-500">
-                PDF, JPG or PNG • Max 25 MB per file • Export Word or Excel files as PDF first
-              </div>
-            </div>
+            <p className="hidden sm:block text-center text-[11px] text-slate-400 mt-2">or drag files here</p>
+            {!documents.length && <p className="text-[11px] text-slate-400 mt-2">Word or Excel? Save it as PDF first. Photos can be cropped and enhanced after upload.</p>}
 
             {/* Upload Error Banner */}
             {uploadError && (
@@ -2117,38 +2102,19 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
             </button>
           </div>
 
-          {/* Payment providers are not enabled until each shop connects its account. */}
-          <div className="flex items-center gap-1.5 flex-1 justify-end min-w-[130px]">
-            <button
-              type="button"
-              disabled={documents.length === 0 || isSubmitting || quoteLoading || grandTotalPaise === null}
-              onClick={() => {
-                setPaymentMethod('CASH_ON_COLLECTION');
-                setSubmitError(null);
-                setReviewModalOpen(true);
-              }}
-              className="min-h-[44px] px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 disabled:opacity-50 text-slate-800 font-bold rounded-xl text-xs transition-all flex flex-col items-center justify-center leading-tight cursor-pointer border border-slate-200"
-              title="Pay cash when picking up at counter"
-            >
-              <span>💵 Cash</span>
-              <span className="text-[9px] font-medium text-slate-500">at counter</span>
-            </button>
-
-            <button
-              type="button"
-              disabled={documents.length === 0 || isSubmitting || quoteLoading || grandTotalPaise === null || !shop.onlinePaymentAvailable || onlinePaymentBelowMinimum}
-              onClick={() => {
-                setPaymentMethod('ONLINE_RAZORPAY');
-                setSubmitError(null);
-                setReviewModalOpen(true);
-              }}
-              className={`min-h-[44px] px-2.5 py-1.5 rounded-xl text-xs transition-all flex flex-col items-center justify-center leading-tight border ${shop.onlinePaymentAvailable && !onlinePaymentBelowMinimum ? 'cursor-pointer bg-slate-100 border-slate-200 text-slate-800 hover:bg-slate-200' : 'cursor-not-allowed bg-slate-100 border-slate-200 text-slate-400'}`}
-              title={!shop.onlinePaymentAvailable ? 'Online payment is not enabled by this shop' : onlinePaymentBelowMinimum ? 'Razorpay requires a minimum order total of ₹1.00' : 'Pay securely with Razorpay'}
-            >
-              <span>Online payment</span>
-              <span className="text-[9px] font-medium">{!shop.onlinePaymentAvailable ? 'unavailable' : onlinePaymentBelowMinimum ? 'min ₹1.00' : 'Razorpay'}</span>
-            </button>
-          </div>
+          {/* One clear next step; payment is chosen on the review sheet. */}
+          <button
+            type="button"
+            disabled={documents.length === 0 || isSubmitting || quoteLoading || grandTotalPaise === null || shop.acceptingOrders === false}
+            onClick={() => {
+              setPaymentMethod(shop.onlinePaymentAvailable && !onlinePaymentBelowMinimum ? 'ONLINE_RAZORPAY' : 'CASH_ON_COLLECTION');
+              setSubmitError(null);
+              setReviewModalOpen(true);
+            }}
+            className="flex-1 min-h-[52px] rounded-2xl bg-indigo-600 active:bg-indigo-700 disabled:bg-slate-300 text-white font-extrabold text-sm shadow-md transition-all"
+          >
+            {documents.length === 0 ? 'Add a file to start' : 'Review & order'}
+          </button>
         </div>
         {shop.onlinePaymentAvailable && onlinePaymentBelowMinimum && (
           <p className="mt-2 text-right text-xs text-amber-700" role="status">
@@ -2160,12 +2126,12 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
       {/* 4. ORDER REVIEW MODAL (WCAG 2.2 SC 3.3.4 Error Prevention) */}
       {reviewModalOpen && (
         <div 
-          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn"
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 animate-fadeIn"
           role="dialog"
           aria-modal="true"
           aria-label="Review Your Print Order"
         >
-          <div className="w-full max-w-sm bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden p-6 space-y-4 text-left">
+          <div className="w-full sm:max-w-sm bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-100 max-h-[92vh] overflow-y-auto p-5 sm:p-6 pb-[max(20px,env(safe-area-inset-bottom))] space-y-4 text-left">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
                 <InkllyMark size={24} />
@@ -2211,6 +2177,30 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
               </div>
             </div>
 
+            {!pendingOnlineOrder && (
+              <fieldset>
+                <legend className="block text-xs font-semibold text-slate-700 mb-1.5">How will you pay?</legend>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { value: 'CASH_ON_COLLECTION' as const, title: 'At the counter', hint: 'Cash or UPI at pickup', enabled: shop.acceptCashOnCollection !== false },
+                    { value: 'ONLINE_RAZORPAY' as const, title: 'Pay now', hint: shop.onlinePaymentAvailable ? (onlinePaymentBelowMinimum ? 'Minimum ₹1' : 'UPI, card, netbanking') : 'Not offered here', enabled: Boolean(shop.onlinePaymentAvailable) && !onlinePaymentBelowMinimum },
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      disabled={!option.enabled}
+                      onClick={() => setPaymentMethod(option.value)}
+                      aria-pressed={paymentMethod === option.value}
+                      className={`min-h-[56px] rounded-xl border px-3 py-2 text-left transition-all disabled:opacity-40 ${paymentMethod === option.value ? 'border-indigo-600 bg-indigo-50 ring-1 ring-indigo-600' : 'border-slate-200 bg-white'}`}
+                    >
+                      <span className="block text-sm font-bold text-slate-900">{option.title}</span>
+                      <span className="block text-[11px] text-slate-500">{option.hint}</span>
+                    </button>
+                  ))}
+                </div>
+              </fieldset>
+            )}
+
             <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/80 space-y-2.5 text-xs text-slate-700">
               <div className="flex justify-between">
                 <span className="text-slate-500">Print Shop:</span>
@@ -2221,24 +2211,12 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                 <span className="font-bold text-slate-900">{documents.length} file{documents.length > 1 ? 's' : ''} ({totalPagesCount} pages)</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">Color Mode:</span>
-                <span className="font-bold text-slate-900">{activeDoc.options.colorMode === 'color' ? 'Full Colour' : 'Black & White'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Sides:</span>
-                <span className="font-bold text-slate-900">{activeDoc.options.duplexMode === 'duplex_auto' ? 'Back-to-Back (Both Sides)' : 'Single Sided'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Copies:</span>
+                <span className="text-slate-500">Sets:</span>
                 <span className="font-bold text-slate-900">{globalCopies} set{globalCopies > 1 ? 's' : ''}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Payment:</span>
-              <span className="font-bold text-indigo-700">{paymentMethod === 'ONLINE_RAZORPAY' ? 'Pay securely online' : 'Pay cash at the counter'}</span>
               </div>
               {serverQuote?.lineItems?.map((line: any, index: number) => (
                 <div key={`${line.fileName}-${index}`} className="border-t border-slate-200 pt-2 flex items-start justify-between gap-3">
-                  <span className="min-w-0 text-slate-600 break-all">{line.fileName} · {line.selectedPages} sides × {line.copies}</span>
+                  <span className="min-w-0 text-slate-600 break-all">{line.fileName}<span className="block text-[11px] text-slate-400">{(() => { const doc = documents.find((d) => d.fileName === line.fileName); const o = doc?.options; return o ? `${o.colorMode === 'color' ? 'Colour' : o.colorMode === 'mixed' ? 'Mixed colour' : 'B&W'} · ${o.duplexMode === 'duplex_auto' ? 'both sides' : 'single side'} · ${o.paperSize} · ` : ''; })()}{line.selectedPages} pages × {line.copies}</span></span>
                   <span className="shrink-0 font-semibold text-slate-800">{formatPaise(line.subtotalPaise)}</span>
                 </div>
               ))}
@@ -2276,7 +2254,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                 onClick={handlePlaceOrder}
                 className="w-full min-h-[48px] bg-[#4D64E6] hover:bg-[#3B50D4] active:bg-[#2C3FA8] text-white font-bold rounded-xl text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
-                {isSubmitting ? 'Processing…' : pendingOnlineOrder ? 'Retry online payment →' : paymentMethod === 'ONLINE_RAZORPAY' ? 'Continue to secure payment →' : 'Confirm cash order →'}
+                {isSubmitting ? 'Placing order…' : pendingOnlineOrder ? 'Retry payment' : paymentMethod === 'ONLINE_RAZORPAY' ? `Pay ${grandTotalPaise !== null ? formatPaise(grandTotalPaise) : ''} & place order` : 'Place order'}
               </button>
               {pendingOnlineOrder ? (
                 <button
