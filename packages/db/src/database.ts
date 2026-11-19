@@ -128,6 +128,33 @@ export class DatabaseService {
     console.log('[Inklly DB] Connected to Supabase PostgreSQL successfully!');
   }
 
+  /**
+   * The baseline schema runs once (migration 1). Tables and indexes added to
+   * schema.sql after a database was first installed would otherwise never be
+   * created there, so every boot re-applies the idempotent
+   * `CREATE ... IF NOT EXISTS` statements. Each runs on its own; one that
+   * cannot apply to a legacy table (for example an index on a column a later
+   * migration adds) is logged and skipped instead of blocking startup.
+   */
+  private ensurePostgresSchemaObjects(): void {
+    let created = 0;
+    for (const rawStatement of SCHEMA_SQL.split(';')) {
+      const statement = rawStatement.replace(/^(?:\s*--[^\n]*(?:\n|$))+/, '').trim();
+      if (!/^CREATE\s+(UNIQUE\s+)?(TABLE|INDEX)\s+IF\s+NOT\s+EXISTS\b/i.test(statement)) continue;
+      const name = /IF\s+NOT\s+EXISTS\s+("?[\w.]+"?)/i.exec(statement)?.[1] || 'unknown';
+      try {
+        const existed = this.queryPostgres<{ found: number }>(`SELECT 1 AS found FROM pg_class WHERE relname = ? LIMIT 1`, [name.replace(/"/g, '').split('.').pop()!.toLowerCase()]).length > 0;
+        if (existed) continue;
+        this.queryPostgres(statement);
+        created++;
+        console.log(`[Inklly DB] Created missing schema object ${name}`);
+      } catch (error) {
+        console.warn(`[Inklly DB] Could not create ${name}: ${error instanceof Error ? error.message : 'unknown error'}`);
+      }
+    }
+    if (created) console.log(`[Inklly DB] Created ${created} missing schema object(s).`);
+  }
+
   private ensurePostgresSchema(): void {
     this.queryPostgres(
       `CREATE TABLE IF NOT EXISTS inklly_schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`
@@ -159,6 +186,7 @@ export class DatabaseService {
         throw new Error(`[Inklly DB] PostgreSQL schema installation failed: ${error instanceof Error ? error.message : 'unknown error'}`);
       }
     }
+    this.ensurePostgresSchemaObjects();
     this.ensurePostgresDispatchMigration();
     this.ensurePostgresMerchantVaultMigration();
     this.ensurePostgresAgentPrinterMigration();
