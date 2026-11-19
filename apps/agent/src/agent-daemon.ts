@@ -1,4 +1,5 @@
 import * as http from 'node:http';
+import * as os from 'node:os';
 import { ConfigManager, AgentConfig } from './config';
 import { LocalOfflineQueue } from './local-queue';
 import { PrinterDiscoveryService, DiscoveredPrinter } from './printer-discovery';
@@ -14,6 +15,8 @@ export class AgentDaemon {
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private pollInterval: NodeJS.Timeout | null = null;
   private workerInterval: NodeJS.Timeout | null = null;
+  private discoveryInterval: NodeJS.Timeout | null = null;
+  private discovering = false;
   private workerPromise: Promise<void> | null = null;
 
   constructor(configManager?: ConfigManager, queue?: LocalOfflineQueue) {
@@ -56,6 +59,9 @@ export class AgentDaemon {
     this.workerInterval = setInterval(() => {
       this.runWorkerCycle();
     }, 2000);
+    // Printers get plugged in, renamed and switched off while the shop is
+    // open; rediscover so the merchant sees the current list without a restart.
+    this.discoveryInterval = setInterval(() => void this.refreshPrinters(), Number(process.env.INKLLY_PRINTER_DISCOVERY_MS) || 60_000);
 
     // Initial immediate run
     this.sendHeartbeat();
@@ -67,6 +73,7 @@ export class AgentDaemon {
     if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
     if (this.pollInterval) clearInterval(this.pollInterval);
     if (this.workerInterval) clearInterval(this.workerInterval);
+    if (this.discoveryInterval) clearInterval(this.discoveryInterval);
     if (this.workerPromise) await this.workerPromise;
     if (this.server) {
       await new Promise<void>((resolve) => this.server!.close(() => resolve()));
@@ -74,6 +81,21 @@ export class AgentDaemon {
     }
     this.queue.close();
     console.log('[Inklly Agent] Daemon stopped cleanly.');
+  }
+
+  public async refreshPrinters(): Promise<void> {
+    if (this.discovering || !this.isRunning) return;
+    this.discovering = true;
+    try {
+      const before = JSON.stringify(this.printers.map((p) => [p.name, p.isOnline, p.isDefault]));
+      this.printers = await PrinterDiscoveryService.discoverPrinters();
+      if (JSON.stringify(this.printers.map((p) => [p.name, p.isOnline, p.isDefault])) !== before) {
+        console.log(`[Inklly Agent] Printer list changed: ${this.printers.map((p) => `${p.name}${p.isOnline ? '' : ' (offline)'}`).join(', ') || 'none'}`);
+        await this.sendHeartbeat();
+      }
+    } finally {
+      this.discovering = false;
+    }
   }
 
   private runWorkerCycle(): void {
@@ -101,9 +123,9 @@ export class AgentDaemon {
         body: JSON.stringify({
           shopId: targetShopId,
           pairingCode: config.pairingCode,
-          hostname: process.env.COMPUTERNAME || 'LOCAL-POS-TERMINAL',
+          hostname: (process.env.COMPUTERNAME || os.hostname() || 'print-computer').slice(0, 100),
           osPlatform: process.platform,
-          osVersion: 'Windows 11 / macOS',
+          osVersion: `${os.type()} ${os.release()}`.slice(0, 100),
           agentVersion: '1.0.0',
         }),
       });
@@ -147,6 +169,7 @@ export class AgentDaemon {
             driverName: printer.driverName,
             isOnline: printer.isOnline,
             isDefault: printer.isDefault,
+            capabilities: printer.capabilities,
           })),
           localQueueDepth: this.queue.getQueueDepth(),
           sqliteCacheHealthy: true,

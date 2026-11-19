@@ -3,6 +3,59 @@
 **Status:** Not ready for production; development and verification continue.
 **Updated:** 2026-10-30
 
+## 2026-11-19 end-to-end workflow pass (branch `launch-readiness`, uncommitted)
+
+Verified locally: `npm run build` passes and `npm test` passes 320 tests (database 25, shared 16, agent 26, server 240, web 13). The full counter loop was exercised in a browser against a local SQLite server and a real agent process printing to stub CUPS queues: QR upload → crop/enhance → cash order → one-click Print (auto-routed) → agent download and `lp` submission (spooled file inspected) → Pages OK → cash collected. Not verified: Razorpay with real test keys, Render/Supabase, a physical printer, Windows.
+
+Security fixes (launch blockers):
+
+- Paid merchant signup trusted a client flag (`testSimulated`) and even failed Razorpay payments, granting any plan (including Lifetime) for free. Registration now verifies the checkout signature and the captured payment's order, amount and currency with Razorpay, and refuses reused payments. Simulated payment exists only outside production with no platform keys.
+- Production with no platform owner created `admin@inklly.com` with the password published in the README and login page. It now requires `PLATFORM_OWNER_EMAIL` and a unique 16+ character `PLATFORM_OWNER_PASSWORD`. **If the live database ever booted without those variables, that account exists with the public password: rotate it or deactivate it now.**
+- Demo-credential buttons on `/login` and the "sample password" on `/register` now appear only in development builds.
+
+Fixed:
+
+- Customers are offered online payment only after the shop's saved Razorpay keys pass the live credential test; order submission enforces the same rule.
+- Online orders whose checkout never started are cancelled after 2 hours (no payment record, so no money moved). The order tracker has a "Pay now" button for unpaid online orders.
+- Shop codes are matched case-insensitively; `campus1` is no longer a customer fallback (`/customer` without a shop asks the customer to scan their shop's QR). `VITE_DEFAULT_SHOP_CODE` sets the marketing demo shop.
+- Editor: drag-to-crop handles (mouse/touch), auto-crop that detects page content, and scan enhancement for PDFs (pages re-rendered at 200 dpi; up to 60 pages). Crop/rotation alone keep PDF vectors.
+- Agent: macOS/Linux printing through CUPS (`lp`), colour/duplex/A4/A3 detection from drivers on Windows and CUPS, printer rediscovery every 60 s, mixed-colour documents printed as one colour job. Server applies detected capabilities only to printers with no saved profile.
+- Merchant Print auto-selects a compatible printer (default first, mono for B&W, colour for colour/mixed). The "Agent online" badge uses server heartbeats, so it is right from a phone or tablet. The "Print computer is offline" toast no longer shows when it is online. Orders sent to the printer have a "Pages OK ✓" button. The review drawer lists every file's settings.
+- Seeded operator account has a valid password; the WhatsApp bot is labelled "Coming soon" on pricing.
+
+Still open:
+
+- Run one real Razorpay test-mode payment for both a customer order and a merchant signup (needs test keys).
+- Physical printing on real hardware (Windows and macOS) before setting `INKLLY_ENABLE_PHYSICAL_PRINTING=true` in shops; a signed Windows installer.
+- Paper sizes beyond A4/A3 (Letter, Legal, photo sizes) for markets outside India.
+- The `/whatsapp-printing-software` marketing page still describes WhatsApp intake that is not built.
+
+## 2026-11-16 launch-readiness pass (branch `launch-readiness`, uncommitted)
+
+Verified locally only: `npm run build` passes and `npm test` passes 299 tests (database 25, shared 16, agent 15, server 230, web 13). Screens were checked in headless Chrome against a local SQLite server. Nothing here was verified against Render, Supabase, Razorpay or a physical printer.
+
+Fixed in this pass, from an end-to-end audit of the scan → upload → pay → print loop:
+
+- An agent-discovered printer can now be made dispatchable: `PUT /merchant/printers/:id` saves colour, duplex and paper sizes, and Business Setup → Printers has a setup panel with a pairing-code generator. Previously no printer could be dispatched to through the UI.
+- A dispatch the agent reports as `FAILED` can be retried with Print (`DISPATCH_FAILED` jobs only; `OUTPUT_UNCERTAIN` is still never retried).
+- An order printed without the agent can be completed: reconcile accepts `printedManually: true` for never-dispatched or agent-failed jobs, audited as `OPERATOR_MANUAL_PRINT`. The queue has a "Printed ✓" action.
+- Agent document URLs use the origin the agent called, instead of a hard-coded Render host that any other deployment's agent rejected. Set `SERVER_BASE_URL` to override.
+- An agent heartbeat no longer overwrites the merchant's default printer.
+- Merchant queue: payment badges come from the payment record (unpaid cash orders no longer show "Paid"), online-unpaid orders no longer offer cash buttons, Peek and Direct use the API host (they returned the app shell on Vercel) and Direct opens every file, multi-file orders are flagged, fetch failures show an error instead of an empty queue, and the current screen is kept in the URL.
+- Customer portal: only PDF/JPG/PNG are offered (the server rejected the Word/Excel types the picker advertised), files upload one at a time with retry on 429 and keep the ones that succeeded, quote errors are shown beside the total, copies are capped at the agent's limit of 99, a stuck online payment can be cancelled, and the address bar points at the tracker after ordering so a refresh keeps the token.
+- Pickup tokens are unique among a shop's open orders.
+
+Still open from the same audit:
+
+- Online payment is offered as soon as Razorpay keys are saved, even if the credential test fails. Gate `onlinePaymentAvailable` on a stored successful test.
+- An online order abandoned at checkout stays `AWAITING_PAYMENT` forever; add expiry, and a pay button on the tracker.
+- Crop is a fixed 8% margin trim; there is no drag-to-crop, per-page edit, reorder or merge.
+- The agent discovers printers only at startup.
+- The merchant review drawer still shows settings for the first file only.
+- Shop code lookups are case-sensitive; `campus1` remains a hard-coded fallback in several places.
+- Seed data: the `operator@campusprint.in` login has an invalid password hash, and seeded demo files do not exist in storage.
+- Pricing and product pages still advertise a WhatsApp bot that is not built.
+
 ## Current verification
 
 - `npm run build` passes all workspaces. PDF rendering is a separate 484.31 kB lazy-loaded chunk and no oversized-chunk warning remains.

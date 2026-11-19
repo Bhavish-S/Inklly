@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { PrintOptions, PrinterDevice } from '@inklly/shared';
-import { getPrinterCompatibilityIssues } from '../services/printer-compatibility';
+import { chooseAutomaticPrinter, getPrinterCompatibilityIssues } from '../services/printer-compatibility';
 
 const options = (overrides: Partial<PrintOptions> = {}): PrintOptions => ({
   colorMode: 'bw',
@@ -38,13 +38,17 @@ test('printer compatibility checks every saved order file against verified capab
   );
 });
 
-test('mixed color and manual duplex are rejected until supported by the agent', () => {
+test('mixed color needs a color printer; manual duplex is rejected', () => {
   const issues = getPrinterCompatibilityIssues([
     { fileName: 'mixed.pdf', printOptions: options({ colorMode: 'mixed', colorPages: '2,4' }) },
     { fileName: 'manual.pdf', printOptions: options({ duplexMode: 'duplex_manual' }) },
   ], profile);
-  assert.match(issues.join(' '), /mixed-color pages, which the current agent cannot apply/i);
+  assert.match(issues.join(' '), /mixed\.pdf.*requires a color capable printer/i);
   assert.match(issues.join(' '), /manual duplex, which the current agent cannot apply/i);
+  assert.deepEqual(
+    getPrinterCompatibilityIssues([{ fileName: 'mixed.pdf', printOptions: options({ colorMode: 'mixed', colorPages: '2,4' }) }], { ...profile, supportsColor: true }),
+    [],
+  );
 });
 
 test('rejects multi-page layouts and paper types that the current agent cannot apply', () => {
@@ -64,4 +68,22 @@ test('unknown and malformed profiles fail closed', () => {
   const legacyOptions = options();
   delete (legacyOptions as Partial<PrintOptions>).pagesPerSheet;
   assert.deepEqual(getPrinterCompatibilityIssues([{ fileName: 'legacy-layout.pdf', printOptions: legacyOptions }], profile), []);
+});
+
+test('one-click print routes each order to a compatible printer', () => {
+  const tray = (sizes: Array<'A4' | 'A3'>) => [{ id: `t-${sizes.join()}`, name: 'Tray', supportedSizes: sizes, isDefault: true }];
+  const mono = { id: 'p-mono', name: 'Brother Laser', isDefault: false, supportsColor: false, supportsDuplex: true, trays: tray(['A4', 'A3']) };
+  const colour = { id: 'p-colour', name: 'Epson Colour', isDefault: false, supportsColor: true, supportsDuplex: false, trays: tray(['A4']) };
+
+  // Black & white goes to the mono laser even though the colour printer could print it.
+  assert.equal(chooseAutomaticPrinter([{ printOptions: options() }], [colour, mono]).printer?.id, 'p-mono');
+  // Colour and mixed documents need the colour printer.
+  assert.equal(chooseAutomaticPrinter([{ printOptions: options({ colorMode: 'color' }) }], [mono, colour]).printer?.id, 'p-colour');
+  assert.equal(chooseAutomaticPrinter([{ printOptions: options({ colorMode: 'mixed', colorPages: '1' }) }], [mono, colour]).printer?.id, 'p-colour');
+  // A compatible shop default wins.
+  assert.equal(chooseAutomaticPrinter([{ printOptions: options() }], [mono, { ...colour, isDefault: true }]).printer?.id, 'p-colour');
+  // Colour + duplex: neither printer can do both, so nothing is released and reasons are given per printer.
+  const none = chooseAutomaticPrinter([{ fileName: 'brochure.pdf', printOptions: options({ colorMode: 'color', duplexMode: 'duplex_auto' }) }], [mono, colour]);
+  assert.equal(none.printer, null);
+  assert.deepEqual(Object.keys(none.reasons).sort(), ['Brother Laser', 'Epson Colour']);
 });

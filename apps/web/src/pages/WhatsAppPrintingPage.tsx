@@ -9,14 +9,16 @@ interface WhatsAppPrintingPageProps {
 export const WhatsAppPrintingPage: React.FC<WhatsAppPrintingPageProps> = ({ onNavigate }) => (
   <main className="min-h-screen bg-ink-app dark:bg-ink-dark-app text-ink-text dark:text-ink-dark-text">
     {/* Hero Section */}
-    <section className="relative overflow-hidden py-20 md:py-28 text-center text-white" style={{ background: 'linear-gradient(135deg, #0D1422 0%, #172033 50%, #19263A 100%)' }}>
+    <section className="hero-stage py-20 md:py-28 text-center text-white">
+      <span className="aurora aurora-a" />
+      <span className="aurora aurora-b" />
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
         <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/[0.08] border border-white/[0.12] text-[#8293FF] text-xs font-semibold tracking-wider mb-6">
           <span className="w-1.5 h-1.5 rounded-full bg-whatsapp animate-pulse" />
           <span>WHATSAPP INTEGRATION STATUS</span>
         </div>
 
-        <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold tracking-tight leading-tight mb-6 text-white">
+        <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold tracking-tight leading-tight mb-6 !text-white">
           Self-service QR ordering is live; WhatsApp intake is in roadmap development.
         </h1>
 

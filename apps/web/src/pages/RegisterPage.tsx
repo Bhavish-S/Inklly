@@ -245,10 +245,10 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
 
       setRegisteredSuccess({
         email: email.toLowerCase().trim(),
-        planName: isLifetime ? 'Lifetime Deal' : selectedPlan.name,
-        billingCycle: isLifetime ? 'One-time Payment' : billingCycle === 'yearly' ? 'Yearly' : 'Monthly',
-        shopCode: cleanSlug,
-        paymentId: paymentDetails?.razorpay_payment_id || (paymentDetails ? 'Verified Payment' : 'Free Trial Activated'),
+        planName: res.subscription?.status === 'TRIALING' ? (res.subscription?.planName || 'Inklly Starter') : isLifetime ? 'Lifetime Deal' : selectedPlan.name,
+        billingCycle: res.subscription?.status === 'TRIALING' ? '7-day free trial' : isLifetime ? 'One-time Payment' : billingCycle === 'yearly' ? 'Yearly' : 'Monthly',
+        shopCode: res.shop?.shopCode || cleanSlug,
+        paymentId: paymentDetails?.razorpay_payment_id || (paymentDetails?.testSimulated ? 'Development payment (simulated)' : 'Free Trial Activated'),
       });
     } catch (err: any) {
       const msg = err.message || 'Registration failed. Please review your details and try again.';
@@ -262,7 +262,9 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
     }
   };
 
-  // Pay via Razorpay Checkout
+  // Pay via Razorpay Checkout. The server verifies every payment with Razorpay
+  // before activating a paid plan, so a failed or dismissed payment never
+  // creates a paid account.
   const handlePayViaRazorpay = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validateForm()) return;
@@ -279,123 +281,59 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
         email: email.trim(),
       });
 
-      // If Razorpay sandbox test key is active (not a real live merchant key), directly simulate test payment
-      const isPlaceholderKey =
-        !checkout.keyId ||
-        checkout.keyId === 'rzp_test_InkllySandboxKey' ||
-        checkout.keyId.includes('InkllySandboxKey') ||
-        checkout.keyId.length < 20;
-
-      if (checkout.isSandbox && isPlaceholderKey) {
-        setStatusMessage('Simulating verified sandbox payment & activating account…');
-        await executeRegistration({
-          provider: 'SANDBOX_TEST_KIT',
-          razorpay_order_id: checkout.razorpayOrderId,
-          razorpay_payment_id: `pay_sandbox_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
-          testSimulated: true,
-        });
+      // Local development without a configured gateway: the server allows a
+      // clearly labelled simulated payment (never in production).
+      if (checkout.isSandbox) {
+        setStatusMessage('Development mode: simulating payment…');
+        await executeRegistration({ provider: 'SANDBOX_TEST_KIT', testSimulated: true });
         return;
       }
 
       await loadRazorpayCheckout();
-
-      // If window.Razorpay is available, launch the official checkout
-      if (window.Razorpay) {
-        const options = {
-          key: checkout.keyId,
-          amount: checkout.amount,
-          currency: checkout.currency,
-          name: 'Inklly Cloud Print',
-          description: isLifetime
-            ? 'Inklly Lifetime License (Permanent Access)'
-            : `${checkout.plan.name} (${billingCycle})`,
-          order_id: checkout.razorpayOrderId,
-          prefill: {
-            name: ownerName,
-            email: email.trim(),
-            contact: mobile ? `+91${mobile}` : undefined,
-          },
-          theme: {
-            color: '#4D64E6',
-          },
-          handler: async (response: any) => {
-            await executeRegistration({
-              provider: 'RAZORPAY',
-              razorpay_order_id: response.razorpay_order_id,
-              razorpay_payment_id: response.razorpay_payment_id,
-              razorpay_signature: response.razorpay_signature,
-            });
-          },
-          modal: {
-            ondismiss: () => {
-              setLoading(false);
-              setStatusMessage(null);
-            },
-          },
-        };
-
-        const rzp = new window.Razorpay(options);
-        rzp.on('payment.failed', async (resp: any) => {
-          console.warn('[Razorpay] Payment rejected / failed, activating sandbox fallback:', resp);
-          setStatusMessage('Razorpay test mode active: activating sandbox registration…');
-          await executeRegistration({
-            provider: 'SANDBOX_TEST_KIT',
-            razorpay_order_id: checkout.razorpayOrderId,
-            razorpay_payment_id: `pay_sandbox_${Date.now().toString(36)}`,
-            testSimulated: true,
-          });
-        });
-        rzp.open();
-      } else {
-        // Fallback to simulated test payment if Razorpay script is blocked
-        await executeRegistration({
-          provider: 'SANDBOX_TEST_KIT',
-          razorpay_order_id: checkout.razorpayOrderId,
-          razorpay_payment_id: `pay_test_${Date.now().toString(36)}`,
-          testSimulated: true,
-        });
+      if (!window.Razorpay) {
+        throw new Error('Razorpay checkout could not be loaded. Check your connection and try again.');
       }
-    } catch (err: any) {
-      console.warn('[Razorpay Error] Completing via sandbox fallback:', err);
-      try {
-        setStatusMessage('Completing registration via sandbox verification…');
-        await executeRegistration({
-          provider: 'SANDBOX_TEST_KIT',
-          razorpay_order_id: `order_sb_${Date.now().toString(36)}`,
-          razorpay_payment_id: `pay_sb_${Date.now().toString(36)}`,
-          testSimulated: true,
-        });
-      } catch (innerErr: any) {
-        setError(innerErr.message || 'Could not complete registration. Please check your credentials.');
+
+      const rzp = new window.Razorpay({
+        key: checkout.keyId,
+        amount: checkout.amount,
+        currency: checkout.currency,
+        name: 'Inklly',
+        description: isLifetime
+          ? 'Inklly Lifetime License'
+          : `${checkout.plan.name} (${billingCycle})`,
+        order_id: checkout.razorpayOrderId,
+        prefill: {
+          name: ownerName,
+          email: email.trim(),
+          contact: mobile ? `+91${mobile}` : undefined,
+        },
+        theme: { color: '#4D64E6' },
+        handler: async (response: any) => {
+          await executeRegistration({
+            provider: 'RAZORPAY',
+            razorpay_order_id: response.razorpay_order_id,
+            razorpay_payment_id: response.razorpay_payment_id,
+            razorpay_signature: response.razorpay_signature,
+          });
+        },
+        modal: {
+          ondismiss: () => {
+            setLoading(false);
+            setStatusMessage(null);
+          },
+        },
+      });
+      rzp.on('payment.failed', (resp: any) => {
+        setError(resp?.error?.description || 'The payment did not go through. No account was created; you can try again.');
         setLoading(false);
         setStatusMessage(null);
-      }
-    }
-  };
-
-  // 1-Click Sandbox Test Payment
-  const handleSimulateSandboxPayment = async () => {
-    if (!validateForm()) return;
-
-    setLoading(true);
-    setError(null);
-    setStatusMessage('Simulating Razorpay Sandbox payment & activating account…');
-
-    try {
-      const checkout = await api.createSignupCheckout({
-        planId: selectedPlan.id,
-        billingCycle: isLifetime ? 'lifetime' : billingCycle,
-        email: email.trim(),
       });
-
-      await executeRegistration({
-        provider: 'SANDBOX_TEST_KIT',
-        razorpay_order_id: checkout.razorpayOrderId,
-        razorpay_payment_id: `pay_test_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
-        testSimulated: true,
-      });
+      rzp.open();
     } catch (err: any) {
-      setError(err.message || 'Sandbox simulation failed.');
+      const msg = err?.message || 'Could not start payment.';
+      setError(msg);
+      if (msg.toLowerCase().includes('already exists')) setAccountExists(true);
       setLoading(false);
       setStatusMessage(null);
     }
@@ -458,7 +396,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
                 rel="noreferrer"
                 className="font-mono font-bold text-sm text-[#4D64E6] hover:underline block mt-1"
               >
-                inklly.vercel.app/p/{registeredSuccess.shopCode}
+                {window.location.host}/p/{registeredSuccess.shopCode}
               </a>
             </div>
 
@@ -665,21 +603,6 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
               </div>
             </div>
 
-            {/* Razorpay Sandbox / Test Kit Guide Box */}
-            <div className="bg-amber-400/10 border border-amber-300/20 rounded-2xl p-4 text-xs">
-              <div className="flex items-center gap-2 text-amber-300 font-bold mb-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                <span>Razorpay Sandbox Test Kit</span>
-              </div>
-              <p className="text-slate-300 text-[11px] leading-relaxed mb-2">
-                Test mode is enabled for development and sandbox validation. You can use standard Razorpay test credentials or click 1-click test payment.
-              </p>
-              <div className="bg-slate-900/60 rounded-xl p-2.5 font-mono text-[10px] text-slate-300 space-y-1 border border-white/10">
-                <div><span className="text-slate-400">Test Card:</span> 4111 1111 1111 1111</div>
-                <div><span className="text-slate-400">Expiry/CVV:</span> Any Future / 123</div>
-                <div><span className="text-slate-400">Test UPI:</span> success@razorpay</div>
-              </div>
-            </div>
           </div>
 
           <div className="relative z-10 mt-6 pt-4 border-t border-white/15 text-[11px] text-gray-400">
@@ -784,13 +707,15 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
                     <span className={password.length >= 12 ? "text-emerald-600 font-bold" : "text-slate-400 font-medium"}>
                       {password.length >= 12 ? `✓ ${password.length} characters` : `${password.length} / 12 characters min`}
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => setPassword('InkllyMerchant2026!')}
-                      className="text-[#4D64E6] hover:underline font-semibold cursor-pointer"
-                    >
-                      Use sample password
-                    </button>
+                    {import.meta.env.DEV && (
+                      <button
+                        type="button"
+                        onClick={() => setPassword('InkllyMerchant2026!')}
+                        className="text-[#4D64E6] hover:underline font-semibold cursor-pointer"
+                      >
+                        Use sample password (dev only)
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -835,7 +760,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
               </label>
               <div className="flex rounded-xl shadow-2xs overflow-hidden border border-slate-300 focus-within:border-[#4D64E6] focus-within:ring-2 focus-within:ring-[#4D64E6]/20">
                 <span className="inline-flex items-center px-2.5 bg-slate-100 text-slate-600 text-xs font-medium border-r border-slate-200">
-                  inklly.vercel.app/p/
+                  {window.location.host}/p/
                 </span>
                 <input
                   type="text"
@@ -929,7 +854,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
               </label>
             </div>
 
-            {/* Action Buttons: Razorpay Checkout & Sandbox Test Kit */}
+            {/* Action Buttons: Razorpay Checkout & free trial */}
             <div className="pt-2 space-y-2.5">
               <button
                 type="submit"
@@ -944,16 +869,6 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
               </button>
 
               <div className={`flex flex-col ${isLifetime ? '' : 'sm:flex-row'} gap-2`}>
-                <button
-                  type="button"
-                  disabled={loading}
-                  onClick={handleSimulateSandboxPayment}
-                  className="flex-1 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs"
-                  title="Simulates an instant verified Razorpay Sandbox payment for automated testing"
-                >
-                  <span>⚡ 1-Click Sandbox Test Payment ({isLifetime ? '₹1,499 Lifetime' : `₹${priceInr.toLocaleString('en-IN')}`})</span>
-                </button>
-
                 {!isLifetime && (
                   <button
                     type="button"

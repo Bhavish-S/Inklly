@@ -487,6 +487,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     const ordersBefore = Number(db.queryOne<any>(`SELECT COUNT(*) AS count FROM orders WHERE shop_id = ?`, [shopId])?.count);
     try {
       credentials.saveRazorpay(shopId, 'rzp_test_inklly', 'test-api-secret', 'test-webhook-secret');
+      credentials.markRazorpayVerified(shopId, 'rzp_test_inklly');
       db.execute(`UPDATE rate_rules SET price_per_printed_side_paise = 99 WHERE id = ?`, [rate.id]);
       const uploadRes = await fetch(`${baseUrl}/api/v1/portal/upload`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1386,7 +1387,7 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
       let competingOperatorWon = false;
       (db as any).query = function (sql: string, params?: any[]) {
         const rows = originalQuery.call(this, sql, params);
-        if (!competingOperatorWon && /SELECT id, order_file_id, status FROM print_jobs WHERE order_id = \? ORDER BY id/i.test(sql)) {
+        if (!competingOperatorWon && /SELECT id, order_file_id, status, printer_id FROM print_jobs WHERE order_id = \? ORDER BY id/i.test(sql)) {
           competingOperatorWon = true;
           this.execute(`UPDATE print_jobs SET status = 'PRINT_CONFIRMED' WHERE id = ? AND status = 'OUTPUT_UNCERTAIN'`, [pendingJobId]);
         }
@@ -1521,11 +1522,11 @@ describe('Inklly Backend API Integration Test Suite', { concurrency: false }, ()
     const matrixRes = await fetch(`${baseUrl}/api/v1/agent/driver-matrix`);
     assert.equal(matrixRes.status, 200);
     const matrix = await matrixRes.json();
-    assert.equal(matrix.capabilityStatus, 'NOT_VERIFIED');
+    assert.equal(matrix.capabilityStatus, 'DRIVER_REPORTED');
     assert.equal(matrix.physicalPrintingEnabledByDefault, false);
-    assert.equal(matrix.colorSupport, 'UNKNOWN');
-    assert.equal(matrix.duplexSupport, 'UNKNOWN');
-    assert.equal(matrix.traySupport, 'NOT_REPORTED');
+    assert.match(matrix.hardwareVerification, /no specific printer model has been certified/i);
+    assert.match(matrix.merchantOverride, /takes precedence/i);
+    assert.equal(matrix.traySupport, 'PAPER_SIZES_FROM_DRIVER');
     assert.equal('manufacturers' in matrix, false);
 
     // 4. Diagnostics

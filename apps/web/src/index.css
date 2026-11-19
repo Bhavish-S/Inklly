@@ -633,3 +633,218 @@ html, body {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   Marketing motion system
+   Scroll reveals, ambient hero light, pointer spotlight, marquee and the
+   hero product loop. All of it collapses under prefers-reduced-motion via
+   the global rule above; reveals additionally start visible there.
+   ════════════════════════════════════════════════════════════════════ */
+
+.reveal {
+  opacity: 0;
+  transition: opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1), transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, transform;
+}
+.reveal-up { transform: translateY(22px); }
+.reveal-left { transform: translateX(-26px); }
+.reveal-right { transform: translateX(26px); }
+.reveal-scale { transform: scale(0.96); }
+.reveal.is-visible {
+  opacity: 1;
+  transform: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .reveal { opacity: 1; transform: none; }
+}
+
+/* Ambient hero: slow drifting colour fields over a fine grid */
+.hero-stage {
+  position: relative;
+  isolation: isolate;
+  background: #080D18;
+  overflow: hidden;
+}
+.hero-stage::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image:
+    linear-gradient(rgba(130, 147, 255, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(130, 147, 255, 0.07) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse 80% 70% at 50% 30%, #000 30%, transparent 78%);
+  -webkit-mask-image: radial-gradient(ellipse 80% 70% at 50% 30%, #000 30%, transparent 78%);
+}
+.aurora {
+  position: absolute;
+  pointer-events: none;
+  z-index: -1;
+  animation: aurora-drift 18s ease-in-out infinite alternate;
+}
+/* Radial gradients rather than filter: blur() — cheaper to composite and free of clipping seams. */
+.aurora-a { width: 1100px; height: 800px; left: -22%; top: -38%; background: radial-gradient(closest-side, rgba(77, 100, 230, 0.55), transparent); }
+.aurora-b { width: 900px; height: 700px; right: -18%; top: 4%; background: radial-gradient(closest-side, rgba(32, 166, 168, 0.3), transparent); animation-delay: -6s; }
+.aurora-c { width: 900px; height: 620px; left: 26%; bottom: -46%; background: radial-gradient(closest-side, rgba(124, 92, 255, 0.34), transparent); animation-delay: -11s; }
+@keyframes aurora-drift {
+  0% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(4%, 6%, 0) scale(1.12); }
+  100% { transform: translate3d(-5%, -3%, 0) scale(0.96); }
+}
+
+.text-shine {
+  background: linear-gradient(100deg, #A9B6FF 0%, #FFFFFF 28%, #7FE3E0 56%, #A9B6FF 100%);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shine-pan 7s linear infinite;
+}
+@keyframes shine-pan {
+  to { background-position: -220% 0; }
+}
+
+/* Pointer-follow spotlight card */
+.spotlight {
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 1.25rem;
+  transition: border-color 0.25s ease, transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.35s ease;
+}
+.spotlight::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(420px circle at var(--spot-x, 50%) var(--spot-y, 0%), rgba(77, 100, 230, 0.13), transparent 60%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+.spotlight:hover {
+  border-color: var(--border-selected);
+  transform: translateY(-3px);
+  box-shadow: 0 18px 40px -18px rgba(48, 70, 194, 0.28);
+}
+.spotlight:hover::before { opacity: 1; }
+.spotlight > * { position: relative; }
+
+/* Buttons with a sweeping sheen */
+.btn-glow {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, #5B72F2 0%, #4D64E6 45%, #3046C2 100%);
+  box-shadow: 0 8px 28px -6px rgba(77, 100, 230, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease;
+}
+.btn-glow::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -60%;
+  width: 40%;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.32), transparent);
+  transform: skewX(-18deg);
+  transition: left 0.6s ease;
+}
+.btn-glow:hover { transform: translateY(-2px); box-shadow: 0 14px 36px -6px rgba(77, 100, 230, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.28); }
+.btn-glow:hover::after { left: 120%; }
+
+/* Marquee */
+.marquee {
+  display: flex;
+  overflow: hidden;
+  mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+}
+.marquee-track {
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.75rem;
+  padding-right: 0.75rem;
+  animation: marquee-scroll 38s linear infinite;
+}
+.marquee:hover .marquee-track { animation-play-state: paused; }
+@keyframes marquee-scroll {
+  to { transform: translateX(-100%); }
+}
+
+/* Hero product loop */
+.float-slow { animation: float-y 7s ease-in-out infinite; }
+.float-slower { animation: float-y 9s ease-in-out infinite reverse; }
+@keyframes float-y {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+.scene-enter { animation: scene-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both; }
+@keyframes scene-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+.paper-feed { animation: paper-out 2.6s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+@keyframes paper-out {
+  0% { transform: translateY(-70%); opacity: 0; }
+  15% { opacity: 1; }
+  70% { transform: translateY(0); opacity: 1; }
+  100% { transform: translateY(0); opacity: 0; }
+}
+.progress-fill { animation: progress-grow 2.6s ease-out infinite; transform-origin: left; }
+@keyframes progress-grow {
+  from { transform: scaleX(0.05); }
+  to { transform: scaleX(1); }
+}
+.scan-line { animation: scan-sweep 2.4s ease-in-out infinite; }
+@keyframes scan-sweep {
+  0%, 100% { top: 8%; }
+  50% { top: 88%; }
+}
+.flow-dash { stroke-dasharray: 6 8; animation: dash-move 1.4s linear infinite; }
+@keyframes dash-move {
+  to { stroke-dashoffset: -28; }
+}
+
+/* Range input used by the price calculator */
+.ink-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, var(--brand) var(--fill, 50%), var(--bg-surface-muted) var(--fill, 50%));
+  outline-offset: 6px;
+}
+.ink-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--brand);
+  box-shadow: 0 2px 8px rgba(48, 70, 194, 0.35);
+  cursor: grab;
+}
+.ink-range::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--brand);
+  box-shadow: 0 2px 8px rgba(48, 70, 194, 0.35);
+  cursor: grab;
+}
+
+.section-title {
+  font-size: clamp(1.75rem, 1.1rem + 2.4vw, 2.75rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  color: var(--text-primary);
+}
+.section-lead {
+  font-size: 1.0625rem;
+  line-height: 1.65;
+  color: var(--text-secondary);
+}

@@ -1,0 +1,13 @@
+User-agent: *
+Allow: /
+# Signed-in workspaces and per-order pages are not public content.
+Disallow: /merchant
+Disallow: /dashboard
+Disallow: /platform
+Disallow: /admin
+Disallow: /developer
+Disallow: /track
+Disallow: /accept-invitation
+Disallow: /activate-owner
+
+Sitemap: https://inklly.vercel.app/sitemap.xml

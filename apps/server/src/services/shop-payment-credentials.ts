@@ -56,6 +56,24 @@ export class ShopPaymentCredentialsService {
     this.db.execute(`CREATE TABLE IF NOT EXISTS razorpay_checkout_claims (
       order_id TEXT PRIMARY KEY, payment_id TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL
     )`);
+    // Records the key that last passed a live Razorpay API check. Customers are
+    // offered online payment only for a verified key.
+    this.db.execute(`CREATE TABLE IF NOT EXISTS shop_payment_credential_checks (
+      shop_id TEXT PRIMARY KEY, key_id TEXT NOT NULL, verified_at TEXT NOT NULL
+    )`);
+  }
+
+  markRazorpayVerified(shopId: string, keyId: string): void {
+    const now = new Date().toISOString();
+    this.db.execute(
+      `INSERT INTO shop_payment_credential_checks (shop_id, key_id, verified_at) VALUES (?, ?, ?)
+       ON CONFLICT(shop_id) DO UPDATE SET key_id = excluded.key_id, verified_at = excluded.verified_at`,
+      [shopId, keyId, now]
+    );
+  }
+
+  clearRazorpayVerification(shopId: string): void {
+    this.db.execute(`DELETE FROM shop_payment_credential_checks WHERE shop_id = ?`, [shopId]);
   }
 
   private hasInFlightPaymentsOrRefunds(shopId: string): boolean {
@@ -91,9 +109,12 @@ export class ShopPaymentCredentialsService {
       [shopId]
     );
     const webhook = this.db.queryOne<any>(`SELECT updated_at FROM shop_payment_webhook_secrets WHERE shop_id = ?`, [shopId]);
+    const check = row
+      ? this.db.queryOne<any>(`SELECT verified_at FROM shop_payment_credential_checks WHERE shop_id = ? AND key_id = ?`, [shopId, row.key_id])
+      : null;
     return row
-      ? { configured: true, webhookConfigured: Boolean(webhook), keyIdPreview: `${row.key_id.slice(0, 8)}…`, updatedAt: row.updated_at }
-      : { configured: false, webhookConfigured: Boolean(webhook), keyIdPreview: null, updatedAt: null };
+      ? { configured: true, webhookConfigured: Boolean(webhook), verified: Boolean(check), verifiedAt: check?.verified_at || null, keyIdPreview: `${row.key_id.slice(0, 8)}…`, updatedAt: row.updated_at }
+      : { configured: false, webhookConfigured: Boolean(webhook), verified: false, verifiedAt: null, keyIdPreview: null, updatedAt: null };
   }
 
   getRazorpayCredentials(shopId: string): { keyId: string; secret: string; webhookSecret: string | null } | null {
@@ -128,6 +149,7 @@ export class ShopPaymentCredentialsService {
          ON CONFLICT(shop_id) DO UPDATE SET encrypted_secret = excluded.encrypted_secret, updated_at = excluded.updated_at`,
         [shopId, encryptedWebhookSecret, now]
       );
+      this.db.execute(`DELETE FROM shop_payment_credential_checks WHERE shop_id = ?`, [shopId]);
     });
   }
 
@@ -136,6 +158,7 @@ export class ShopPaymentCredentialsService {
       this.lockShopForCredentialMutation(shopId);
       this.db.execute(`DELETE FROM shop_payment_webhook_secrets WHERE shop_id = ?`, [shopId]);
       this.db.execute(`DELETE FROM shop_payment_credentials WHERE shop_id = ? AND provider = 'RAZORPAY'`, [shopId]);
+      this.db.execute(`DELETE FROM shop_payment_credential_checks WHERE shop_id = ?`, [shopId]);
     });
   }
 }

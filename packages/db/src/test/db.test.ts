@@ -229,7 +229,17 @@ describe('Relational Database & Multi-Tenancy Tests', () => {
     const liveQueue = first.find((printer) => printer.name === 'Test OS Queue');
     assert.ok(liveQueue);
     assert.equal(liveQueue.isOnline, true);
-    assert.equal(liveQueue.isDefault, true);
+    // The seeded shop already has a merchant-chosen default; an agent reporting
+    // its operating-system default must not take that choice over.
+    assert.equal(liveQueue.isDefault, false);
+    assert.equal(first.filter((printer) => printer.isDefault).length, 1);
+    assert.equal(printerRepo.setDefaultPrinter('shop-campus-1', liveQueue.id), true);
+    printerRepo.syncAgentInventory('shop-campus-1', 'agent-a', [
+      { name: 'Test OS Queue', driverName: 'Test Driver', isOnline: true, isDefault: false },
+    ]);
+    const afterHeartbeat = printerRepo.getPrintersByShop('shop-campus-1');
+    assert.equal(afterHeartbeat.find((printer) => printer.id === liveQueue.id)?.isDefault, true, 'a heartbeat must not clear the merchant default');
+    assert.equal(afterHeartbeat.filter((printer) => printer.isDefault).length, 1);
     assert.equal(first.find((printer) => printer.name === 'Other Agent Queue')?.isOnline, true);
 
     printerRepo.syncAgentInventory('shop-campus-1', 'agent-a', []);

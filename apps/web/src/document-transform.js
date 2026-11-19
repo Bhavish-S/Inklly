@@ -113,14 +113,87 @@ export async function transformImageFile(file, edits) {
   }
 }
 
-/** Dispatches supported pixel edits to images and lossless page-box edits to PDFs. */
+/** Pages above this count are not re-rendered in the browser (memory). */
+export const MAX_ENHANCED_PDF_PAGES = 60;
+
+function filterCss(edits) {
+  const brightness = Number(edits.brightness ?? 100);
+  const contrast = Number(edits.contrast ?? 100);
+  if (!Number.isFinite(brightness) || brightness < 50 || brightness > 150 ||
+      !Number.isFinite(contrast) || contrast < 50 || contrast > 150) {
+    throw new Error('Brightness and contrast must be between 50 and 150 percent.');
+  }
+  const filters = [`brightness(${brightness}%)`, `contrast(${contrast}%)`];
+  if (edits.filter === 'bw_doc') filters.push('grayscale(100%)', 'contrast(220%)', 'brightness(110%)');
+  else if (edits.filter === 'enhanced') filters.push('contrast(130%)', 'brightness(105%)');
+  else if (edits.filter === 'grayscale') filters.push('grayscale(100%)');
+  else if (edits.filter && edits.filter !== 'natural') throw new Error('Choose a supported filter.');
+  return filters.join(' ');
+}
+
+export function hasAppearanceEdits(edits) {
+  return (edits.filter || 'natural') !== 'natural' || Number(edits.brightness ?? 100) !== 100 || Number(edits.contrast ?? 100) !== 100;
+}
+
+/**
+ * Enhances a PDF (typically a phone scan) by rendering every page at 200 dpi,
+ * applying the chosen filter, and rebuilding a PDF with the same page sizes.
+ * Rotation and crop are applied first so the output matches the preview.
+ */
+export async function enhancePdfBytes(inputBytes, edits) {
+  const geometryApplied = await transformPdfBytes(inputBytes, { rotation: edits.rotation, cropBox: edits.cropBox });
+  const pdfjs = await import('pdfjs-dist');
+  if (!pdfjs.GlobalWorkerOptions.workerSrc) {
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).toString();
+  }
+  const { PDFDocument } = await import('pdf-lib');
+  const loadingTask = pdfjs.getDocument({ data: new Uint8Array(geometryApplied).slice() });
+  const source = await loadingTask.promise;
+  try {
+    if (source.numPages > MAX_ENHANCED_PDF_PAGES) {
+      throw new Error(`Enhancement works on documents up to ${MAX_ENHANCED_PDF_PAGES} pages. Use Natural for longer files.`);
+    }
+    const filter = filterCss(edits);
+    const output = await PDFDocument.create();
+    const dpiScale = 200 / 72;
+    for (let pageNumber = 1; pageNumber <= source.numPages; pageNumber++) {
+      const page = await source.getPage(pageNumber);
+      const pointViewport = page.getViewport({ scale: 1 });
+      const viewport = page.getViewport({ scale: dpiScale });
+      const rendered = document.createElement('canvas');
+      rendered.width = Math.max(1, Math.round(viewport.width));
+      rendered.height = Math.max(1, Math.round(viewport.height));
+      const renderedContext = rendered.getContext('2d');
+      if (!renderedContext) throw new Error('Your browser could not prepare the enhanced page.');
+      renderedContext.fillStyle = '#ffffff';
+      renderedContext.fillRect(0, 0, rendered.width, rendered.height);
+      await page.render({ canvasContext: renderedContext, viewport, canvas: rendered }).promise;
+
+      const filtered = document.createElement('canvas');
+      filtered.width = rendered.width;
+      filtered.height = rendered.height;
+      const filteredContext = filtered.getContext('2d');
+      if (!filteredContext) throw new Error('Your browser could not prepare the enhanced page.');
+      filteredContext.filter = filter;
+      filteredContext.drawImage(rendered, 0, 0);
+      const jpeg = new Uint8Array(await (await toBlob(filtered, 'image/jpeg')).arrayBuffer());
+      const image = await output.embedJpg(jpeg);
+      const outPage = output.addPage([pointViewport.width, pointViewport.height]);
+      outPage.drawImage(image, { x: 0, y: 0, width: pointViewport.width, height: pointViewport.height });
+      page.cleanup();
+    }
+    return output.save({ useObjectStreams: true });
+  } finally {
+    await loadingTask.destroy();
+  }
+}
+
+/** Dispatches pixel edits to images; PDFs keep vector content unless an enhancement is chosen. */
 export async function transformDocumentFile(file, edits) {
   const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
   if (isPdf) {
-    if ((edits.filter || 'natural') !== 'natural' || Number(edits.brightness ?? 100) !== 100 || Number(edits.contrast ?? 100) !== 100) {
-      throw new Error('Filters, brightness, and contrast are available for images only.');
-    }
-    const bytes = await transformPdfBytes(new Uint8Array(await file.arrayBuffer()), edits);
+    const input = new Uint8Array(await file.arrayBuffer());
+    const bytes = hasAppearanceEdits(edits) ? await enhancePdfBytes(input, edits) : await transformPdfBytes(input, edits);
     return new File([bytes], file.name, { type: 'application/pdf', lastModified: Date.now() });
   }
   if (file.type === 'image/png' || file.type === 'image/jpeg' || /\.(png|jpe?g)$/i.test(file.name)) {

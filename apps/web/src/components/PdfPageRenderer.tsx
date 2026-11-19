@@ -15,6 +15,10 @@ interface PdfPageRendererProps {
   onPageCountDetected?: (pages: number) => void;
   rotation?: number;
   cropBox?: { x: number; y: number; width: number; height: number };
+  /** Render only the page canvas (no frame), e.g. inside a CropFrame. */
+  bare?: boolean;
+  /** CSS filter applied to the preview (enhancement preview). */
+  previewFilter?: string;
 }
 
 export const PdfPageRenderer: React.FC<PdfPageRendererProps> = ({
@@ -23,6 +27,8 @@ export const PdfPageRenderer: React.FC<PdfPageRendererProps> = ({
   onPageCountDetected,
   rotation = 0,
   cropBox,
+  bare = false,
+  previewFilter,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -99,6 +105,16 @@ export const PdfPageRenderer: React.FC<PdfPageRendererProps> = ({
       isCancelled = true;
     };
   }, [fileUrl, currentPage, rotation, onPageCountDetected, cropBox]);
+
+  if (bare) {
+    return (
+      <span className="relative inline-block">
+        {loading && !error && <span className="absolute inset-0 flex items-center justify-center bg-slate-900/60 text-white text-xs font-bold">Loading page…</span>}
+        {error && <span className="block p-6 text-xs text-slate-300">This page could not be previewed.</span>}
+        <canvas ref={canvasRef} className="block max-h-[440px] max-w-full bg-white" style={{ filter: previewFilter }} />
+      </span>
+    );
+  }
 
   if (error) {
     return (

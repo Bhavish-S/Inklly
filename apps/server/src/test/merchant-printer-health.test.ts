@@ -69,7 +69,7 @@ describe('merchant printer health evidence', { concurrency: false }, () => {
         method: 'POST', headers, body: JSON.stringify({ printerId: printer.id }),
       });
       assert.equal(dispatchResponse.status, 409);
-      assert.match((await dispatchResponse.json() as any).error, /online printer/i);
+      assert.match((await dispatchResponse.json() as any).error, /not online/i);
       assert.equal(db.queryOne<any>(`SELECT status FROM orders WHERE id = ?`, [order.id]).status, 'AWAITING_REVIEW');
       assert.equal(db.queryOne<any>(`SELECT printer_id FROM print_jobs WHERE order_id = ?`, [order.id]).printer_id, null);
     } finally {
