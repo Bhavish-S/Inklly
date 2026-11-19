@@ -67,7 +67,8 @@ export interface DailyReport {
   date: string;
   range: { from: string; to: string };
   orders: { received: number; completed: number; cancelled: number; open: number };
-  revenue: { totalPaise: number; cashPaise: number; onlinePaise: number; refundsPaise: number };
+  revenue: { totalPaise: number; cashPaise: number; upiPaise: number; onlinePaise: number; refundsPaise: number };
+  counterSales: { count: number; totalPaise: number };
   pages: { bw: number; color: number; total: number };
   averageTurnaroundMinutes: number | null;
   averageOrderPaise: number | null;
@@ -100,11 +101,12 @@ export function buildDailyReport(db: DatabaseService, shopId: string, date: stri
      WHERE shop_id = ? AND domain = 'CUSTOMER_PRINT_PAYMENT' AND created_at >= ? AND created_at < ?`,
     [shopId, range.from, range.to]
   );
-  let cashPaise = 0, onlinePaise = 0, refundsPaise = 0;
+  let cashPaise = 0, upiPaise = 0, onlinePaise = 0, refundsPaise = 0;
   for (const entry of ledger) {
     const amount = Number(entry.amount_paise) || 0;
     if (amount < 0) refundsPaise += -amount;
     else if (entry.provider === 'MANUAL_CASH') cashPaise += amount;
+    else if (entry.provider === 'COUNTER_UPI') upiPaise += amount;
     else onlinePaise += amount;
   }
 
@@ -121,6 +123,22 @@ export function buildDailyReport(db: DatabaseService, shopId: string, date: stri
       const sides = countPrintedSides(Number(file.page_count) || 0, options);
       bw += sides.bw;
       color += sides.color;
+    }
+  }
+
+  // Walk-in counter sales: their print pages count towards the day's pages.
+  const sales = db.query<any>(
+    `SELECT items_json, total_paise FROM counter_sales WHERE shop_id = ? AND created_at >= ? AND created_at < ? AND voided_at IS NULL`,
+    [shopId, range.from, range.to]
+  );
+  let counterTotalPaise = 0;
+  for (const sale of sales) {
+    counterTotalPaise += Number(sale.total_paise) || 0;
+    let items: any[] = [];
+    try { items = JSON.parse(sale.items_json || '[]'); } catch { /* skip malformed */ }
+    for (const item of items) {
+      if (item?.kind === 'bw_page') bw += Number(item.quantity) || 0;
+      else if (item?.kind === 'color_page') color += Number(item.quantity) || 0;
     }
   }
 
@@ -161,12 +179,13 @@ export function buildDailyReport(db: DatabaseService, shopId: string, date: stri
     lastSevenDays.push({ date: day, orders: dayOrders, revenuePaise: dayRevenue });
   }
 
-  const totalPaise = cashPaise + onlinePaise - refundsPaise;
+  const totalPaise = cashPaise + upiPaise + onlinePaise - refundsPaise;
   return {
     date,
     range,
     orders: { received: countedIds.length, completed: completed.length, cancelled: cancelled.length, open: open.length },
-    revenue: { totalPaise, cashPaise, onlinePaise, refundsPaise },
+    revenue: { totalPaise, cashPaise, upiPaise, onlinePaise, refundsPaise },
+    counterSales: { count: sales.length, totalPaise: counterTotalPaise },
     pages: { bw, color, total: bw + color },
     averageTurnaroundMinutes: turnarounds.length ? Math.round(turnarounds.reduce((a, b) => a + b, 0) / turnarounds.length) : null,
     averageOrderPaise: countedIds.length ? Math.round(orders.filter((o) => countedIds.includes(o.id)).reduce((sum, o) => sum + (Number(o.total_amount_paise) || 0), 0) / countedIds.length) : null,

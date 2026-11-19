@@ -1,4 +1,6 @@
 import { DailyReportView } from '../components/DailyReportView';
+import { QuickSaleView } from '../components/QuickSaleView';
+import { printReceipt } from '../receipt';
 import { QrPosterButton } from '../components/QrPosterButton';
 import { playChime, primeAudio, requestNotificationPermission, showNotification, vibrate } from '../ready-alert';
 import React, { useState, useEffect, useRef } from 'react';
@@ -122,7 +124,7 @@ type MerchantStorageFileView = {
   mimeType: string;
 };
 
-const MERCHANT_VIEWS = ['dashboard', 'reports', 'orders', 'live_print', 'whatsapp_setup', 'storage', 'credits', 'withdraw', 'refunds', 'referrals', 'employees', 'train_bot', 'business_setup', 'shop_qr'] as const;
+const MERCHANT_VIEWS = ['dashboard', 'reports', 'quick_sale', 'orders', 'live_print', 'whatsapp_setup', 'storage', 'credits', 'withdraw', 'refunds', 'referrals', 'employees', 'train_bot', 'business_setup', 'shop_qr'] as const;
 const SETUP_TABS = ['profile', 'printers', 'pricing', 'discounts', 'portal', 'automation'] as const;
 const ORDER_TABS = ['pending', 'payment_pending', 'processing', 'printing', 'rejected', 'print_failed', 'done', 'all'] as const;
 
@@ -139,6 +141,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [activeView, setActiveView] = useState<
     | 'dashboard'
     | 'reports'
+    | 'quick_sale'
     | 'orders'
     | 'live_print'
     | 'whatsapp_setup'
@@ -523,13 +526,28 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
 
   // Quick token search ref for hotkey '/'
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const activeViewRef = useRef(activeView);
+  activeViewRef.current = activeView;
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === '/' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+      const tag = document.activeElement?.tagName;
+      const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (document.activeElement as HTMLElement | null)?.isContentEditable;
+      if (e.key === 'F2') { e.preventDefault(); setActiveView('quick_sale'); return; }
+      if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key === '/') {
         e.preventDefault();
-        searchInputRef.current?.focus();
-        searchInputRef.current?.select();
+        setActiveView('orders');
+        setTimeout(() => { searchInputRef.current?.focus(); searchInputRef.current?.select(); }, 50);
+      } else if (e.key === '?') {
+        e.preventDefault();
+        setShortcutsOpen((open) => !open);
+      } else if (activeViewRef.current !== 'quick_sale') {
+        // Single-letter jumps between the main counter screens.
+        const jump: Record<string, any> = { o: 'orders', d: 'dashboard', r: 'reports', s: 'quick_sale', q: 'shop_qr', l: 'live_print' };
+        const target = jump[e.key.toLowerCase()];
+        if (target) { e.preventDefault(); setActiveView(target); }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -1135,6 +1153,8 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       id: o.orderNumber || o.id,
       rawId: o.id,
       rawStatus: o.status,
+      createdAt: o.createdAt,
+      totalAmountPaise: o.totalAmountPaise,
       tokenNumber: tokenDigits,
       tokenDisplay,
       files: o.files || [],
@@ -2191,6 +2211,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       title: 'OPERATIONS',
       items: [
         { id: 'orders', label: 'Orders', icon: <InboxIcon size={18} /> },
+        { id: 'quick_sale', label: 'Quick sale', icon: <IndianRupeeIcon size={18} /> },
         { id: 'live_print', label: 'Live Print', icon: <WifiIcon size={18} /> },
       ],
     },
@@ -2470,6 +2491,16 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
               </button>
             )}
 
+            {/* Keyboard shortcuts (counter PCs) */}
+            <button
+              type="button"
+              onClick={() => setShortcutsOpen(true)}
+              className="hidden md:flex h-8 px-2.5 rounded-full bg-ink-surface-muted hover:bg-ink-border dark:bg-ink-dark-elevated items-center justify-center text-ink-text-secondary text-xs font-mono font-bold transition-colors cursor-pointer"
+              title="Keyboard shortcuts (?)"
+            >
+              ⌨ ?
+            </button>
+
             {/* New-order sound and notification */}
             <button
               type="button"
@@ -2596,6 +2627,40 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
             VIEW 1: DASHBOARD (Matching Screenshot 2026-10-23 074343.png)
         ───────────────────────────────────────────────────────────── */}
         {activeView === 'reports' && <DailyReportView />}
+
+        {activeView === 'quick_sale' && (
+          <QuickSaleView
+            shop={{ name: currentMerchant.name, address: shopAddress, phone: shopPhone }}
+            canManage={['MERCHANT_OWNER', 'SHOP_MANAGER'].includes(liveUser?.role)}
+          />
+        )}
+
+        {shortcutsOpen && (
+          <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4" onClick={() => setShortcutsOpen(false)} role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+            <div className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+              <h2 className="text-lg font-extrabold text-slate-900 dark:text-white mb-3">Keyboard shortcuts</h2>
+              <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+                {[
+                  ['F2 or S', 'Quick sale (walk-in billing)'],
+                  ['O', 'Orders queue'],
+                  ['/', 'Search orders by token, name or phone'],
+                  ['D', 'Dashboard'],
+                  ['R', 'Reports'],
+                  ['Q', 'Shop QR and TV board'],
+                  ['L', 'Live print'],
+                  ['1–9', 'Quick sale: add a service'],
+                  ['Enter', 'Quick sale: charge'],
+                  ['Ctrl + Enter', 'Quick sale: charge and print receipt'],
+                  ['Esc', 'Quick sale: clear bill'],
+                  ['?', 'Show or hide this list'],
+                ].map(([key, label]) => (
+                  <React.Fragment key={key}><dt><kbd className="rounded border border-slate-300 dark:border-slate-700 px-1.5 py-0.5 font-mono text-xs">{key}</kbd></dt><dd className="text-slate-600 dark:text-slate-300">{label}</dd></React.Fragment>
+                ))}
+              </dl>
+              <button type="button" onClick={() => setShortcutsOpen(false)} className="mt-5 w-full min-h-[44px] rounded-xl bg-indigo-600 text-white font-bold">Got it</button>
+            </div>
+          </div>
+        )}
 
         {activeView === 'dashboard' && (
           <div className="p-6 max-w-7xl w-full mx-auto space-y-6">
@@ -3372,6 +3437,29 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                       <span>✓</span>
                       <span>{collectingOrder ? 'Recording payment…' : selectedOrder.paymentMethod === 'CASH_ON_COLLECTION' && selectedOrder.paymentStatus !== 'VERIFIED' ? 'Record cash & complete' : 'Mark collected'}</span>
                     </button>}
+                    <button
+                      type="button"
+                      onClick={() => printReceipt({
+                        shopName: currentMerchant.name,
+                        shopAddress,
+                        shopPhone,
+                        title: selectedOrder.isPaid ? 'Receipt' : 'Order slip — amount due',
+                        reference: String(selectedOrder.id),
+                        token: selectedOrder.tokenDisplay,
+                        customer: selectedOrder.customer,
+                        createdAt: selectedOrder.createdAt || new Date().toISOString(),
+                        lines: (selectedOrder.files || []).map((file: any) => ({
+                          label: file.fileName,
+                          detail: `${file.pageCount} pages · ${file.printOptions?.colorMode === 'color' ? 'Colour' : file.printOptions?.colorMode === 'mixed' ? 'Mixed colour' : 'B&W'} · ×${file.printOptions?.copies || 1}`,
+                          amountPaise: Number(file.lineSubtotalPaise ?? file.subtotalPaise ?? 0),
+                        })),
+                        totalPaise: Number(selectedOrder.totalAmountPaise ?? Math.round(parseFloat(String(selectedOrder.amount).replace(/[^\d.]/g, '')) * 100)),
+                        paymentLabel: selectedOrder.isPaid ? (selectedOrder.paymentMethod === 'ONLINE_RAZORPAY' ? 'Online (Razorpay)' : 'Cash') : 'Due at counter',
+                      })}
+                      className="px-3.5 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-800 dark:text-slate-100 rounded-xl text-xs font-bold cursor-pointer"
+                    >
+                      🧾 Print receipt
+                    </button>
                     {selectedOrder.tab === 'pending' && (
                       <button
                         type="button"
@@ -5935,6 +6023,14 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                     >
                       <span>🚀</span> Open Customer Portal
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => currentMerchant.shopCode && window.open(`/display/${encodeURIComponent(currentMerchant.shopCode)}`, '_blank', 'noopener')}
+                      className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                      title="Full-screen 'Now serving' board for a TV or second monitor"
+                    >
+                      <span>📺</span> Open TV “Now serving” board
+                    </button>
                   </div>
                 </div>
               </div>
@@ -6196,7 +6292,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       {/* ─────────────────────────────────────────────────────────────
           GLOBAL OFFLINE TOAST (Bottom-Right)
       ───────────────────────────────────────────────────────────── */}
-      {showOfflineToast && !agentOnline && (
+      {showOfflineToast && !agentOnline && ['orders', 'live_print', 'dashboard'].includes(activeView) && (
         <div className="hidden md:flex fixed bottom-4 right-4 bg-white dark:bg-gray-800 border border-amber-300 dark:border-amber-700 rounded-2xl p-4 shadow-xl z-50 max-w-sm flex items-start gap-3 animate-fade-in">
           <span className="text-xl">⚠️</span>
           <div>

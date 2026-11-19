@@ -785,3 +785,46 @@ CREATE TABLE IF NOT EXISTS shop_operating_status (
     updated_at TEXT NOT NULL,
     FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE
 );
+
+-- Counter preferences: auto-print policy and the shop's UPI ID for walk-in payments.
+CREATE TABLE IF NOT EXISTS shop_counter_settings (
+    shop_id TEXT PRIMARY KEY,
+    auto_print TEXT NOT NULL DEFAULT 'off',
+    upi_id TEXT,
+    upi_payee_name TEXT,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE
+);
+
+-- Services sold at the counter (photocopies, lamination, binding, ...).
+CREATE TABLE IF NOT EXISTS shop_services (
+    id TEXT PRIMARY KEY,
+    shop_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    unit_label TEXT NOT NULL DEFAULT 'item',
+    unit_price_paise INTEGER NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'other',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_shop_services_shop ON shop_services(shop_id, sort_order);
+
+-- Walk-in sales billed at the counter without an online order.
+CREATE TABLE IF NOT EXISTS counter_sales (
+    id TEXT PRIMARY KEY,
+    shop_id TEXT NOT NULL,
+    sale_number TEXT NOT NULL,
+    customer_name TEXT,
+    customer_phone TEXT,
+    items_json TEXT NOT NULL,
+    total_paise INTEGER NOT NULL,
+    payment_method TEXT NOT NULL,
+    created_by_user_id TEXT,
+    created_at TEXT NOT NULL,
+    voided_at TEXT,
+    void_reason TEXT,
+    FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_counter_sales_shop_created ON counter_sales(shop_id, created_at DESC);

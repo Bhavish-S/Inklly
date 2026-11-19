@@ -112,7 +112,9 @@ export function createApp(db?: DatabaseService): express.Express {
   // Mount API routers
   app.use('/api/v1/portal', createPortalRoutes(database, fileStorage));
   app.use('/api/v1/auth', createAuthRoutes(database));
-  app.use('/api/v1/merchant', createMerchantRoutes(database, fileStorage));
+  const merchantRouter = createMerchantRoutes(database, fileStorage);
+  app.locals.runAutoPrintPass = (merchantRouter as any).runAutoPrintPass;
+  app.use('/api/v1/merchant', merchantRouter);
   app.use('/api/v1/payments', createPaymentRoutes(database));
   app.use('/api/v1/agent', createAgentRoutes(database, fileStorage));
   app.use('/api/v1/platform', createAdminRoutes(database, fileStorage));

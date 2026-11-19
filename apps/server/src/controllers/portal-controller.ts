@@ -495,4 +495,30 @@ export class PortalController {
       collectedAt: order.collectedAt,
     });
   };
+
+  /**
+   * "Now serving" board for a TV at the counter: tokens only, no names or
+   * files, for today's orders that are being made or are ready.
+   */
+  public getDisplayBoard = (req: Request, res: Response) => {
+    const shop = this.shopRepo.getShopByCode(String(req.params.shop_code));
+    if (!shop || !shop.isActive) return res.status(404).json({ error: 'Shop not found' });
+    const since = new Date(Date.now() - 18 * 60 * 60 * 1000).toISOString();
+    const rows = this.db.query<any>(
+      `SELECT token_number, status, updated_at FROM orders
+       WHERE shop_id = ? AND created_at >= ? AND status IN ('AWAITING_REVIEW', 'READY_FOR_PRINT', 'PENDING_RELEASE', 'PENDING_AGENT_SPOOL', 'IN_PROGRESS', 'READY_FOR_COLLECTION')
+       ORDER BY updated_at DESC LIMIT 60`,
+      [shop.id, since]
+    );
+    const token = (value: string) => String(value || '').replace(/^T-/, '');
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+      shopName: shop.name,
+      acceptingOrders: getOperatingStatus(this.db, shop.id).acceptingOrders,
+      ready: rows.filter((row) => row.status === 'READY_FOR_COLLECTION').map((row) => token(row.token_number)).filter(Boolean).slice(0, 18),
+      preparing: rows.filter((row) => row.status !== 'READY_FOR_COLLECTION').map((row) => token(row.token_number)).filter(Boolean).reverse().slice(0, 18),
+      queue: getQueueEstimate(this.db, shop.id),
+      updatedAt: new Date().toISOString(),
+    });
+  };
 }

@@ -238,6 +238,34 @@ export const api = {
     return body;
   },
 
+  async counterRequest(path: string, init: RequestInit = {}) {
+    const res = await fetch(`${API_BASE}/merchant/counter${path}`, { ...init, headers: getHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'The counter request failed.');
+    return body;
+  },
+  getCounterSettings() { return this.counterRequest('/settings'); },
+  updateCounterSettings(settings: { autoPrint?: 'off' | 'paid' | 'all'; upiId?: string | null; upiPayeeName?: string | null }) {
+    return this.counterRequest('/settings', { method: 'PUT', body: JSON.stringify(settings) });
+  },
+  getCounterServices() { return this.counterRequest('/services'); },
+  saveCounterServices(services: unknown[]) { return this.counterRequest('/services', { method: 'PUT', body: JSON.stringify({ services }) }); },
+  getCounterSales(date?: string) {
+    const params = new URLSearchParams({ tzOffsetMinutes: String(-new Date().getTimezoneOffset()) });
+    if (date) params.set('date', date);
+    return this.counterRequest(`/sales?${params}`);
+  },
+  quoteCounterSale(items: unknown[]) { return this.counterRequest('/sales/quote', { method: 'POST', body: JSON.stringify({ items }) }); },
+  createCounterSale(payload: unknown) { return this.counterRequest('/sales', { method: 'POST', body: JSON.stringify(payload) }); },
+  voidCounterSale(id: string, reason: string) { return this.counterRequest(`/sales/${encodeURIComponent(id)}/void`, { method: 'POST', body: JSON.stringify({ reason }) }); },
+
+  async getDisplayBoard(shopCode: string) {
+    const res = await fetch(`${API_BASE}/portal/shop/${encodeURIComponent(shopCode)}/display`);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Shop not found');
+    return body;
+  },
+
   async getDashboard() {
     const res = await fetch(`${API_BASE}/merchant/dashboard`, {
       headers: getHeaders(),

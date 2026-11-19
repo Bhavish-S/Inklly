@@ -4,7 +4,8 @@ import { api } from '../api/client';
 interface DailyReport {
   date: string;
   orders: { received: number; completed: number; cancelled: number; open: number };
-  revenue: { totalPaise: number; cashPaise: number; onlinePaise: number; refundsPaise: number };
+  revenue: { totalPaise: number; cashPaise: number; upiPaise?: number; onlinePaise: number; refundsPaise: number };
+  counterSales?: { count: number; totalPaise: number };
   pages: { bw: number; color: number; total: number };
   averageTurnaroundMinutes: number | null;
   averageOrderPaise: number | null;
@@ -61,7 +62,10 @@ export const DailyReportView: React.FC = () => {
       ['Orders completed', report.orders.completed],
       ['Orders cancelled', report.orders.cancelled],
       ['Orders still open', report.orders.open],
+      ['Walk-in counter sales', report.counterSales?.count ?? 0],
+      ['Walk-in sales value (INR)', ((report.counterSales?.totalPaise ?? 0) / 100).toFixed(2)],
       ['Cash collected (INR)', (report.revenue.cashPaise / 100).toFixed(2)],
+      ['UPI at counter (INR)', ((report.revenue.upiPaise || 0) / 100).toFixed(2)],
       ['Online payments (INR)', (report.revenue.onlinePaise / 100).toFixed(2)],
       ['Refunds (INR)', (report.revenue.refundsPaise / 100).toFixed(2)],
       ['Net takings (INR)', (report.revenue.totalPaise / 100).toFixed(2)],
@@ -108,8 +112,8 @@ export const DailyReportView: React.FC = () => {
         <>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {[
-              { label: 'Net takings', value: inr(report.revenue.totalPaise), note: `${inr(report.revenue.cashPaise)} cash · ${inr(report.revenue.onlinePaise)} online` },
-              { label: 'Orders', value: String(report.orders.received), note: `${report.orders.completed} done · ${report.orders.open} open` },
+              { label: 'Net takings', value: inr(report.revenue.totalPaise), note: `${inr(report.revenue.cashPaise)} cash · ${inr(report.revenue.upiPaise || 0)} UPI · ${inr(report.revenue.onlinePaise)} online` },
+              { label: 'QR orders · walk-ins', value: `${report.orders.received} · ${report.counterSales?.count ?? 0}`, note: `${report.orders.completed} done · ${report.orders.open} open · walk-ins ${inr(report.counterSales?.totalPaise ?? 0)}` },
               { label: 'Pages printed', value: report.pages.total.toLocaleString('en-IN'), note: `${report.pages.bw} B&W · ${report.pages.color} colour` },
               { label: 'Avg. pickup time', value: report.averageTurnaroundMinutes === null ? '—' : `${report.averageTurnaroundMinutes} min`, note: `Avg. order ${inr(report.averageOrderPaise)}` },
             ].map((tile) => (

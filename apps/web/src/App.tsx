@@ -25,6 +25,7 @@ const CustomerPortalOrderView = lazy(() => import('./views/CustomerPortalOrderVi
 const OrderTrackerView = lazy(() => import('./views/OrderTrackerView').then((module) => ({ default: module.OrderTrackerView })));
 const MerchantAppView = lazy(() => import('./views/MerchantAppView').then((module) => ({ default: module.MerchantAppView })));
 const PlatformAdminView = lazy(() => import('./views/PlatformAdminView').then((module) => ({ default: module.PlatformAdminView })));
+const NowServingBoard = lazy(() => import('./components/NowServingBoard').then((module) => ({ default: module.NowServingBoard })));
 const DeveloperPortalView = lazy(() => import('./views/DeveloperPortalView').then((module) => ({ default: module.DeveloperPortalView })));
 
 // A showcase shop for marketing demo links. Production builds set
@@ -90,6 +91,7 @@ export const App: React.FC = () => {
     currentPath === '/dashboard' ||
     currentPath === '/customer' ||
     currentPath.startsWith('/p/') ||
+    currentPath.startsWith('/display/') ||
     currentPath === '/track' ||
     currentPath === '/platform' ||
     currentPath === '/admin' ||
@@ -138,6 +140,7 @@ export const App: React.FC = () => {
   const isKnown =
     knownRoutes.includes(currentPath) ||
     currentPath.startsWith('/p/') ||
+    currentPath.startsWith('/display/') ||
     ['/merchat', '/merchants', '/admins', '/platform-admin', '/dev', '/devs', '/developers'].includes(currentPath.toLowerCase().replace(/\/$/, ''));
 
   useEffect(() => {
@@ -254,6 +257,9 @@ export const App: React.FC = () => {
             </div>
           );
         })()}
+        {currentPath.startsWith('/display/') && (
+          <NowServingBoard shopCode={decodeURIComponent(currentPath.replace('/display/', '').split('/')[0] || '')} />
+        )}
         {currentPath === '/track' && (
           <OrderTrackerView
             orderId={trackedOrderId}

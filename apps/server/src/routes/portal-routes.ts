@@ -12,6 +12,7 @@ export function createPortalRoutes(db: DatabaseService, fileStorage: PrivateFile
 
   const controller = new PortalController(db, shopRepo, pricingRepo, orderRepo, new ShopPaymentCredentialsService(db), fileStorage);
 
+  router.get('/shop/:shop_code/display', controller.getDisplayBoard);
   router.get('/shop/:shop_code', controller.getShopByCode);
   router.post('/upload', controller.uploadDocument);
   router.post('/quote', controller.getQuote);

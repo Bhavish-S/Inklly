@@ -37,6 +37,13 @@ export function createMerchantRoutes(db: DatabaseService, fileStorage: PrivateFi
     fileStorage
   );
 
+  // Auto-print runs in the background for shops that switched it on.
+  const autoPrintTimer = setInterval(() => {
+    try { controller.runAutoPrintPass(); } catch (error) { console.error('[Auto-print] Pass failed', error); }
+  }, 10_000);
+  autoPrintTimer.unref();
+  (router as any).runAutoPrintPass = () => controller.runAutoPrintPass();
+
   // Apply authentication and tenant isolation
   router.use(authenticate(db));
   router.use(enforceTenantIsolation);
@@ -53,6 +60,15 @@ export function createMerchantRoutes(db: DatabaseService, fileStorage: PrivateFi
   router.get('/operations', requirePermission('orders:view'), controller.getOperations);
   router.put('/operations', requirePermission('orders:process'), controller.updateOperations);
   router.get('/reports/daily', requirePermission('orders:view'), controller.getDailyReport);
+
+  router.get('/counter/settings', requirePermission('orders:view'), controller.getCounterSettings);
+  router.put('/counter/settings', requirePermission('settings:manage'), controller.updateCounterSettings);
+  router.get('/counter/services', requirePermission('orders:view'), controller.getCounterServices);
+  router.put('/counter/services', requirePermission('settings:manage'), controller.replaceCounterServices);
+  router.get('/counter/sales', requirePermission('orders:view'), controller.listCounterSales);
+  router.post('/counter/sales/quote', requirePermission('orders:process'), controller.quoteCounterSale);
+  router.post('/counter/sales', requirePermission('orders:process'), controller.createCounterSale);
+  router.post('/counter/sales/:id/void', requirePermission('finance:manage'), controller.voidCounterSale);
 
   router.post('/agents/pairing-code', requireRole('MERCHANT_OWNER'), controller.createAgentPairingCode);
   router.delete('/agents/:id', requireRole('MERCHANT_OWNER'), controller.revokeAgent);

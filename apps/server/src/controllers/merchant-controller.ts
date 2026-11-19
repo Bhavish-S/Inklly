@@ -16,7 +16,11 @@ import { ShopPaymentCredentialsService } from '../services/shop-payment-credenti
 import { PrivateFileStorage } from '../services/private-file-storage';
 import { getPrinterHealthStatus, hasFreshOnlinePrinterEvidence } from '../services/printer-health';
 import { chooseAutomaticPrinter, getPrinterCompatibilityIssues } from '../services/printer-compatibility';
-import { buildDailyReport, getOperatingStatus, getQueueEstimate, setOperatingStatus } from '../services/shop-operations';
+import { buildDailyReport, getOperatingStatus, getQueueEstimate, localDayRange, setOperatingStatus } from '../services/shop-operations';
+import {
+  CounterSaleError, createCounterSale, getCounterSettings, listCounterSales, listServices, replaceServices,
+  updateCounterSettings, upiPaymentLink, voidCounterSale,
+} from '../services/counter-sales';
 import { inspectDocument } from '../services/document-page-count';
 
 export class MerchantController {
@@ -405,46 +409,55 @@ export class MerchantController {
     if (!order) {
       return res.status(404).json({ error: 'Order not found' });
     }
-
-    if (order.paymentMethod === 'ONLINE_RAZORPAY' && order.paymentStatus !== 'VERIFIED') {
-      return res.status(409).json({ error: 'Online payment must be verified before print dispatch.' });
+    const result = this.dispatchOrder(order, req.body?.printerId || req.body?.printerName);
+    if (result.status === 200) {
+      return res.json({ ...result.body, order: this.getOrderForAuthenticatedMerchant(id, req) });
     }
+    return res.status(result.status).json(result.body);
+  };
 
-    const requestedPrinter = req.body?.printerId || req.body?.printerName;
+  /**
+   * Releases an order's print jobs to a printer. Used by the Print button and
+   * by auto-print. With no printer requested, picks the best compatible one.
+   */
+  public dispatchOrder(order: any, requestedPrinter?: unknown): { status: number; body: Record<string, unknown> } {
+    const id = order.id;
+    if (order.paymentMethod === 'ONLINE_RAZORPAY' && order.paymentStatus !== 'VERIFIED') {
+      return { status: 409, body: { error: 'Online payment must be verified before print dispatch.' } };
+    }
     const onlinePrinters = this.printerRepo.getPrintersByShop(order.shopId)
       .filter((candidate) => hasFreshOnlinePrinterEvidence(candidate.isOnline, candidate.lastHeartbeat));
     let printer;
     if (typeof requestedPrinter === 'string' && requestedPrinter.trim()) {
       printer = onlinePrinters.find((candidate) => candidate.id === requestedPrinter || candidate.name === requestedPrinter || candidate.systemDriverName === requestedPrinter);
-      if (!printer) return res.status(409).json({ error: 'The chosen printer is not online. No print job was released.' });
+      if (!printer) return { status: 409, body: { error: 'The chosen printer is not online. No print job was released.' } };
     } else {
-      // One-click print: route to the best ready printer for these files.
       const ready = onlinePrinters.filter((candidate) => candidate.agentId && this.agentRepo.isPhysicalPrintingEnabled(order.shopId, candidate.agentId));
       if (!ready.length) {
-        return res.status(409).json({ error: 'No printer is online. Start Inklly on your print computer and check the printer is switched on. No print job was released.' });
+        return { status: 409, body: { error: 'No printer is online. Start Inklly on your print computer and check the printer is switched on. No print job was released.' } };
       }
       const choice = chooseAutomaticPrinter(order.files || [], ready);
       if (!choice.printer) {
-        return res.status(409).json({
+        return { status: 409, body: {
           error: 'None of the online printers can print every file in this order as requested. No print job was released.',
           compatibilityIssues: Object.entries(choice.reasons).flatMap(([name, issues]) => issues.map((issue) => `${name}: ${issue}`)),
-        });
+        } };
       }
       printer = choice.printer;
     }
     if (!printer.isOnline) {
-      return res.status(409).json({ error: 'The chosen printer is not online. No print job was released.' });
+      return { status: 409, body: { error: 'The chosen printer is not online. No print job was released.' } };
     }
     if (!printer.agentId || !this.agentRepo.isPhysicalPrintingEnabled(order.shopId, printer.agentId)) {
-      return res.status(409).json({ error: 'Physical printing is disabled or has not been reported by the paired agent. No print job was released.' });
+      return { status: 409, body: { error: 'Physical printing is disabled or has not been reported by the paired agent. No print job was released.' } };
     }
 
     const compatibilityIssues = getPrinterCompatibilityIssues(order.files || [], printer);
     if (compatibilityIssues.length) {
-      return res.status(409).json({
+      return { status: 409, body: {
         error: 'The selected printer is not verified as compatible with every file in this order. No print job was released.',
         compatibilityIssues,
-      });
+      } };
     }
 
     let retriedJobs = 0;
@@ -476,15 +489,14 @@ export class MerchantController {
         this.advanceOrderStatus(id, current.status as OrderStatus, 'IN_PROGRESS');
       });
 
-      const updated = this.getOrderForAuthenticatedMerchant(id, req);
-      res.json({ success: true, message: `Print jobs queued for ${printer.name}.`, printerId: printer.id, retriedJobs, order: updated });
+      return { status: 200, body: { success: true, message: `Print jobs queued for ${printer.name}.`, printerId: printer.id, printerName: printer.name, retriedJobs } };
     } catch (err: any) {
       if (typeof err?.message === 'string' && err.message.startsWith('PRINT_DISPATCH_CONFLICT:')) {
-        return res.status(409).json({ error: err.message.slice('PRINT_DISPATCH_CONFLICT:'.length).trim() });
+        return { status: 409, body: { error: err.message.slice('PRINT_DISPATCH_CONFLICT:'.length).trim() } };
       }
-      res.status(422).json({ error: err.message });
+      return { status: 422, body: { error: err?.message || 'Print dispatch failed.' } };
     }
-  };
+  }
 
   public getRates = (req: Request, res: Response) => {
     const shopId = this.getShopId(req);
@@ -1482,4 +1494,135 @@ export class MerchantController {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) return res.status(400).json({ error: 'date must be YYYY-MM-DD.' });
     res.json(buildDailyReport(this.db, shopId, date, offset));
   };
+
+  // ── Counter: walk-in billing, price list, counter settings ──────────────
+  private counterShop(req: Request) {
+    const shop = this.shopRepo.getShopById(this.getShopId(req));
+    if (!shop) throw new CounterSaleError('Shop not found.', 404);
+    return { id: shop.id, organizationId: shop.organizationId, name: shop.name };
+  }
+
+  private counterError(res: Response, error: unknown) {
+    if (error instanceof CounterSaleError) return res.status(error.status).json({ error: error.message });
+    console.error('[Counter]', error);
+    return res.status(500).json({ error: 'Something went wrong at the counter. Nothing was charged; please try again.' });
+  }
+
+  public getCounterSettings = (req: Request, res: Response) => {
+    try { res.json(getCounterSettings(this.db, this.counterShop(req).id)); } catch (error) { this.counterError(res, error); }
+  };
+
+  public updateCounterSettings = (req: Request, res: Response) => {
+    try {
+      const shop = this.counterShop(req);
+      const settings = updateCounterSettings(this.db, shop.id, req.body || {});
+      this.db.execute(
+        `INSERT INTO audit_events (id, actor_user_id, actor_role, shop_id, organization_id, action, target_type, target_id, outcome, ip_address, details, created_at)
+         VALUES (?, ?, ?, ?, ?, 'COUNTER_SETTINGS_UPDATED', 'SHOP', ?, 'SUCCESS', ?, ?, ?)`,
+        [crypto.randomUUID(), req.user?.userId || null, req.user?.role || null, shop.id, shop.organizationId, shop.id, req.ip || null, JSON.stringify(settings), new Date().toISOString()]
+      );
+      res.json(settings);
+    } catch (error) { this.counterError(res, error); }
+  };
+
+  public getCounterServices = (req: Request, res: Response) => {
+    try { res.json(listServices(this.db, this.counterShop(req).id)); } catch (error) { this.counterError(res, error); }
+  };
+
+  public replaceCounterServices = (req: Request, res: Response) => {
+    try { res.json(replaceServices(this.db, this.counterShop(req).id, req.body?.services)); } catch (error) { this.counterError(res, error); }
+  };
+
+  public listCounterSales = (req: Request, res: Response) => {
+    try {
+      const shop = this.counterShop(req);
+      const offset = Number(req.query.tzOffsetMinutes ?? 330);
+      if (!Number.isInteger(offset) || offset < -720 || offset > 840) return res.status(400).json({ error: 'Invalid timezone offset.' });
+      const date = typeof req.query.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
+        ? req.query.date : new Date(Date.now() + offset * 60_000).toISOString().slice(0, 10);
+      const range = localDayRange(date, offset);
+      res.json({ date, sales: listCounterSales(this.db, shop.id, range.from, range.to) });
+    } catch (error) { this.counterError(res, error); }
+  };
+
+  public createCounterSale = (req: Request, res: Response) => {
+    try {
+      const shop = this.counterShop(req);
+      const sale = createCounterSale(this.db, shop, req.user?.userId || null, req.body || {});
+      const settings = getCounterSettings(this.db, shop.id);
+      res.status(201).json({ sale, upiLink: sale.paymentMethod === 'UPI' ? upiPaymentLink(settings, shop.name, sale.totalPaise, sale.saleNumber) : null });
+    } catch (error) { this.counterError(res, error); }
+  };
+
+  /** Price check before taking money: totals from server prices, nothing saved. */
+  public quoteCounterSale = (req: Request, res: Response) => {
+    try {
+      const shop = this.counterShop(req);
+      const settings = getCounterSettings(this.db, shop.id);
+      const services = new Map(listServices(this.db, shop.id).map((service) => [service.id, service]));
+      const items = Array.isArray(req.body?.items) ? req.body.items : [];
+      let totalPaise = 0;
+      for (const item of items.slice(0, 50)) {
+        const quantity = Number.isSafeInteger(item?.quantity) && item.quantity > 0 ? item.quantity : 0;
+        const service = typeof item?.serviceId === 'string' ? services.get(item.serviceId) : null;
+        const unit = service ? service.unitPricePaise : (Number.isSafeInteger(item?.unitPricePaise) && item.unitPricePaise >= 0 ? item.unitPricePaise : 0);
+        totalPaise += unit * quantity;
+      }
+      res.json({ totalPaise, upiLink: totalPaise > 0 ? upiPaymentLink(settings, shop.name, totalPaise, `${shop.name} counter`) : null });
+    } catch (error) { this.counterError(res, error); }
+  };
+
+  public voidCounterSale = (req: Request, res: Response) => {
+    try {
+      const shop = this.counterShop(req);
+      const sale = voidCounterSale(this.db, shop, String(req.params.id), req.body?.reason);
+      this.db.execute(
+        `INSERT INTO audit_events (id, actor_user_id, actor_role, shop_id, organization_id, action, target_type, target_id, outcome, ip_address, details, created_at)
+         VALUES (?, ?, ?, ?, ?, 'COUNTER_SALE_CANCELLED', 'COUNTER_SALE', ?, 'SUCCESS', ?, ?, ?)`,
+        [crypto.randomUUID(), req.user?.userId || null, req.user?.role || null, shop.id, shop.organizationId, sale.id, req.ip || null, JSON.stringify({ reason: sale.voidReason, totalPaise: sale.totalPaise }), new Date().toISOString()]
+      );
+      res.json(sale);
+    } catch (error) { this.counterError(res, error); }
+  };
+
+  /**
+   * Auto-print: sends orders to the best printer as soon as they may print.
+   * "paid" waits for a verified payment; "all" also prints cash-at-counter
+   * orders. Orders that cannot be printed now are retried later.
+   */
+  private autoPrintBackoff = new Map<string, number>();
+  public runAutoPrintPass(): number {
+    const shops = this.db.query<any>(`SELECT shop_id, auto_print FROM shop_counter_settings WHERE auto_print IN ('paid', 'all')`);
+    let dispatched = 0;
+    const now = Date.now();
+    for (const { shop_id: shopId, auto_print: mode } of shops) {
+      const candidates = this.db.query<any>(
+        `SELECT o.id FROM orders o
+         WHERE o.shop_id = ? AND o.status IN ('AWAITING_REVIEW', 'READY_FOR_PRINT')
+           AND EXISTS (SELECT 1 FROM print_jobs j WHERE j.order_id = o.id)
+           AND NOT EXISTS (SELECT 1 FROM print_jobs j WHERE j.order_id = o.id AND NOT (j.status = 'RECEIVED' AND j.printer_id IS NULL))
+         ORDER BY o.created_at ASC LIMIT 20`,
+        [shopId]
+      );
+      for (const { id } of candidates) {
+        if ((this.autoPrintBackoff.get(id) || 0) > now) continue;
+        const order = this.orderRepo.getOrderByIdForShop(id, shopId);
+        if (!order) continue;
+        if (mode === 'paid' && order.paymentStatus !== 'VERIFIED') continue;
+        const result = this.dispatchOrder(order);
+        if (result.status === 200) {
+          dispatched++;
+          this.autoPrintBackoff.delete(id);
+          this.db.execute(
+            `INSERT INTO audit_events (id, actor_user_id, actor_role, shop_id, organization_id, action, target_type, target_id, outcome, ip_address, details, created_at)
+             VALUES (?, NULL, 'SYSTEM', ?, NULL, 'ORDER_AUTO_PRINTED', 'ORDER', ?, 'SUCCESS', NULL, ?, ?)`,
+            [crypto.randomUUID(), shopId, id, JSON.stringify({ printerId: result.body.printerId, mode }), new Date().toISOString()]
+          );
+        } else {
+          this.autoPrintBackoff.set(id, now + 60_000);
+        }
+      }
+    }
+    return dispatched;
+  }
 }
