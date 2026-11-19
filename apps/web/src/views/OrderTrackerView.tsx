@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../api/client';
 import { CheckCircleIcon, ClockIcon, PrinterIcon, FileTextIcon, ArrowRightIcon } from '../components/icons';
 import { stopCustomerOrderPollingIfFinal } from '../order-tracker-polling.mjs';
+import { loadRazorpayCheckout } from '../razorpay-checkout';
 
 interface OrderTrackerViewProps {
   orderId: string;
@@ -23,6 +24,42 @@ export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onB
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
+  const [paying, setPaying] = useState(false);
+  const [payError, setPayError] = useState<string | null>(null);
+
+  // Resumes Razorpay checkout for an online order that was saved but not paid.
+  const resumePayment = async () => {
+    if (!order) return;
+    setPaying(true);
+    setPayError(null);
+    try {
+      const intent = await api.createPaymentIntent(order.orderId);
+      await loadRazorpayCheckout();
+      await new Promise<void>((resolve, reject) => {
+        if (!window.Razorpay) { reject(new Error('Razorpay Checkout could not be loaded.')); return; }
+        const checkout = new window.Razorpay({
+          key: intent.keyId,
+          amount: intent.amount,
+          currency: intent.currency,
+          name: order.shopName || 'Print order',
+          description: `Print order ${order.orderNumber}`,
+          order_id: intent.razorpayOrderId,
+          handler: async (response: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) => {
+            try { await api.verifyRazorpayPayment(response); resolve(); } catch (error) { reject(error); }
+          },
+          modal: { ondismiss: () => reject(new Error('Checkout was closed. Your order is still saved.')) },
+          theme: { color: '#4D64E6' },
+        });
+        checkout.on('payment.failed', () => reject(new Error('Payment did not complete. You can try again.')));
+        checkout.open();
+      });
+      setRetryCount((count) => count + 1);
+    } catch (err) {
+      setPayError(err instanceof Error ? err.message : 'Payment could not be started.');
+    } finally {
+      setPaying(false);
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -321,6 +358,24 @@ export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onB
             </span>
           </div>
         </div>
+
+        {order.status === 'AWAITING_PAYMENT' && order.paymentMethod === 'ONLINE_RAZORPAY' && (
+          <div className="mb-3">
+            <button
+              onClick={() => void resumePayment()}
+              disabled={paying}
+              className="w-full min-h-[44px] py-3 px-4 rounded-xl bg-brand text-white text-sm font-semibold transition-all cursor-pointer disabled:opacity-60"
+            >
+              {paying ? 'Opening payment…' : `Pay ₹${(order.totalAmountPaise / 100).toFixed(2)} now`}
+            </button>
+            {payError && <p role="alert" className="mt-2 text-xs text-status-danger">{payError}</p>}
+          </div>
+        )}
+        {order.status === 'CANCELLED' && order.paymentStatus === 'EXPIRED' && (
+          <p className="mb-3 text-xs text-ink-text-muted dark:text-ink-dark-text-muted">
+            This order was cancelled because payment was not started. No money was taken. Please place a new order.
+          </p>
+        )}
 
         <button
           onClick={onBackToPortal}

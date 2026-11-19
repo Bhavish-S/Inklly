@@ -340,10 +340,10 @@ describe('Inklly 4-Tier Comprehensive E2E Automated Test Suite', { concurrency: 
       const res = await fetch(`${baseUrl}/api/v1/agent/driver-matrix`);
       assert.equal(res.status, 200);
       const matrix = (await res.json()) as any;
-      assert.equal(matrix.capabilityStatus, 'NOT_VERIFIED');
+      assert.equal(matrix.capabilityStatus, 'DRIVER_REPORTED');
       assert.equal(matrix.physicalPrintingEnabledByDefault, false);
-      assert.equal(matrix.colorSupport, 'UNKNOWN');
-      assert.equal(matrix.duplexSupport, 'UNKNOWN');
+      assert.match(matrix.hardwareVerification, /no specific printer model has been certified/i);
+      assert.match(matrix.merchantOverride, /takes precedence/i);
     });
 
     it('T1.10: Returns loopback edge spooler diagnostics and safety specifications', async () => {

@@ -41,9 +41,19 @@ export function seedDatabase(db: DatabaseService, forceDemoSeed: boolean = false
   }
 
   if (process.env.NODE_ENV === 'production' && !userRepo.getActivePlatformOwner()) {
-    const bootstrapEmail = (process.env.PLATFORM_OWNER_EMAIL || 'admin@inklly.com').trim().toLowerCase();
-    const bootstrapPassword = process.env.PLATFORM_OWNER_PASSWORD || 'InkllyAdmin2026!PlatformOwner';
+    // Production never falls back to a built-in identity: the documented demo
+    // password is public. The operator must supply a unique bootstrap account.
+    const bootstrapEmail = (process.env.PLATFORM_OWNER_EMAIL || '').trim().toLowerCase();
+    const bootstrapPassword = process.env.PLATFORM_OWNER_PASSWORD || '';
+    const publicDemoPasswords = new Set(['InkllyAdmin2026!PlatformOwner', 'DemoOwnerPassword123!', 'DemoDeveloperPassword123!']);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(bootstrapEmail) || bootstrapPassword.length < 16 || publicDemoPasswords.has(bootstrapPassword)) {
+      console.warn('[Inklly DB] No active platform owner. Set PLATFORM_OWNER_EMAIL and a unique PLATFORM_OWNER_PASSWORD (16+ characters) to provision one.');
+    } else {
+      provisionBootstrapOwner(bootstrapEmail, bootstrapPassword);
+    }
+  }
 
+  function provisionBootstrapOwner(bootstrapEmail: string, bootstrapPassword: string) {
     const existing = userRepo.getUserByEmail(bootstrapEmail);
     const passwordHash = hashPassword(bootstrapPassword);
     if (existing) {
@@ -365,7 +375,7 @@ export function seedDatabase(db: DatabaseService, forceDemoSeed: boolean = false
         createdAt: now,
         updatedAt: now,
       },
-      'hash_staff_123'
+      hashPassword('DemoOperatorPassword123!')
     );
 
     userRepo.createMembership({

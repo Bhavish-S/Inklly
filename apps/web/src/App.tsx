@@ -27,12 +27,16 @@ const MerchantAppView = lazy(() => import('./views/MerchantAppView').then((modul
 const PlatformAdminView = lazy(() => import('./views/PlatformAdminView').then((module) => ({ default: module.PlatformAdminView })));
 const DeveloperPortalView = lazy(() => import('./views/DeveloperPortalView').then((module) => ({ default: module.DeveloperPortalView })));
 
+// A showcase shop for marketing demo links. Production builds set
+// VITE_DEFAULT_SHOP_CODE to a real demo shop; customers never fall back to it.
+const DEMO_SHOP_CODE = ((import.meta.env.VITE_DEFAULT_SHOP_CODE as string) || (import.meta.env.DEV ? 'campus1' : '')).trim();
+
 export const App: React.FC = () => {
   const [currentPath, setCurrentPath] = useState<string>(() => {
     return window.location.pathname || '/';
   });
   const [trackedOrderId, setTrackedOrderId] = useState<string>(() => new URLSearchParams(window.location.search).get('order') || '');
-  const [trackedShopCode, setTrackedShopCode] = useState<string>(() => new URLSearchParams(window.location.search).get('shop') || 'campus1');
+  const [trackedShopCode, setTrackedShopCode] = useState<string>(() => new URLSearchParams(window.location.search).get('shop') || '');
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -51,7 +55,7 @@ export const App: React.FC = () => {
       if (window.location.pathname === '/track') {
         const params = new URLSearchParams(window.location.search);
         setTrackedOrderId(params.get('order') || '');
-        setTrackedShopCode(params.get('shop') || 'campus1');
+        setTrackedShopCode(params.get('shop') || '');
       }
     };
     window.addEventListener('popstate', handlePopState);
@@ -66,7 +70,7 @@ export const App: React.FC = () => {
     setCurrentPath(destination.pathname);
     if (destination.pathname === '/track') {
       setTrackedOrderId(destination.searchParams.get('order') || '');
-      setTrackedShopCode(destination.searchParams.get('shop') || 'campus1');
+      setTrackedShopCode(destination.searchParams.get('shop') || '');
     }
     if (destination.hash) {
       window.setTimeout(() => document.getElementById(destination.hash.slice(1))?.scrollIntoView({ behavior: 'smooth' }), 350);
@@ -75,7 +79,7 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleOrderSubmitted = (orderId: string, shopCode = 'campus1') => {
+  const handleOrderSubmitted = (orderId: string, shopCode = '') => {
     setTrackedOrderId(orderId);
     setTrackedShopCode(shopCode);
     navigate(`/track?order=${encodeURIComponent(orderId)}&shop=${encodeURIComponent(shopCode)}`);
@@ -228,17 +232,32 @@ export const App: React.FC = () => {
         )}
 
         {/* Live Working Views */}
-        {(currentPath === '/customer' || currentPath.startsWith('/p/')) && (
-          <CustomerPortalOrderView
-            shopCode={currentPath.startsWith('/p/') ? currentPath.replace('/p/', '').split('/')[0] || 'campus1' : 'campus1'}
-            onNavigateHome={() => navigate('/')}
-            onOrderSubmitted={handleOrderSubmitted}
-          />
-        )}
+        {(currentPath === '/customer' || currentPath.startsWith('/p/')) && (() => {
+          const portalShopCode = currentPath.startsWith('/p/')
+            ? decodeURIComponent(currentPath.replace('/p/', '').split('/')[0] || '')
+            : DEMO_SHOP_CODE;
+          return portalShopCode ? (
+            <CustomerPortalOrderView
+              key={portalShopCode.toLowerCase()}
+              shopCode={portalShopCode}
+              onNavigateHome={() => navigate('/')}
+              onOrderSubmitted={handleOrderSubmitted}
+            />
+          ) : (
+            <div className="min-h-[60vh] flex items-center justify-center px-4">
+              <div className="max-w-sm text-center">
+                <h1 className="text-xl font-bold text-ink-text dark:text-ink-dark-text mb-2">Scan your print shop’s QR code</h1>
+                <p className="text-sm text-ink-text-muted dark:text-ink-dark-text-muted">
+                  Each shop has its own QR code at the counter. Scan it with your phone camera to upload documents for that shop.
+                </p>
+              </div>
+            </div>
+          );
+        })()}
         {currentPath === '/track' && (
           <OrderTrackerView
             orderId={trackedOrderId}
-            onBackToPortal={() => navigate(`/p/${encodeURIComponent(trackedShopCode)}`)}
+            onBackToPortal={() => navigate(trackedShopCode ? `/p/${encodeURIComponent(trackedShopCode)}` : '/')}
           />
         )}
         {(currentPath === '/merchant' || currentPath === '/dashboard') && (
@@ -319,7 +338,7 @@ export const App: React.FC = () => {
                     type="button"
                     onClick={() => {
                       const storedShop = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('inklly_shop') || 'null') : null;
-                      navigate(`/p/${storedShop?.shopCode || 'campus1'}`);
+                      navigate(storedShop?.shopCode ? `/p/${storedShop.shopCode}` : '/customer');
                     }}
                     className="flex items-center gap-1 px-2.5 py-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-all cursor-pointer"
                     title="Open Customer Counter QR Portal"

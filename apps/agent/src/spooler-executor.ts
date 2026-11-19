@@ -5,6 +5,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { PrintCommandTicket, SpoolerResult } from '@inklly/shared';
 import { PrinterDiscoveryService, DiscoveredPrinter } from './printer-discovery';
+import { buildLpArgs, buildSumatraSettings, parseLpJobId, unsupportedPrintOptions } from './print-commands';
 
 const execFileAsync = promisify(execFile);
 
@@ -13,6 +14,8 @@ export interface SpoolerExecutionOptions {
   targetPrinterOverride?: string;
   downloadServerUrl?: string;
   downloadHeaders?: Record<string, string>;
+  /** Lets tests exercise the real spool path with a stub spooler command. */
+  allowSpoolInTests?: boolean;
 }
 
 const MAX_PRINT_FILE_BYTES = 35 * 1024 * 1024;
@@ -71,7 +74,10 @@ export async function downloadTicketDocument(
   }
 
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'inklly-print-'));
-  const filePath = path.join(tempDir, 'document');
+  // Spoolers and viewers pick a document handler by extension, so name the
+  // file after its verified content type (never the customer's file name).
+  const extension = contentType === 'application/pdf' ? '.pdf' : contentType === 'image/jpeg' ? '.jpg' : contentType === 'image/png' ? '.png' : '.tif';
+  const filePath = path.join(tempDir, `document${extension}`);
   try {
     await fs.promises.writeFile(filePath, body, { flag: 'wx', mode: 0o600 });
     return filePath;
@@ -132,58 +138,48 @@ export class SpoolerExecutor {
       };
     }
 
-    // 2. Physical Hardware Spooling (if on Windows and not in pure unit test mock mode)
-    if (process.platform === 'win32' && process.env.NODE_ENV !== 'test') {
-      try {
-        const result = await this.spoolToWindowsPrinter(ticket, options?.targetPrinterOverride, options?.downloadServerUrl, options?.downloadHeaders);
-        if (result) return result;
-      } catch (err: any) {
-        console.error('[SpoolerExecutor] Windows physical spool error:', err);
-        return {
-          attemptId: ticket.attemptId,
-          jobId: ticket.jobId,
-          status: 'OUTPUT_UNCERTAIN',
-          errorMessage: `Hardware Spooler Alert: ${err.message || 'Driver error during paper feed'}`,
-          timestamp,
-        };
-      }
+    // 2. Physical spooling through the operating system's own print system:
+    //    Windows spooler (SumatraPDF) or CUPS (macOS/Linux, via lp).
+    const supported = process.platform === 'win32' || process.platform === 'darwin' || process.platform === 'linux' || process.platform === 'freebsd';
+    if (!supported) {
+      return {
+        attemptId: ticket.attemptId,
+        jobId: ticket.jobId,
+        status: 'FAILED',
+        errorMessage: `Printing is not supported on ${process.platform}; no print was submitted.`,
+        timestamp,
+      };
     }
-
-    // Never report success unless a real printer spooler accepted the document.
-    // A missing platform driver or unsupported OS must not create billable output.
-    return {
-      attemptId: ticket.attemptId,
-      jobId: ticket.jobId,
-      status: 'FAILED',
-      errorMessage: process.platform === 'win32'
-        ? 'No supported print spooler executable is installed; no print was submitted.'
-        : 'Physical printing is supported only by the Windows desktop agent; no print was submitted.',
-      timestamp,
-    };
+    if (process.env.NODE_ENV === 'test' && !options?.allowSpoolInTests) {
+      return { attemptId: ticket.attemptId, jobId: ticket.jobId, status: 'FAILED', errorMessage: 'Spooling is disabled in tests; no print was submitted.', timestamp };
+    }
+    try {
+      return await this.spoolToSystemPrinter(ticket, options);
+    } catch (err: any) {
+      // Anything that fails after the spooler command may have started is
+      // ambiguous: never retry automatically.
+      console.error('[SpoolerExecutor] Physical spool error:', err);
+      return {
+        attemptId: ticket.attemptId,
+        jobId: ticket.jobId,
+        status: 'OUTPUT_UNCERTAIN',
+        errorMessage: `Printer spooler alert: ${err?.message || 'driver error'}. Check the printer before retrying.`,
+        timestamp: new Date().toISOString(),
+      };
+    }
   }
 
-  private static async spoolToWindowsPrinter(
-    ticket: PrintCommandTicket,
-    printerOverride?: string,
-    downloadServerUrl?: string,
-    downloadHeaders?: Record<string, string>
-  ): Promise<SpoolerResult | null> {
-    if (process.env.NODE_ENV === 'test') {
-      return null;
-    }
+  private static async spoolToSystemPrinter(ticket: PrintCommandTicket, options?: SpoolerExecutionOptions): Promise<SpoolerResult> {
     const timestamp = new Date().toISOString();
-    const possibleBinPaths = [
-      path.join(__dirname, '..', 'bin', 'SumatraPDF.exe'),
-      path.join(process.cwd(), 'bin', 'SumatraPDF.exe'),
-      path.join(process.cwd(), 'apps', 'agent', 'bin', 'SumatraPDF.exe'),
-    ];
+    const fail = (errorMessage: string): SpoolerResult => ({ attemptId: ticket.attemptId, jobId: ticket.jobId, status: 'FAILED', errorMessage, timestamp: new Date().toISOString() });
 
-    const sumatraExe = possibleBinPaths.find((p) => fs.existsSync(p));
-    if (!sumatraExe) throw new Error('SumatraPDF.exe is not installed with the agent.');
+    const printOptions = ticket.options;
+    const unsupported = unsupportedPrintOptions(printOptions);
+    if (unsupported) return fail(unsupported);
 
-    // Resolve only the explicitly assigned Windows queue. Guessing another
-    // printer risks sending a customer's document to the wrong device.
-    const requestedPrinter = printerOverride || ticket.printerId;
+    // Resolve only the explicitly assigned queue. Guessing another printer
+    // risks sending a customer's document to the wrong device.
+    const requestedPrinter = options?.targetPrinterOverride || ticket.printerId;
     let targetPrinter = '';
     try {
       const detected: DiscoveredPrinter[] = await PrinterDiscoveryService.discoverPrinters();
@@ -192,142 +188,45 @@ export class SpoolerExecutor {
     } catch {
       // Discovery failure means no safe target is known.
     }
-    if (!targetPrinter) {
-      return {
-        attemptId: ticket.attemptId,
-        jobId: ticket.jobId,
-        status: 'FAILED',
-        errorMessage: 'The assigned printer queue is not present and online on this agent; no document was submitted.',
-        timestamp,
-      };
-    }
+    if (!targetPrinter) return fail('The assigned printer queue is not present and online on this computer; no document was submitted.');
 
-    const printOptions = ticket.options;
-    const pagesPerSheet = printOptions.pagesPerSheet ?? 1;
-    if (printOptions.colorMode === 'mixed' || printOptions.duplexMode === 'duplex_manual' || pagesPerSheet !== 1) {
-      return {
-        attemptId: ticket.attemptId,
-        jobId: ticket.jobId,
-        status: 'FAILED',
-        errorMessage: 'This agent cannot safely apply mixed-color, manual-duplex, or multi-page-per-sheet settings; no document was submitted.',
-        timestamp,
-      };
+    const windows = process.platform === 'win32';
+    let sumatraExe = '';
+    if (windows) {
+      const possibleBinPaths = [
+        path.join(__dirname, '..', 'bin', 'SumatraPDF.exe'),
+        path.join(process.cwd(), 'bin', 'SumatraPDF.exe'),
+        path.join(process.cwd(), 'apps', 'agent', 'bin', 'SumatraPDF.exe'),
+      ];
+      sumatraExe = possibleBinPaths.find((p) => fs.existsSync(p)) || '';
+      if (!sumatraExe) return fail('SumatraPDF.exe is not installed with the agent; no print was submitted.');
     }
-
-    // Prepare printable PDF document
-    let filePath = '';
-    let isTempFile = false;
-
-    const copies = Number(printOptions.copies);
-    if (!Number.isInteger(copies) || copies < 1 || copies > 99) {
-      return { attemptId: ticket.attemptId, jobId: ticket.jobId, status: 'FAILED', errorMessage: 'Invalid copy count; no document was submitted.', timestamp };
-    }
-    const settingsParts: string[] = [`${copies}x`, printOptions.colorMode === 'bw' ? 'monochrome' : 'color'];
-    if (printOptions.pageRange && printOptions.pageRange !== 'All') settingsParts.push(printOptions.pageRange);
-    if (printOptions.fitMode === 'fit') settingsParts.push('fit');
-    if (printOptions.orientation === 'portrait' || printOptions.orientation === 'landscape') settingsParts.push(printOptions.orientation);
-    if (printOptions.duplexMode === 'duplex_auto') settingsParts.push('duplex');
-    else settingsParts.push('simplex');
-    settingsParts.push(printOptions.collation ? 'collate' : 'nocollate');
-    if (printOptions.paperSize === 'A4' || printOptions.paperSize === 'A3') settingsParts.push(`paper=${printOptions.paperSize}`);
-    else if (printOptions.paperSize !== 'PLAIN') {
-      return { attemptId: ticket.attemptId, jobId: ticket.jobId, status: 'FAILED', errorMessage: 'This agent cannot verify the requested paper size/type; no document was submitted.', timestamp };
-    }
-    const settings = settingsParts.join(',');
 
     // The ticket may contain a customer filename or a hostile URL. Never use either
     // as a filesystem path or send paired credentials outside the configured API origin.
-    if (ticket.documentUrl && downloadServerUrl) {
-      try {
-        filePath = await downloadTicketDocument(ticket.documentUrl, downloadServerUrl, downloadHeaders);
-      } catch (err: any) {
-        return {
-          attemptId: ticket.attemptId,
-          jobId: ticket.jobId,
-          status: 'FAILED',
-          errorMessage: `The customer document could not be validated or downloaded; no print was submitted. ${err?.message || 'Download failed.'}`,
-          timestamp: new Date().toISOString(),
-        };
-      }
-      isTempFile = true;
+    if (!ticket.documentUrl || !options?.downloadServerUrl) return fail('The customer document is unavailable; no substitute document was printed.');
+    let filePath: string;
+    try {
+      filePath = await downloadTicketDocument(ticket.documentUrl, options.downloadServerUrl, options.downloadHeaders);
+    } catch (err: any) {
+      return fail(`The customer document could not be validated or downloaded; no print was submitted. ${err?.message || 'Download failed.'}`);
     }
-    if (!filePath || !fs.existsSync(filePath)) {
-      return {
-        attemptId: ticket.attemptId,
-        jobId: ticket.jobId,
-        status: 'FAILED',
-        errorMessage: 'The customer document is unavailable; no substitute document was printed.',
-        timestamp: new Date().toISOString(),
-      };
-    }
-
-    console.log(`[Inklly Spooler] Spooling ${filePath} to physical printer "${targetPrinter}" via ${sumatraExe}...`);
 
     try {
-      await execFileAsync(sumatraExe, [
-        '-print-to',
-        targetPrinter,
-        '-silent',
-        '-print-settings',
-        settings,
-        filePath,
-      ]);
-
-      console.log(`[Inklly Spooler] Physical spool successfully dispatched for Job ${ticket.jobId} to "${targetPrinter}".`);
-
-      return {
-        attemptId: ticket.attemptId,
-        jobId: ticket.jobId,
-        status: 'SUBMITTED_TO_SPOOLER',
-        timestamp,
-      };
-    } finally {
-      if (isTempFile && fs.existsSync(filePath)) {
-        const tempDir = path.dirname(filePath);
-        setTimeout(() => { void fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => undefined); }, 15000);
+      let driverJobId: number | undefined;
+      if (windows) {
+        console.log(`[Inklly Spooler] Sending job ${ticket.jobId} to "${targetPrinter}" via SumatraPDF`);
+        await execFileAsync(sumatraExe, ['-print-to', targetPrinter, '-silent', '-print-settings', buildSumatraSettings(printOptions), filePath], { timeout: 120_000, windowsHide: true });
+      } else {
+        console.log(`[Inklly Spooler] Sending job ${ticket.jobId} to CUPS queue "${targetPrinter}"`);
+        const { stdout } = await execFileAsync('lp', buildLpArgs(targetPrinter, filePath, printOptions, ticket.fileName || 'Inklly print'), { timeout: 60_000 });
+        driverJobId = parseLpJobId(String(stdout));
       }
+      return { attemptId: ticket.attemptId, jobId: ticket.jobId, status: 'SUBMITTED_TO_SPOOLER', driverJobId, timestamp };
+    } finally {
+      const tempDir = path.dirname(filePath);
+      // Give the spooler time to read the file before removing it.
+      setTimeout(() => { void fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => undefined); }, 60_000).unref();
     }
-  }
-
-  private static generateOrderPdf(ticket: PrintCommandTicket, printerName: string): string {
-    const tmpPath = path.join(os.tmpdir(), `inklly_${ticket.jobId}_${Date.now()}.pdf`);
-    const lines = [
-      `Order Ticket: #${ticket.jobId}`,
-      `File Name: ${ticket.fileName || 'Customer_Document.pdf'}`,
-      `Target Hardware: ${printerName}`,
-      `Copies: ${ticket.options?.copies || 1} | Color: ${(ticket.options as any)?.color || ticket.options?.colorMode === 'color' ? 'Yes' : 'B&W'}`,
-      `Duplex Mode: ${(ticket.options as any)?.duplex || ticket.options?.duplexMode?.includes('duplex') ? 'Duplex' : 'Simplex'}`,
-      `Merchant Shop ID: ${ticket.shopId}`,
-      `Dispatched by Inklly Desktop Edge Spooler`,
-      `Status: Spooled to Windows Print Spooler -> ${printerName}`,
-    ];
-
-    let streamText = 'BT\n/F1 18 Tf\n50 780 Td\n(INKLLY AUTONOMOUS PRINT SYSTEM) Tj\n/F1 11 Tf\n';
-    for (const line of lines) {
-      streamText += `0 -24 Td\n(${line.replace(/[()\\\\]/g, '')}) Tj\n`;
-    }
-    streamText += 'ET\n';
-
-    const streamLength = Buffer.byteLength(streamText, 'utf8');
-    const pdf =
-      '%PDF-1.4\n' +
-      '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n' +
-      '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n' +
-      '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n' +
-      `4 0 obj\n<< /Length ${streamLength} >>\nstream\n` +
-      streamText +
-      'endstream\nendobj\n' +
-      '5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n' +
-      'xref\n0 6\n' +
-      '0000000000 65535 f \n' +
-      '0000000009 00000 n \n' +
-      '0000000058 00000 n \n' +
-      '0000000115 00000 n \n' +
-      '0000000244 00000 n \n' +
-      '0000000350 00000 n \n' +
-      'trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n450\n%%EOF\n';
-
-    fs.writeFileSync(tmpPath, Buffer.from(pdf, 'utf8'));
-    return tmpPath;
   }
 }

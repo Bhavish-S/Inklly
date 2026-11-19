@@ -267,8 +267,8 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   // Dynamic Real Scannable QR State
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const liveShopUrl = typeof window !== 'undefined'
-    ? `${window.location.origin}/p/${currentMerchant.shopCode || 'campus1'}`
-    : `https://inklly.vercel.app/p/${currentMerchant.shopCode || 'campus1'}`;
+    ? `${window.location.origin}/p/${currentMerchant.shopCode || ''}`
+    : `https://inklly.vercel.app/p/${currentMerchant.shopCode || ''}`;
 
   useEffect(() => {
     QRCode.toDataURL(liveShopUrl, {
@@ -306,6 +306,21 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const [systemCheckMessage, setSystemCheckMessage] = useState('');
 
   const checkAgentHealth = async (showToast: boolean = false) => {
+    // The server knows whether this shop's print computer is connected (fresh
+    // heartbeats), so the status is right from any device: the counter PC, a
+    // tablet or the owner's phone.
+    try {
+      const printers = await api.getPrinters();
+      const connected = Array.isArray(printers) && printers.some((printer: any) => printer.agentId && printer.healthStatus === 'ONLINE');
+      if (connected) {
+        setAgentOnline(true);
+        setAgentInfo((current) => ({ ...(current || {}), isPaired: true, agentStatus: 'RUNNING' }));
+        if (showToast) setGlobalToast('Your print computer is connected and reporting its printers.');
+        return true;
+      }
+    } catch {
+      // Fall back to the local probe below.
+    }
     try {
       const res = await fetch('http://127.0.0.1:8765/health', { method: 'GET', signal: AbortSignal.timeout(2000) });
       if (res.ok) {
@@ -1597,6 +1612,29 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     setTimeout(() => setOrderActionToast(null), 5000);
   };
 
+  // After the agent sends a job, staff confirm they picked up complete pages.
+  const handleConfirmPrintedOutput = async (ord: any) => {
+    const pendingJobs = (ord.printJobs || []).filter((job: any) => ['SUBMITTED_TO_SPOOLER', 'OUTPUT_PENDING_CONFIRMATION', 'DISPATCHED', 'PARTIAL_OUTPUT', 'NEEDS_PHYSICAL_VERIFICATION'].includes(job.status));
+    if (!pendingJobs.length) {
+      setSelectedOrder(ord);
+      setOrderActionToast('This order still needs attention. Open it to see each file’s print status.');
+      setTimeout(() => setOrderActionToast(null), 5000);
+      return;
+    }
+    const fileSummary = (ord.files || []).map((file: any) => `• ${file.fileName} (${file.pageCount} pages)`).join('\n');
+    if (!window.confirm(`Check the printed pages for Token ${ord.tokenDisplay}:\n\n${fileSummary}\n\nAre all pages printed correctly?`)) return;
+    try {
+      const result = await api.reconcilePrintOutput(ord.rawId, 'Staff checked the printed pages at the counter.', pendingJobs.map((job: any) => job.id));
+      await fetchLiveOrdersFromApi();
+      setOrderActionToast(result.orderComplete
+        ? (ord.isPaid ? `Token ${ord.tokenDisplay} is ready for pickup.` : `Token ${ord.tokenDisplay} is ready for pickup. Collect ${ord.amount} in cash.`)
+        : `Token ${ord.tokenDisplay}: some files still need checking.`);
+    } catch (error) {
+      setOrderActionToast(error instanceof Error ? error.message : 'Could not confirm the printout.');
+    }
+    setTimeout(() => setOrderActionToast(null), 5000);
+  };
+
   const handleQuickPreview = async (ord: any) => {
     const file = ord.files?.[0];
     if (!file) {
@@ -2321,7 +2359,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                   ? 'border-status-success/30 bg-status-success-bg text-status-success'
                   : 'border-status-warning/30 bg-status-warning-bg text-status-warning'
               }`}
-              title={agentOnline ? 'Edge Print Agent Online on http://127.0.0.1:8765 (Click to re-check)' : 'Edge Agent Offline (Click to test local connection)'}
+              title={agentOnline ? 'Print computer connected (click to re-check)' : 'Print computer not connected (click to re-check)'}
             >
               <span className={`w-2 h-2 rounded-full shrink-0 ${agentOnline ? 'bg-status-success animate-pulse' : 'bg-status-warning'}`} />
               <span>{agentOnline ? 'Agent Online' : 'Agent Offline'}</span>
@@ -2670,7 +2708,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                   onChange={(event) => setSelectedPrinterId(event.target.value)}
                   className="max-w-56 px-2.5 py-1.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs"
                 >
-                  <option value="">Use one online default</option>
+                  <option value="">Auto: best printer for each order</option>
                   {detectedPrinters.filter((printer) => printer.status === 'Ready').map((printer) => (
                     <option key={printer.id} value={printer.id}>{printer.name}{printer.isDefault ? ' · default' : ''}</option>
                   ))}
@@ -2998,6 +3036,18 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                               </button>
                             )}
 
+                            {/* Sent to the printer: staff check the pages, then the order is ready for pickup */}
+                            {ord.tab === 'printing' && (
+                              <button
+                                type="button"
+                                onClick={() => handleConfirmPrintedOutput(ord)}
+                                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black transition-all shadow-xs cursor-pointer"
+                                title="You checked the printed pages. Mark the order ready for pickup."
+                              >
+                                Pages OK ✓
+                              </button>
+                            )}
+
                             {/* Ready for pickup: take cash if it is still owed, then hand over */}
                             {ord.rawStatus === 'READY_FOR_COLLECTION' && (
                               <button
@@ -3133,24 +3183,39 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                   </div>
 
                   <div className="p-3.5 bg-gray-50 dark:bg-gray-800/60 rounded-xl space-y-2 text-xs">
-                    <span className="text-[10px] text-gray-400 uppercase font-bold block">Document & Print Options</span>
-                    <div className="flex items-center gap-2 font-semibold">
-                      <span className="bg-red-100 text-red-600 font-bold px-1.5 py-0.5 rounded text-[9px]">PDF</span>
-                      <span className="truncate">{selectedOrder.document || selectedOrder.name}</span>
-                    </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1 text-[11px] text-gray-600 dark:text-gray-300">
-                      <div><strong>Pages:</strong> {selectedOrder.pageRangeDisplay || `${selectedOrder.pages}p`}</div>
-                      <div><strong>Copies:</strong> {selectedOrder.copies || 1} set(s)</div>
-                      <div><strong>Color Mode:</strong> {selectedOrder.colorMode || 'Black & White'}</div>
-                      <div><strong>Duplex:</strong> {selectedOrder.duplex || 'Single Sided'}</div>
-                      <div><strong>Orientation:</strong> {selectedOrder.orientation || 'Portrait'} {selectedOrder.rotation ? `(${selectedOrder.rotation}°)` : ''}</div>
-                      <div><strong>Paper:</strong> {selectedOrder.paperSize || 'A4'}</div>
-                    </div>
-                    {selectedOrder.customerNote && (
-                      <div className="p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-[11px] text-amber-800 dark:text-amber-200 mt-2">
-                        <strong>Customer Instructions:</strong> {selectedOrder.customerNote}
-                      </div>
-                    )}
+                    <span className="text-[10px] text-gray-400 uppercase font-bold block">
+                      Documents & print options {(selectedOrder.files || []).length > 1 ? `(${selectedOrder.files.length} files)` : ''}
+                    </span>
+                    {(selectedOrder.files || []).length === 0 && <p className="text-[11px] text-gray-500">No files are attached to this order.</p>}
+                    {(selectedOrder.files || []).map((file: any, index: number) => {
+                      const opts = file.printOptions || {};
+                      const color = opts.colorMode === 'color' ? 'Colour' : opts.colorMode === 'mixed' ? `Mixed (colour p. ${opts.colorPages || 'custom'})` : 'Black & White';
+                      const sides = opts.duplexMode === 'duplex_auto' ? 'Double sided' : opts.duplexMode === 'duplex_manual' ? 'Double sided (manual)' : 'Single sided';
+                      const pages = opts.pageRange && opts.pageRange !== 'All' ? `Pages ${opts.pageRange} of ${file.pageCount}` : `All ${file.pageCount} pages`;
+                      const job = (selectedOrder.printJobs || []).find((candidate: any) => candidate.orderFileId === file.id);
+                      return (
+                        <div key={file.id || index} className={`${index > 0 ? 'pt-2 border-t border-gray-200 dark:border-gray-700' : ''} space-y-1.5`}>
+                          <div className="flex items-center gap-2 font-semibold">
+                            <span className="bg-red-100 text-red-600 font-bold px-1.5 py-0.5 rounded text-[9px]">{String(file.mimeType || file.fileName || '').toLowerCase().includes('pdf') ? 'PDF' : 'IMG'}</span>
+                            <span className="truncate">{index + 1}. {file.fileName}</span>
+                            {job && <span className="ml-auto shrink-0 text-[9px] font-bold text-gray-500">{String(job.status).replaceAll('_', ' ').toLowerCase()}</span>}
+                          </div>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px] text-gray-600 dark:text-gray-300">
+                            <div><strong>Pages:</strong> {pages}</div>
+                            <div><strong>Copies:</strong> {opts.copies || 1}</div>
+                            <div><strong>Colour:</strong> {color}</div>
+                            <div><strong>Sides:</strong> {sides}</div>
+                            <div><strong>Orientation:</strong> {opts.orientation === 'landscape' ? 'Landscape' : opts.orientation === 'portrait' ? 'Portrait' : 'Auto'}</div>
+                            <div><strong>Paper:</strong> {opts.paperSize || 'A4'}</div>
+                          </div>
+                          {opts.note && (
+                            <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-[11px] text-amber-800 dark:text-amber-200">
+                              <strong>Customer instructions:</strong> {opts.note}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
 
                   {selectedOrder.tab === 'payment_pending' && (
@@ -5728,7 +5793,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                     </button>
                     <button
                       type="button"
-                      onClick={() => onNavigate?.(`/p/${currentMerchant.shopCode || 'campus1'}`)}
+                      onClick={() => currentMerchant.shopCode && onNavigate?.(`/p/${currentMerchant.shopCode}`)}
                       className="px-4 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 rounded-xl text-xs font-bold text-gray-700 dark:text-gray-300 flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
                     >
                       <span>🚀</span> Open Customer Portal
@@ -5739,7 +5804,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
             </div>
 
             {/* Offline Toast Notification matching screenshot */}
-            <div className="fixed bottom-6 right-6 z-40 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-4 shadow-xl flex items-start gap-3 max-w-sm animate-fadeIn">
+            {!agentOnline && showOfflineToast && <div className="fixed bottom-6 right-6 z-40 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-4 shadow-xl flex items-start gap-3 max-w-sm animate-fadeIn">
               <span className="text-amber-500 font-bold text-base mt-0.5">⚠</span>
               <div className="text-xs space-y-0.5">
                 <div className="font-extrabold text-[#172031] dark:text-white">Print computer is offline</div>
@@ -5754,7 +5819,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
               >
                 ✕
               </button>
-            </div>
+            </div>}
           </div>
         )}
 
@@ -5994,7 +6059,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       {/* ─────────────────────────────────────────────────────────────
           GLOBAL OFFLINE TOAST (Bottom-Right)
       ───────────────────────────────────────────────────────────── */}
-      {showOfflineToast && (
+      {showOfflineToast && !agentOnline && (
         <div className="fixed bottom-4 right-4 bg-white dark:bg-gray-800 border border-amber-300 dark:border-amber-700 rounded-2xl p-4 shadow-xl z-50 max-w-sm flex items-start gap-3 animate-fade-in">
           <span className="text-xl">⚠️</span>
           <div>

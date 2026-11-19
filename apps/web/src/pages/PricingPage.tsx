@@ -170,7 +170,7 @@ export const PricingPage: React.FC<PricingPageProps> = ({ onNavigate }) => {
                 {expandedCard === 'lifetime' && (
                   <div className="bg-ink-surface-subtle dark:bg-ink-dark-elevated p-4 rounded-2xl mb-6 text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary space-y-2 border border-ink-border dark:border-ink-dark-border">
                     <div className="flex justify-between"><span>Multi-Branch Kiosk Mode:</span><strong className="text-ink-text dark:text-ink-dark-text">Included</strong></div>
-                    <div className="flex justify-between"><span>WhatsApp Bot:</span><strong className="text-ink-text dark:text-ink-dark-text">Included</strong></div>
+                    <div className="flex justify-between"><span>WhatsApp Bot:</span><strong className="text-ink-text dark:text-ink-dark-text">Coming soon</strong></div>
                     <div className="flex justify-between"><span>Developer API & Webhooks:</span><strong className="text-ink-text dark:text-ink-dark-text">Included</strong></div>
                     <div className="flex justify-between"><span>Updates & Maintenance:</span><strong className="text-ink-text dark:text-ink-dark-text">Lifetime Free</strong></div>
                   </div>
@@ -194,7 +194,7 @@ export const PricingPage: React.FC<PricingPageProps> = ({ onNavigate }) => {
               <div>
                 <h3 className="text-2xl font-bold text-ink-text dark:text-ink-dark-text mb-1">Starter</h3>
                 <p className="text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary leading-relaxed mb-6 min-h-[32px]">
-                  QR and WhatsApp portal for a small single-printer shop.
+                  QR ordering portal for a small single-printer shop.
                 </p>
 
                 <div className="flex items-baseline gap-1 mb-6">

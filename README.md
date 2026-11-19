@@ -5,7 +5,7 @@
   <h3>Turn Any Countertop Into a High-Speed, Automated Print Station</h3>
   <p>QR Self-Service Intake • 4-Digit Token Queue • Deterministic Paise Pricing • Dual B&W/Color Routing • Append-Only Ledger</p>
 
-  [![Build & Test Status](https://img.shields.io/badge/tests-226%20passed-16845B?style=for-the-badge&logo=node.js)](https://github.com/Bhavish-S/Inklly)
+  [![Build & Test Status](https://img.shields.io/badge/tests-320%20passed-16845B?style=for-the-badge&logo=node.js)](https://github.com/Bhavish-S/Inklly)
   [![Vercel Deployment](https://img.shields.io/badge/frontend-Vercel-black?style=for-the-badge&logo=vercel)](https://inklly.vercel.app)
   [![Render Deployment](https://img.shields.io/badge/api-Render-46E3B7?style=for-the-badge&logo=render)](https://inklly.onrender.com)
   [![License](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)](#license)
@@ -25,8 +25,8 @@ By replacing chaotic WhatsApp file forwarding, USB pendrive malware risks, and m
 
 ### 1. 📱 Customer Self-Service Countertop QR Portal
 * **Zero App Installation:** Customers scan the counter QR code (`inklly.vercel.app/p/<shopCode>`) using any smartphone browser.
-* **Instant Document Upload & Processing:** Supports PDF, Office documents, and multi-image uploads with sub-second page extraction.
-* **Interactive Document Inspection:** High-fidelity in-browser PDF canvas renderer supporting page navigation, 90°/180° rotation, and source cropping.
+* **Document Upload:** PDF, JPG and PNG (export Word/Excel to PDF first), page count read on the server from the file itself.
+* **Document Editor:** drag-to-crop (mouse or touch), content-detecting auto-crop, 90° rotation, and scan enhancement (Document B&W, Enhanced, Grayscale, brightness/contrast). PDF crop/rotation keep text as vectors; enhancement re-renders pages at 200 dpi.
 * **Precise Print Customization:** Configure copies, print modes (**Black & White** vs **Full Color**), page orientations, single-sided or double-sided (duplex), and custom page ranges (e.g., `1-5, 8, 12-18`).
 * **Deterministic Server-Side Pricing:** Calculates real-time quotes down to integer **Paise** (`₹0.01` precision) with bulk discounts and tiered rates, preventing floating-point rounding errors.
 * **4-Digit Token System:** Every order receives a memorable 4-digit pickup token (e.g., `#4821`) for queue coordination and counter pickup.
@@ -35,19 +35,19 @@ By replacing chaotic WhatsApp file forwarding, USB pendrive malware risks, and m
 ### 2. 🏪 Merchant Counter POS Workspace (`/merchant`)
 * **Real-Time Live Queue:** Instant visibility of incoming customer print jobs categorized by status (`RECEIVED`, `READY_TO_PRINT`, `PRINTING`, `COMPLETED`).
 * **Document Peek Modal:** Full-screen inspector for operators to review customer files, page settings, and color flags before release.
-* **1-Click Hardware Routing:** Automatically routes black-and-white documents to high-speed monochrome laser printers and color graphics to dedicated color units.
+* **1-Click Print Routing:** Print sends each order to the best ready printer: the shop default if it can print every file, otherwise black-and-white work to a mono printer and colour/mixed work to a colour printer. Incompatible jobs are refused with reasons, never sent.
 * **Cash Collection Reconciliation:** Collect cash payments at the counter with one click, automatically posting balancing ledger entries to ensure financial accuracy.
 * **Custom Rate Engine:** Configure base per-page prices, duplex discounts, additional copy discount tiers, and custom paper surcharges (A4, A3, Legal, Glossy, Bond).
 * **Multi-Printer Hardware Management:** Register USB, LAN, or network printers with supported tray specifications and capability profiles.
 * **Role-Based Staff Access:** Grant granular permissions using pre-built roles (`Shop Manager`, `Print Operator`, `Front Desk Staff`).
 
 ### 3. 🖨️ Desktop Edge Print Agent Daemon (`apps/agent`)
-* **Local Spooler Integration:** Lightweight, low-overhead daemon running on the print shop PC (Windows/macOS/Linux).
-* **Direct Hardware Dispatch:** Communicates directly with system print drivers without requiring third-party reader applications.
+* **Works with any printer the computer can print to:** Windows print queues (via bundled SumatraPDF) and CUPS queues on macOS/Linux (`lp`), so USB, network, shared and AirPrint/IPP Everywhere printers of any brand work through their normal OS driver.
+* **Automatic capability detection:** colour, duplex and A4/A3 support are read from each driver (Win32_Printer capabilities, CUPS printer-type/PPD options) and make a new printer ready without manual setup; a merchant-saved profile always wins. Printers are rediscovered every minute.
 * **Hardware Safety Invariants:** Ambiguous outcomes or paper jams trigger `OUTPUT_UNCERTAIN` status rather than dangerous duplicate prints.
 * **Authenticated Polling:** Uses secure, token-authenticated long-polling with lease-based idempotency to guarantee zero double-dispatches.
 
-### 4. 💬 WhatsApp Automation Hub
+### 4. 💬 WhatsApp Automation Hub (planned — not built yet)
 * **Direct Intake via WhatsApp:** Customers can send documents directly to the shop's WhatsApp business number to receive instant quote links.
 * **Automated Status Notifications:** Automatic pickup alerts sent to customers when their documents finish printing.
 * **Daily Performance Digests:** Daily morning summary alerts showing shop GMV, total pages printed, and paper usage metrics.
@@ -158,7 +158,7 @@ Inklly maintains an exhaustive test suite covering multi-tenancy isolation, inte
 ```bash
 npm test
 ```
-*Current test suite: **226 server tests** + **13 frontend scripts tests** passing with 0 failures.*
+*Current test suite: **320 tests** (database 25, shared 16, agent 26, server 240, web 13) passing with 0 failures.*
 
 ### 4. Start Development Services
 
@@ -188,12 +188,20 @@ npm run dev:agent
 
 ---
 
-## 🔑 Demo & Test Credentials
+## 🔑 Local Demo Credentials (development only)
 
-For evaluation and testing without registering a new account, the local environment includes pre-seeded accounts:
+These accounts are created only when `NODE_ENV` is not `production`. Production never creates demo accounts and never uses a built-in admin password: set `PLATFORM_OWNER_EMAIL` and a unique `PLATFORM_OWNER_PASSWORD` (16+ characters) for the first boot.
 
 | Portal | Role | Email | Password |
 | :--- | :--- | :--- | :--- |
+| **Merchant POS** | Merchant Owner | `owner@campusprint.in` | `DemoOwnerPassword123!` |
+| **Merchant Staff** | Desk Operator | `operator@campusprint.in` | `DemoOperatorPassword123!` |
+| **Platform Admin** | Platform Owner | `admin@inklly.com` | `DemoPlatformPassword123!` |
+| **Developer Hub** | API Developer | `dev@inklly.com` | `DemoDeveloperPassword123!` |
+
+*(In development builds the `/login` screen has 1-click fill buttons for these; production builds do not show them.)*
+
+--- | :--- | :--- | :--- |
 | **Merchant POS** | Merchant Owner | `owner@campusprint.in` | `DemoOwnerPassword123!` |
 | **Merchant Staff** | Desk Operator | `operator@campusprint.in` | `hash_staff_123` |
 | **Platform Admin** | Platform Owner | `admin@inklly.com` | `InkllyAdmin2026!PlatformOwner` |

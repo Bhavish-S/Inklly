@@ -157,7 +157,14 @@ export class PrinterRepository {
   }
 
   /** Replace a shop's live queue inventory from an authenticated desktop agent. */
-  public syncAgentInventory(shopId: string, agentId: string, queues: Array<{ name: string; driverName: string; isOnline: boolean; isDefault: boolean }>): void {
+  public syncAgentInventory(
+    shopId: string,
+    agentId: string,
+    queues: Array<{
+      name: string; driverName: string; isOnline: boolean; isDefault: boolean;
+      capabilities?: { color: boolean | null; duplex: boolean | null; paperSizes: string[] };
+    }>
+  ): void {
     const now = new Date().toISOString();
     this.db.transaction(() => {
       this.db.execute(`UPDATE printers SET is_online = 0, updated_at = ? WHERE shop_id = ? AND agent_id = ?`, [now, shopId, agentId]);
@@ -191,6 +198,24 @@ export class PrinterRepository {
           [id, shopId, name, queue.driverName.slice(0, 256), queue.isOnline ? 1 : 0, queue.isDefault && !shopHasDefault ? 1 : 0, now, now, now, agentId]
         );
         if (queue.isDefault && !shopHasDefault) shopHasDefault = true;
+
+        // A queue nobody has configured yet takes the capabilities its own
+        // driver declares, so a newly plugged-in printer is ready to use. A
+        // merchant-saved profile (any tray) is never overwritten.
+        const caps = queue.capabilities;
+        if (caps && caps.paperSizes.length > 0) {
+          const configured = this.db.queryOne<any>(`SELECT 1 AS found FROM paper_trays WHERE printer_id = ? LIMIT 1`, [id]);
+          if (!configured) {
+            this.db.execute(
+              `UPDATE printers SET supports_color = ?, supports_duplex = ?, updated_at = ? WHERE id = ? AND shop_id = ?`,
+              [caps.color === true ? 1 : 0, caps.duplex === true ? 1 : 0, now, id, shopId]
+            );
+            this.db.execute(
+              `INSERT INTO paper_trays (id, printer_id, name, supported_sizes, is_default) VALUES (?, ?, ?, ?, 1)`,
+              [`tray-${id}-auto`, id, 'Detected from driver', JSON.stringify(caps.paperSizes)]
+            );
+          }
+        }
       }
     });
   }

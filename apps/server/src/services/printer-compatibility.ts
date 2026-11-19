@@ -34,9 +34,8 @@ export function getPrinterCompatibilityIssues(
 
     if (!['bw', 'color', 'mixed'].includes(String(options.colorMode))) {
       issues.add(`${label} has an unsupported color mode.`);
-    } else if (options.colorMode === 'mixed') {
-      issues.add(`${label} requests mixed-color pages, which the current agent cannot apply safely.`);
-    } else if (options.colorMode === 'color' && !printer.supportsColor) {
+    } else if ((options.colorMode === 'color' || options.colorMode === 'mixed') && !printer.supportsColor) {
+      // Mixed documents print as one colour job so pages stay in order.
       issues.add(`${label} requires a color capable printer.`);
     }
 
@@ -67,4 +66,31 @@ export function getPrinterCompatibilityIssues(
   }
 
   return [...issues];
+}
+
+/**
+ * One-click routing: picks the printer for an order when staff did not choose
+ * one. Only printers that pass every compatibility check are considered. The
+ * shop's default wins when it qualifies; otherwise all-black-and-white orders
+ * go to a mono printer (cheaper per page) and colour orders to a colour one.
+ */
+export function chooseAutomaticPrinter<P extends Pick<PrinterDevice, 'id' | 'name' | 'isDefault' | 'supportsColor' | 'supportsDuplex' | 'trays'>>(
+  files: readonly RequestedPrintFile[],
+  candidates: readonly P[],
+): { printer: P | null; reasons: Record<string, string[]> } {
+  const reasons: Record<string, string[]> = {};
+  const compatible = candidates.filter((candidate) => {
+    const issues = getPrinterCompatibilityIssues(files, candidate);
+    if (issues.length) reasons[candidate.name] = issues;
+    return issues.length === 0;
+  });
+  if (!compatible.length) return { printer: null, reasons };
+  const preferred = compatible.find((candidate) => candidate.isDefault);
+  if (preferred) return { printer: preferred, reasons };
+  const needsColor = files.some((file) => file.printOptions?.colorMode === 'color' || file.printOptions?.colorMode === 'mixed');
+  const ranked = [...compatible].sort((a, b) => {
+    if (!needsColor && a.supportsColor !== b.supportsColor) return a.supportsColor ? 1 : -1;
+    return a.name.localeCompare(b.name);
+  });
+  return { printer: ranked[0], reasons };
 }

@@ -82,7 +82,12 @@ export class ShopRepository {
   }
 
   public getShopByCode(code: string): Shop | null {
-    const row = this.db.queryOne<any>(`SELECT * FROM shops WHERE shop_code = ?`, [code]);
+    if (typeof code !== 'string' || !code.trim()) return null;
+    // Shop codes are printed on QR posters and typed by hand, so match them
+    // case-insensitively after trying the exact (indexed) value.
+    const trimmed = code.trim();
+    const row = this.db.queryOne<any>(`SELECT * FROM shops WHERE shop_code = ?`, [trimmed])
+      || this.db.queryOne<any>(`SELECT * FROM shops WHERE LOWER(shop_code) = LOWER(?) ORDER BY created_at ASC LIMIT 1`, [trimmed]);
     if (!row) return null;
     return this.mapShopRow(row);
   }

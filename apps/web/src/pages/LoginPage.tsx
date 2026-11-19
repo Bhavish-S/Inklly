@@ -187,7 +187,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, onLoginSuccess
             </div>
           )}
 
-          {/* Quick Demo Credentials Assistant */}
+          {/* Quick Demo Credentials Assistant: local development builds only. The
+              demo accounts exist only in non-production databases. */}
+          {import.meta.env.DEV && (
           <div className="mb-4 p-3 bg-slate-100 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700/60 text-xs">
             <div className="flex items-center justify-between mb-2">
               <span className="font-bold text-slate-700 dark:text-slate-300 text-[11px] uppercase tracking-wider">
@@ -219,6 +221,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, onLoginSuccess
               </button>
             </div>
           </div>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>

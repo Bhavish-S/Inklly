@@ -141,16 +141,43 @@ export class AuthController {
     });
   };
 
+  /** Resolves the plan and the exact amount the server will charge for it. */
+  private resolveSignupPlan(planId: unknown, billingCycle: unknown) {
+    const plan = SUBSCRIPTION_PLANS.find((p) => p.id === planId) || SUBSCRIPTION_PLANS[1];
+    const isLifetime = plan.id === 'plan-lifetime' || billingCycle === 'lifetime';
+    const isYearly = !isLifetime && billingCycle === 'yearly';
+    const amountPaise = isLifetime || isYearly ? plan.annualPricePaise : plan.monthlyPricePaise;
+    const cycle: 'lifetime' | 'yearly' | 'monthly' = isLifetime ? 'lifetime' : isYearly ? 'yearly' : 'monthly';
+    return { plan, isLifetime, isYearly, amountPaise, cycle };
+  }
+
+  /**
+   * A simulated payment is accepted only outside production and only when no
+   * platform Razorpay account is configured, so local development can finish
+   * signup without credentials. Production never trusts a client payment claim.
+   */
+  private sandboxSignupAllowed(): boolean {
+    return process.env.NODE_ENV !== 'production' && !this.platformProvider.getConfig();
+  }
+
   public signupCheckout = async (req: Request, res: Response) => {
     try {
-      const { planId, billingCycle } = req.body || {};
-      const plan = SUBSCRIPTION_PLANS.find((p) => p.id === planId) || SUBSCRIPTION_PLANS[1];
-      const isLifetime = plan.id === 'plan-lifetime' || billingCycle === 'lifetime';
-      const isYearly = !isLifetime && billingCycle === 'yearly';
-      const amountPaise = isLifetime ? plan.annualPricePaise : isYearly ? plan.annualPricePaise : plan.monthlyPricePaise;
+      const { planId, billingCycle, email } = req.body || {};
+      const { plan, amountPaise, cycle } = this.resolveSignupPlan(planId, billingCycle);
+      const planSummary = { id: plan.id, name: plan.name, tier: plan.tier, billingCycle: cycle, amountPaise };
+
+      // Refuse before money moves when the account cannot be created afterwards.
+      const normalizedEmail = typeof email === 'string' ? email.toLowerCase().trim() : '';
+      if (normalizedEmail && this.userRepo.getUserByEmail(normalizedEmail)) {
+        return res.status(409).json({
+          error: 'An account with this email already exists. Please sign in to your dashboard.',
+          accountExists: true,
+          email: normalizedEmail,
+        });
+      }
 
       const platformConfig = this.platformProvider.getConfig();
-      if (platformConfig && platformConfig.keyId.startsWith('rzp_')) {
+      if (platformConfig) {
         try {
           const order = await this.platformProvider.createOrder({
             attemptId: `signup-${crypto.randomUUID()}`,
@@ -160,49 +187,96 @@ export class AuthController {
           return res.json({
             success: true,
             mode: platformConfig.mode,
-            isSandbox: platformConfig.mode === 'TEST',
+            isSandbox: false,
             razorpayOrderId: order.id,
             keyId: platformConfig.keyId,
             amount: amountPaise,
             currency: 'INR',
-            plan: {
-              id: plan.id,
-              name: plan.name,
-              tier: plan.tier,
-              billingCycle: isLifetime ? 'lifetime' : isYearly ? 'yearly' : 'monthly',
-              amountPaise,
-            },
+            plan: planSummary,
           });
-        } catch (err) {
-          console.warn('[Signup Checkout] Real Razorpay call failed, falling back to sandbox simulator:', err);
+        } catch (err: any) {
+          console.error('[Signup Checkout] Razorpay order creation failed:', err?.message || err);
+          return res.status(502).json({ error: 'The payment gateway could not start checkout. Please try again in a minute, or start the free trial.' });
         }
       }
 
-      // Sandbox / Test Mode fallback
-      const testOrderId = `order_test_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 8)}`;
-      const testKeyId = (process.env.INKLLY_RAZORPAY_KEY_ID || '').trim() || 'rzp_test_InkllySandboxKey';
+      if (!this.sandboxSignupAllowed()) {
+        return res.status(503).json({
+          error: 'Paid sign-up is not available yet. Start the free trial; you can upgrade from Billing later.',
+          paidSignupAvailable: false,
+        });
+      }
+
+      // Local development only: no gateway is configured, so the client may
+      // complete a clearly labelled simulated payment.
       return res.json({
         success: true,
-        mode: 'TEST',
+        mode: 'SANDBOX',
         isSandbox: true,
-        razorpayOrderId: testOrderId,
-        keyId: testKeyId,
+        razorpayOrderId: `order_sandbox_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 8)}`,
+        keyId: null,
         amount: amountPaise,
         currency: 'INR',
-        plan: {
-          id: plan.id,
-          name: plan.name,
-          tier: plan.tier,
-          billingCycle: isLifetime ? 'lifetime' : isYearly ? 'yearly' : 'monthly',
-          amountPaise,
-        },
+        plan: planSummary,
       });
     } catch (err: any) {
-      return res.status(500).json({ error: err?.message || 'Failed to initialize signup checkout' });
+      return res.status(500).json({ error: 'Failed to initialize signup checkout' });
     }
   };
 
-  public register = (req: Request, res: Response) => {
+  /**
+   * Confirms a signup payment with Razorpay itself: the checkout signature must
+   * match, and the captured payment must belong to that order for exactly the
+   * plan amount in INR. Each payment can activate only one account.
+   */
+  private async verifySignupPayment(paymentDetails: any, amountPaise: number): Promise<
+    { ok: true; orderId: string; paymentId: string; simulated: boolean } | { ok: false; status: number; error: string }
+  > {
+    if (!paymentDetails || typeof paymentDetails !== 'object') {
+      return { ok: false, status: 400, error: 'Payment details are missing.' };
+    }
+    const config = this.platformProvider.getConfig();
+    if (!config) {
+      if (this.sandboxSignupAllowed() && paymentDetails.testSimulated === true) {
+        const suffix = crypto.randomUUID().slice(0, 12);
+        return { ok: true, orderId: `order_sandbox_${suffix}`, paymentId: `pay_sandbox_${suffix}`, simulated: true };
+      }
+      return { ok: false, status: 503, error: 'Paid sign-up is not available yet. Start the free trial instead.' };
+    }
+
+    const orderId = paymentDetails.razorpay_order_id;
+    const paymentId = paymentDetails.razorpay_payment_id;
+    const signature = paymentDetails.razorpay_signature;
+    if (typeof orderId !== 'string' || !/^order_[A-Za-z0-9]{6,64}$/.test(orderId) ||
+        typeof paymentId !== 'string' || !/^pay_[A-Za-z0-9]{6,64}$/.test(paymentId) ||
+        typeof signature !== 'string') {
+      return { ok: false, status: 400, error: 'Payment confirmation is incomplete.' };
+    }
+    if (!this.platformProvider.verifyCheckoutSignature(orderId, paymentId, signature)) {
+      return { ok: false, status: 402, error: 'Payment signature could not be verified.' };
+    }
+    const reused = this.db.queryOne<any>(
+      `SELECT id FROM platform_subscription_payment_attempts WHERE provider_payment_id = ? OR provider_order_id = ?`,
+      [paymentId, orderId]
+    );
+    if (reused) return { ok: false, status: 409, error: 'This payment has already been used to activate an account.' };
+
+    let payment;
+    try {
+      payment = await this.platformProvider.fetchPayment(paymentId);
+    } catch {
+      return { ok: false, status: 503, error: 'Payment verification is temporarily unavailable. Your payment is safe; please retry in a minute.' };
+    }
+    if (!payment || payment.order_id !== orderId || payment.amount !== amountPaise || payment.currency !== 'INR') {
+      return { ok: false, status: 402, error: 'The payment does not match the selected plan.' };
+    }
+    if (payment.status !== 'captured') {
+      return { ok: false, status: 402, error: 'The payment has not been captured yet. Please retry in a minute.' };
+    }
+    return { ok: true, orderId, paymentId, simulated: false };
+  }
+
+  public register = async (req: Request, res: Response) => {
     try {
       const {
         orgName,
@@ -251,14 +325,6 @@ export class AuthController {
       }
       cleanCode = candidateCode;
 
-      const isPaid = Boolean(paymentDetails && (paymentDetails.razorpay_payment_id || paymentDetails.testPaymentId || paymentDetails.testSimulated));
-      const selectedPlan = SUBSCRIPTION_PLANS.find((p) => p.id === planId) || (isPaid ? SUBSCRIPTION_PLANS[1] : SUBSCRIPTION_PLANS[0]);
-      const isLifetime = selectedPlan.id === 'plan-lifetime' || billingCycle === 'lifetime';
-      const isYearly = !isLifetime && billingCycle === 'yearly';
-      const amountPaise = isLifetime ? selectedPlan.annualPricePaise : isYearly ? selectedPlan.annualPricePaise : selectedPlan.monthlyPricePaise;
-      const effectivePaymentId = paymentDetails?.razorpay_payment_id || paymentDetails?.testPaymentId || `pay_test_${crypto.randomUUID().slice(0, 10)}`;
-      const effectiveOrderId = paymentDetails?.razorpay_order_id || `order_test_${crypto.randomUUID().slice(0, 10)}`;
-
       const existingUser = this.userRepo.getUserByEmail(normalizedEmail);
       if (existingUser) {
         return res.status(409).json({
@@ -268,26 +334,18 @@ export class AuthController {
         });
       }
 
-      // Guarantee unique IDs for platform_subscription_payment_attempts on retries
-      let finalOrderId = effectiveOrderId;
-      let finalPaymentId = effectivePaymentId;
-      try {
-        const orderCollision = this.db.queryOne<any>(
-          `SELECT id FROM platform_subscription_payment_attempts WHERE provider_order_id = ?`,
-          [finalOrderId]
-        );
-        if (orderCollision) {
-          finalOrderId = `${effectiveOrderId}_${Date.now().toString(36)}`;
-        }
-        const paymentCollision = this.db.queryOne<any>(
-          `SELECT id FROM platform_subscription_payment_attempts WHERE provider_payment_id = ?`,
-          [finalPaymentId]
-        );
-        if (paymentCollision) {
-          finalPaymentId = `${effectivePaymentId}_${Date.now().toString(36)}`;
-        }
-      } catch {
-        // Continue safely if query not supported or table missing
+      // A paid plan is granted only after the server has verified the payment
+      // with Razorpay. Without payment details the shop starts a free trial.
+      const { plan: selectedPlan, isLifetime, isYearly, amountPaise } = this.resolveSignupPlan(planId, billingCycle);
+      let isPaid = false;
+      let finalOrderId = '';
+      let finalPaymentId = '';
+      if (paymentDetails) {
+        const verification = await this.verifySignupPayment(paymentDetails, amountPaise);
+        if (!verification.ok) return res.status(verification.status).json({ error: verification.error });
+        isPaid = true;
+        finalOrderId = verification.orderId;
+        finalPaymentId = verification.paymentId;
       }
 
       const now = new Date().toISOString();

@@ -97,10 +97,10 @@ export const api = {
     if (!res.ok) throw new Error(body.error || 'Could not start payment checkout');
     return body as {
       success: boolean;
-      mode: 'TEST' | 'LIVE';
+      mode: 'TEST' | 'LIVE' | 'SANDBOX';
       isSandbox?: boolean;
       razorpayOrderId: string;
-      keyId: string;
+      keyId: string | null;
       amount: number;
       currency: string;
       plan: {

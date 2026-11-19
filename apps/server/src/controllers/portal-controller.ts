@@ -100,7 +100,7 @@ export class PortalController {
       paymentGateway: shop.paymentGateway,
       acceptCashOnCollection: shop.acceptCashOnCollection,
       portalSettings,
-      onlinePaymentAvailable: shop.currency === 'INR' && paymentStatus.configured && paymentStatus.webhookConfigured,
+      onlinePaymentAvailable: shop.currency === 'INR' && paymentStatus.configured && paymentStatus.webhookConfigured && paymentStatus.verified,
       enabledPaperFormats: configuredPaperSizes,
       enabledColorModes: configuredColorModes,
       enabledSides: configuredSides,
@@ -230,6 +230,9 @@ export class PortalController {
       const credentials = this.paymentCredentials.getRazorpayCredentials(shopId);
       if (shop.currency !== 'INR' || !credentials?.webhookSecret) {
         return res.status(422).json({ error: 'Online payment is not configured for this shop.' });
+      }
+      if (!this.paymentCredentials.getRazorpayStatus(shopId).verified) {
+        return res.status(422).json({ error: 'Online payment is not available at this shop yet. Choose cash at the counter.' });
       }
     }
     const rateRules = this.pricingRepo.getRateRules(shopId);
@@ -461,11 +464,14 @@ export class PortalController {
       return res.status(404).json({ error: 'Order not found' });
     }
 
+    const orderShop = this.shopRepo.getShopById(order.shopId);
     res.json({
       orderId: order.id,
       orderNumber: order.orderNumber,
       tokenNumber: order.tokenNumber,
-      shopCode: this.shopRepo.getShopById(order.shopId)?.shopCode,
+      shopCode: orderShop?.shopCode,
+      shopName: orderShop?.name,
+      paymentMethod: order.paymentMethod,
       customerName: order.customerName,
       status: order.status,
       paymentStatus: order.paymentStatus,

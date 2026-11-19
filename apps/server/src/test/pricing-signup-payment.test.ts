@@ -3,6 +3,7 @@ import * as assert from 'node:assert/strict';
 import * as http from 'node:http';
 import { createApp } from '../index';
 import { DatabaseService } from '@inklly/db';
+import * as crypto from 'node:crypto';
 
 describe('Pricing, Signup Credentials & Razorpay Sandbox Payment', { concurrency: false }, () => {
   let server: http.Server;
@@ -76,9 +77,11 @@ describe('Pricing, Signup Credentials & Razorpay Sandbox Payment', { concurrency
     assert.equal(res.status, 200);
     const body = await res.json() as any;
     assert.equal(body.success, true);
-    assert.equal(body.mode, 'TEST');
+    // No platform gateway is configured in tests, so local development gets a
+    // simulated checkout; production would refuse (covered below).
+    assert.equal(body.mode, 'SANDBOX');
     assert.equal(body.isSandbox, true);
-    assert.ok(body.razorpayOrderId.startsWith('order_test_'));
+    assert.ok(body.razorpayOrderId.startsWith('order_sandbox_'));
     assert.equal(body.amount, 19900);
     assert.equal(body.currency, 'INR');
     assert.equal(body.plan.id, 'plan-growth');
@@ -218,5 +221,89 @@ describe('Pricing, Signup Credentials & Razorpay Sandbox Payment', { concurrency
     assert.ok(sub);
     const endYear = new Date(sub.current_period_end).getFullYear();
     assert.ok(endYear > 2070, `Expected endYear > 2070, got ${endYear}`);
+  });
+  describe('paid signup requires a payment verified with Razorpay', () => {
+    const keyEnv = { INKLLY_RAZORPAY_KEY_ID: 'rzp_test_signupKey1', INKLLY_RAZORPAY_KEY_SECRET: 'signup-secret-value', INKLLY_RAZORPAY_WEBHOOK_SECRET: 'signup-webhook-secret-1234' };
+    const realFetch = globalThis.fetch;
+    let razorpayPayment: any = null;
+
+    before(() => {
+      Object.assign(process.env, keyEnv);
+      // Intercept only Razorpay API calls; requests to the test server pass through.
+      globalThis.fetch = (async (input: any, init?: any) => {
+        const url = String(input instanceof URL ? input.href : input?.url || input);
+        if (url.startsWith('https://api.razorpay.com/v1/payments/')) {
+          return razorpayPayment
+            ? new Response(JSON.stringify(razorpayPayment), { status: 200, headers: { 'Content-Type': 'application/json' } })
+            : new Response(JSON.stringify({ error: { code: 'BAD_REQUEST_ERROR' } }), { status: 400 });
+        }
+        return realFetch(input, init);
+      }) as typeof fetch;
+    });
+
+    after(() => {
+      globalThis.fetch = realFetch;
+      for (const key of Object.keys(keyEnv)) delete process.env[key];
+    });
+
+    const sign = (orderId: string, paymentId: string) =>
+      crypto.createHmac('sha256', keyEnv.INKLLY_RAZORPAY_KEY_SECRET).update(`${orderId}|${paymentId}`).digest('hex');
+    const register = (email: string, paymentDetails: any, planId = 'plan-growth', billingCycle = 'monthly') => fetch(`${baseUrl}/api/v1/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ownerName: 'Verify Owner', businessName: `Shop ${email}`, email, password: 'VerifyOwnerPass2026!', planId, billingCycle, paymentDetails }),
+    });
+
+    it('rejects a client-claimed simulated payment once a gateway is configured', async () => {
+      const res = await register('forged-sim@testprint.in', { testSimulated: true, razorpay_payment_id: 'pay_forged123', razorpay_order_id: 'order_forged123' });
+      assert.equal(res.status, 400);
+      const created = db.queryOne<any>(`SELECT id FROM users WHERE email = ?`, ['forged-sim@testprint.in']);
+      assert.equal(created, null);
+    });
+
+    it('rejects a payment whose signature does not match', async () => {
+      const res = await register('forged-sig@testprint.in', { razorpay_order_id: 'order_abc12345', razorpay_payment_id: 'pay_abc12345', razorpay_signature: 'a'.repeat(64) });
+      assert.equal(res.status, 402);
+      assert.equal(db.queryOne<any>(`SELECT id FROM users WHERE email = ?`, ['forged-sig@testprint.in']), null);
+    });
+
+    it('rejects a genuine payment for a cheaper plan than the one requested', async () => {
+      razorpayPayment = { id: 'pay_cheap12345', order_id: 'order_cheap12345', amount: 9900, currency: 'INR', status: 'captured', captured: true };
+      const res = await register('cheap@testprint.in', { razorpay_order_id: 'order_cheap12345', razorpay_payment_id: 'pay_cheap12345', razorpay_signature: sign('order_cheap12345', 'pay_cheap12345') }, 'plan-lifetime', 'lifetime');
+      assert.equal(res.status, 402);
+      assert.equal(db.queryOne<any>(`SELECT id FROM users WHERE email = ?`, ['cheap@testprint.in']), null);
+    });
+
+    it('activates the plan for a verified captured payment and refuses to reuse it', async () => {
+      razorpayPayment = { id: 'pay_good12345', order_id: 'order_good12345', amount: 19900, currency: 'INR', status: 'captured', captured: true };
+      const details = { razorpay_order_id: 'order_good12345', razorpay_payment_id: 'pay_good12345', razorpay_signature: sign('order_good12345', 'pay_good12345') };
+      const res = await register('verified@testprint.in', details);
+      assert.equal(res.status, 201);
+      const body = await res.json() as any;
+      assert.equal(body.organization.planStatus, 'ACTIVE');
+      assert.equal(body.organization.planTier, 'GROWTH');
+
+      const replay = await register('replay@testprint.in', details);
+      assert.equal(replay.status, 409);
+      assert.equal(db.queryOne<any>(`SELECT id FROM users WHERE email = ?`, ['replay@testprint.in']), null);
+    });
+  });
+
+  it('refuses simulated signup checkout and payment in production', async () => {
+    process.env.NODE_ENV = 'production';
+    try {
+      const checkout = await fetch(`${baseUrl}/api/v1/auth/signup-checkout`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ planId: 'plan-growth', billingCycle: 'monthly' }),
+      });
+      assert.equal(checkout.status, 503);
+      const reg = await fetch(`${baseUrl}/api/v1/auth/register`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ownerName: 'Prod Owner', businessName: 'Prod Shop', email: 'prod-sim@testprint.in', password: 'ProdOwnerPass2026!', planId: 'plan-lifetime', billingCycle: 'lifetime', paymentDetails: { testSimulated: true } }),
+      });
+      assert.equal(reg.status, 503);
+      assert.equal(db.queryOne<any>(`SELECT id FROM users WHERE email = ?`, ['prod-sim@testprint.in']), null);
+    } finally {
+      process.env.NODE_ENV = 'test';
+    }
   });
 });

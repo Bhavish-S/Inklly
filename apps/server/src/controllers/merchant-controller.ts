@@ -15,7 +15,7 @@ import { OrderStatus, PaperSize, PrintJobStatus, ROLE_PRESETS, STAFF_PERMISSIONS
 import { ShopPaymentCredentialsService } from '../services/shop-payment-credentials';
 import { PrivateFileStorage } from '../services/private-file-storage';
 import { getPrinterHealthStatus, hasFreshOnlinePrinterEvidence } from '../services/printer-health';
-import { getPrinterCompatibilityIssues } from '../services/printer-compatibility';
+import { chooseAutomaticPrinter, getPrinterCompatibilityIssues } from '../services/printer-compatibility';
 import { inspectDocument } from '../services/document-page-count';
 
 export class MerchantController {
@@ -412,12 +412,27 @@ export class MerchantController {
     const requestedPrinter = req.body?.printerId || req.body?.printerName;
     const onlinePrinters = this.printerRepo.getPrintersByShop(order.shopId)
       .filter((candidate) => hasFreshOnlinePrinterEvidence(candidate.isOnline, candidate.lastHeartbeat));
-    const defaults = onlinePrinters.filter((candidate) => candidate.isDefault);
-    const printer = typeof requestedPrinter === 'string' && requestedPrinter.trim()
-      ? onlinePrinters.find((candidate) => candidate.id === requestedPrinter || candidate.name === requestedPrinter || candidate.systemDriverName === requestedPrinter)
-      : defaults.length === 1 ? defaults[0] : undefined;
-    if (!printer || !printer.isOnline) {
-      return res.status(409).json({ error: 'Choose an online printer, or set exactly one online default printer before releasing this order. No print job was released.' });
+    let printer;
+    if (typeof requestedPrinter === 'string' && requestedPrinter.trim()) {
+      printer = onlinePrinters.find((candidate) => candidate.id === requestedPrinter || candidate.name === requestedPrinter || candidate.systemDriverName === requestedPrinter);
+      if (!printer) return res.status(409).json({ error: 'The chosen printer is not online. No print job was released.' });
+    } else {
+      // One-click print: route to the best ready printer for these files.
+      const ready = onlinePrinters.filter((candidate) => candidate.agentId && this.agentRepo.isPhysicalPrintingEnabled(order.shopId, candidate.agentId));
+      if (!ready.length) {
+        return res.status(409).json({ error: 'No printer is online. Start Inklly on your print computer and check the printer is switched on. No print job was released.' });
+      }
+      const choice = chooseAutomaticPrinter(order.files || [], ready);
+      if (!choice.printer) {
+        return res.status(409).json({
+          error: 'None of the online printers can print every file in this order as requested. No print job was released.',
+          compatibilityIssues: Object.entries(choice.reasons).flatMap(([name, issues]) => issues.map((issue) => `${name}: ${issue}`)),
+        });
+      }
+      printer = choice.printer;
+    }
+    if (!printer.isOnline) {
+      return res.status(409).json({ error: 'The chosen printer is not online. No print job was released.' });
     }
     if (!printer.agentId || !this.agentRepo.isPhysicalPrintingEnabled(order.shopId, printer.agentId)) {
       return res.status(409).json({ error: 'Physical printing is disabled or has not been reported by the paired agent. No print job was released.' });
@@ -836,16 +851,19 @@ export class MerchantController {
 
       if (!response.ok) {
         const errorBody = (await response.json().catch(() => ({}))) as any;
+        this.paymentCredentials.clearRazorpayVerification(shopId);
         return res.status(400).json({
           error: `Razorpay rejected these credentials: ${errorBody.error?.description || errorBody.error?.code || response.status}`,
           configured: false,
         });
       }
 
+      this.paymentCredentials.markRazorpayVerified(shopId, credentials.keyId);
       res.json({
         success: true,
         configured: true,
-        message: 'Razorpay API credentials were accepted. Complete a test payment to verify the full checkout and webhook flow.',
+        verified: true,
+        message: 'Razorpay API credentials were accepted. Customers can now pay online. Complete a test payment to verify the full checkout and webhook flow.',
         keyIdPreview: `${credentials.keyId.slice(0, 8)}…`,
         webhookConfigured: true,
       });

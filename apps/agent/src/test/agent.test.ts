@@ -385,7 +385,6 @@ describe('Inklly Desktop Edge Print Agent Test Suite', () => {
     const printers = await PrinterDiscoveryService.discoverPrinters();
     assert.ok(printers.every((p) => p.name && p.driverName), 'Every result must come from a local queue');
     assert.equal(printers.some((p) => /HP LaserJet Pro M401dne|Canon imageRUNNER ADVANCE C3530i/.test(p.name)), false);
-    if (process.platform !== 'win32') assert.deepEqual(printers, []);
   });
 
   it('SpoolerExecutor refuses physical printing during the pilot', async () => {

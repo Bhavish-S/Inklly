@@ -75,7 +75,8 @@ export class AgentDispatchController {
       return res.status(400).json({ error: 'sqliteCacheHealthy must be a boolean.' });
     }
 
-    let inventory: Array<{ name: string; driverName: string; isOnline: boolean; isDefault: boolean }> | undefined;
+    type DetectedCapabilities = { color: boolean | null; duplex: boolean | null; paperSizes: Array<'A4' | 'A3'> };
+    let inventory: Array<{ name: string; driverName: string; isOnline: boolean; isDefault: boolean; capabilities?: DetectedCapabilities }> | undefined;
     if (body.printers !== undefined) {
       if (!Array.isArray(body.printers) || body.printers.length > 100) {
         return res.status(400).json({ error: 'printers must be an array containing at most 100 printer queues.' });
@@ -88,7 +89,17 @@ export class AgentDispatchController {
           || typeof printer.isOnline !== 'boolean' || typeof printer.isDefault !== 'boolean') {
           return res.status(400).json({ error: 'Each printer queue requires bounded name and driverName strings and boolean isOnline/isDefault values.' });
         }
-        inventory.push({ name: printer.name.trim(), driverName: printer.driverName.trim(), isOnline: printer.isOnline, isDefault: printer.isDefault });
+        let capabilities: DetectedCapabilities | undefined;
+        if (printer.capabilities !== undefined) {
+          const caps = printer.capabilities;
+          const triState = (value: unknown) => value === null || typeof value === 'boolean';
+          if (!caps || typeof caps !== 'object' || Array.isArray(caps) || !triState(caps.color) || !triState(caps.duplex) ||
+              !Array.isArray(caps.paperSizes) || caps.paperSizes.length > 10 || caps.paperSizes.some((size: unknown) => size !== 'A4' && size !== 'A3')) {
+            return res.status(400).json({ error: 'Printer capabilities must report color/duplex as boolean or null and paperSizes from A4/A3.' });
+          }
+          capabilities = { color: caps.color, duplex: caps.duplex, paperSizes: [...new Set(caps.paperSizes as Array<'A4' | 'A3'>)] };
+        }
+        inventory.push({ name: printer.name.trim(), driverName: printer.driverName.trim(), isOnline: printer.isOnline, isDefault: printer.isDefault, capabilities });
       }
     }
 
@@ -200,17 +211,21 @@ export class AgentDispatchController {
   public getDriverMatrix = (_req: Request, res: Response) => {
     res.json({
       success: true,
-      capabilityStatus: 'NOT_VERIFIED',
-      queueDiscovery: 'Windows queues are enumerated from operating-system printer metadata when the agent runs on Windows.',
-      reportedQueueFields: ['name', 'driverName', 'onlineStatus', 'defaultQueue'],
-      colorSupport: 'UNKNOWN',
-      duplexSupport: 'UNKNOWN',
-      traySupport: 'NOT_REPORTED',
+      capabilityStatus: 'DRIVER_REPORTED',
+      queueDiscovery: 'The agent lists every printer queue the operating system knows: Windows print queues, and CUPS queues on macOS and Linux (USB, network, shared, AirPrint/IPP Everywhere). Any printer with a working OS driver is usable.',
+      reportedQueueFields: ['name', 'driverName', 'onlineStatus', 'defaultQueue', 'capabilities.color', 'capabilities.duplex', 'capabilities.paperSizes'],
+      capabilitySources: {
+        windows: 'Win32_Printer CapabilityDescriptions and PrinterPaperNames',
+        cups: 'printer-type flags and driver PageSize/ColorModel/Duplex options',
+      },
+      spoolers: { windows: 'SumatraPDF -print-to (bundled)', macos: 'CUPS lp', linux: 'CUPS lp' },
+      traySupport: 'PAPER_SIZES_FROM_DRIVER',
+      merchantOverride: 'A merchant-saved printer profile always takes precedence over detected capabilities.',
       physicalPrintingEnabledByDefault: false,
-      agentSettingsCurrentlySupported: ['copies', 'pageRange', 'fit', 'orientation', 'simplexOrAutoDuplex', 'collation', 'A4OrA3'],
-      agentSettingsRejected: ['mixedColorPages', 'manualDuplex', 'multiplePagesPerSheet', 'unverifiedPaperSize'],
+      agentSettingsCurrentlySupported: ['copies', 'pageRange', 'fit', 'orientation', 'simplexOrAutoDuplex', 'collation', 'A4OrA3', 'blackAndWhite', 'color', 'mixedColorAsColorJob'],
+      agentSettingsRejected: ['manualDuplex', 'multiplePagesPerSheet', 'unverifiedPaperSize'],
       outputEvidence: 'SUBMITTED_TO_SPOOLER indicates OS spooler acceptance only; it does not confirm physical pages were produced.',
-      hardwareVerification: 'No printer model or driver combination has been verified for this release.',
+      hardwareVerification: 'Capabilities come from each printer driver. No specific printer model has been certified by Inklly; staff confirm physical output.',
     });
   };
 

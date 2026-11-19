@@ -23,6 +23,7 @@ import { EnquiryRepository } from '@inklly/db';
 import { EnquiryController } from './controllers/enquiry-controller';
 import { createEnquiryRateLimit } from './middleware/enquiry-rate-limit';
 import { WebhookDeliveryWorker } from './services/webhook-delivery';
+import { expireAbandonedOnlineOrders } from './services/abandoned-order-expiry';
 
 export function createApp(db?: DatabaseService): express.Express {
   assertSessionSecretConfigured();
@@ -86,6 +87,10 @@ export function createApp(db?: DatabaseService): express.Express {
   }, 60 * 1000);
   vaultDeletionTimer.unref();
   void purgePendingVaultDeletions(database, fileStorage).catch((error) => console.error('[Vault deletion] Initial cleanup pass failed', error));
+  const abandonedCheckoutTimer = setInterval(() => {
+    try { expireAbandonedOnlineOrders(database); } catch (error) { console.error('[Checkout expiry] Pass failed', error); }
+  }, 10 * 60 * 1000);
+  abandonedCheckoutTimer.unref();
 
   app.get(['/health', '/api/v1/health'], (_req, res) => {
     res.json({
