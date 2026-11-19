@@ -409,7 +409,12 @@ export class MerchantController {
     if (!order) {
       return res.status(404).json({ error: 'Order not found' });
     }
-    const result = this.dispatchOrder(order, req.body?.printerId || req.body?.printerName);
+    const assignments = req.body?.assignments;
+    if (assignments !== undefined && (typeof assignments !== 'object' || assignments === null || Array.isArray(assignments) ||
+        Object.entries(assignments).some(([fileId, printerId]) => typeof fileId !== 'string' || typeof printerId !== 'string'))) {
+      return res.status(400).json({ error: 'assignments must map order file IDs to printer IDs.' });
+    }
+    const result = this.dispatchOrder(order, req.body?.printerId || req.body?.printerName, assignments);
     if (result.status === 200) {
       return res.json({ ...result.body, order: this.getOrderForAuthenticatedMerchant(id, req) });
     }
@@ -417,59 +422,81 @@ export class MerchantController {
   };
 
   /**
-   * Releases an order's print jobs to a printer. Used by the Print button and
-   * by auto-print. With no printer requested, picks the best compatible one.
+   * Releases an order's print jobs when staff press Print. Printing is always
+   * a deliberate staff action. Staff may choose a printer per file (for
+   * example a colour cover and black-and-white pages); files without a choice
+   * use the order-level printer, or the best compatible printer.
    */
-  public dispatchOrder(order: any, requestedPrinter?: unknown): { status: number; body: Record<string, unknown> } {
+  public dispatchOrder(order: any, requestedPrinter?: unknown, assignments?: Record<string, string>): { status: number; body: Record<string, unknown> } {
     const id = order.id;
     if (order.paymentMethod === 'ONLINE_RAZORPAY' && order.paymentStatus !== 'VERIFIED') {
       return { status: 409, body: { error: 'Online payment must be verified before print dispatch.' } };
     }
     const onlinePrinters = this.printerRepo.getPrintersByShop(order.shopId)
       .filter((candidate) => hasFreshOnlinePrinterEvidence(candidate.isOnline, candidate.lastHeartbeat));
-    let printer;
-    if (typeof requestedPrinter === 'string' && requestedPrinter.trim()) {
-      printer = onlinePrinters.find((candidate) => candidate.id === requestedPrinter || candidate.name === requestedPrinter || candidate.systemDriverName === requestedPrinter);
-      if (!printer) return { status: 409, body: { error: 'The chosen printer is not online. No print job was released.' } };
-    } else {
-      const ready = onlinePrinters.filter((candidate) => candidate.agentId && this.agentRepo.isPhysicalPrintingEnabled(order.shopId, candidate.agentId));
+    const ready = onlinePrinters.filter((candidate) => candidate.agentId && this.agentRepo.isPhysicalPrintingEnabled(order.shopId, candidate.agentId));
+    const findPrinter = (value: unknown) => typeof value === 'string' && value.trim()
+      ? onlinePrinters.find((candidate) => candidate.id === value || candidate.name === value || candidate.systemDriverName === value)
+      : undefined;
+
+    const files: any[] = order.files || [];
+    const fileById = new Map(files.map((file) => [file.id, file]));
+    if (assignments) {
+      for (const fileId of Object.keys(assignments)) {
+        if (!fileById.has(fileId)) return { status: 400, body: { error: 'A printer was chosen for a file that is not in this order.' } };
+      }
+    }
+
+    // Order-level printer: requested, or the best one for every file without its own choice.
+    let orderPrinter = findPrinter(requestedPrinter);
+    if (typeof requestedPrinter === 'string' && requestedPrinter.trim() && !orderPrinter) {
+      return { status: 409, body: { error: 'The chosen printer is not online. No print job was released.' } };
+    }
+    const unassigned = files.filter((file) => !assignments?.[file.id]);
+    if (!orderPrinter && unassigned.length) {
       if (!ready.length) {
         return { status: 409, body: { error: 'No printer is online. Start Inklly on your print computer and check the printer is switched on. No print job was released.' } };
       }
-      const choice = chooseAutomaticPrinter(order.files || [], ready);
+      const choice = chooseAutomaticPrinter(unassigned, ready);
       if (!choice.printer) {
         return { status: 409, body: {
-          error: 'None of the online printers can print every file in this order as requested. No print job was released.',
+          error: 'None of the online printers can print every file in this order as requested. Choose a printer for each file. No print job was released.',
           compatibilityIssues: Object.entries(choice.reasons).flatMap(([name, issues]) => issues.map((issue) => `${name}: ${issue}`)),
         } };
       }
-      printer = choice.printer;
-    }
-    if (!printer.isOnline) {
-      return { status: 409, body: { error: 'The chosen printer is not online. No print job was released.' } };
-    }
-    if (!printer.agentId || !this.agentRepo.isPhysicalPrintingEnabled(order.shopId, printer.agentId)) {
-      return { status: 409, body: { error: 'Physical printing is disabled or has not been reported by the paired agent. No print job was released.' } };
+      orderPrinter = choice.printer;
     }
 
-    const compatibilityIssues = getPrinterCompatibilityIssues(order.files || [], printer);
-    if (compatibilityIssues.length) {
+    // Resolve and check the printer for every file before anything is released.
+    const printerForFile = new Map<string, any>();
+    const issues: string[] = [];
+    for (const file of files) {
+      const printer = assignments?.[file.id] ? findPrinter(assignments[file.id]) : orderPrinter;
+      if (!printer || !printer.isOnline) {
+        return { status: 409, body: { error: `The printer chosen for “${file.fileName}” is not online. No print job was released.` } };
+      }
+      if (!printer.agentId || !this.agentRepo.isPhysicalPrintingEnabled(order.shopId, printer.agentId)) {
+        return { status: 409, body: { error: `Physical printing is disabled on the computer connected to ${printer.name}. Turn it on in the Inklly print app. No print job was released.` } };
+      }
+      issues.push(...getPrinterCompatibilityIssues([file], printer).map((issue) => `${printer.name}: ${issue}`));
+      printerForFile.set(file.id, printer);
+    }
+    if (issues.length) {
       return { status: 409, body: {
-        error: 'The selected printer is not verified as compatible with every file in this order. No print job was released.',
-        compatibilityIssues,
+        error: 'The chosen printer cannot print every file as requested. No print job was released.',
+        compatibilityIssues: issues,
       } };
     }
 
     let retriedJobs = 0;
     try {
-      // Assignment and order-state changes must commit together so an agent
-      // cannot see an in-progress order without a real, shop-owned target.
+      // Assignment and order-state changes commit together so an agent never
+      // sees an in-progress order without a real, shop-owned target.
       this.db.transaction(() => {
-        const jobs = this.db.query<any>(`SELECT id, printer_id, status FROM print_jobs WHERE order_id = ?`, [id]);
+        const jobs = this.db.query<any>(`SELECT id, printer_id, status, order_file_id FROM print_jobs WHERE order_id = ?`, [id]);
         // Dispatchable: never released, or released and reported FAILED by the
         // agent (nothing reached the spooler, so a retry cannot duplicate
-        // output). OUTPUT_UNCERTAIN and every in-flight state stay untouched and
-        // must go through operator reconciliation.
+        // output). OUTPUT_UNCERTAIN and in-flight states need reconciliation.
         const dispatchable = jobs.filter((job) => (job.status === 'RECEIVED' && !job.printer_id) || job.status === 'DISPATCH_FAILED');
         if (!dispatchable.length) {
           throw new Error('PRINT_DISPATCH_CONFLICT: no unassigned jobs are available; inspect the existing print state.');
@@ -477,6 +504,8 @@ export class MerchantController {
         const nowIso = new Date().toISOString();
         let released = 0;
         for (const job of dispatchable) {
+          const printer = printerForFile.get(job.order_file_id);
+          if (!printer) throw new Error('PRINT_DISPATCH_CONFLICT: a print job has no matching file.');
           released += this.db.query<{ id: string }>(
             `UPDATE print_jobs SET printer_id = ?, status = 'RECEIVED', updated_at = ?
              WHERE id = ? AND ((status = 'RECEIVED' AND printer_id IS NULL) OR status = 'DISPATCH_FAILED') RETURNING id`,
@@ -488,8 +517,16 @@ export class MerchantController {
         const current = this.db.queryOne<any>(`SELECT status FROM orders WHERE id = ?`, [id]);
         this.advanceOrderStatus(id, current.status as OrderStatus, 'IN_PROGRESS');
       });
-
-      return { status: 200, body: { success: true, message: `Print jobs queued for ${printer.name}.`, printerId: printer.id, printerName: printer.name, retriedJobs } };
+      const names = [...new Set([...printerForFile.values()].map((printer) => printer.name))];
+      const first = [...printerForFile.values()][0];
+      return { status: 200, body: {
+        success: true,
+        message: `Sent to ${names.join(' and ')}.`,
+        printerId: first?.id,
+        printerName: first?.name,
+        printers: names,
+        retriedJobs,
+      } };
     } catch (err: any) {
       if (typeof err?.message === 'string' && err.message.startsWith('PRINT_DISPATCH_CONFLICT:')) {
         return { status: 409, body: { error: err.message.slice('PRINT_DISPATCH_CONFLICT:'.length).trim() } };
@@ -1585,44 +1622,4 @@ export class MerchantController {
     } catch (error) { this.counterError(res, error); }
   };
 
-  /**
-   * Auto-print: sends orders to the best printer as soon as they may print.
-   * "paid" waits for a verified payment; "all" also prints cash-at-counter
-   * orders. Orders that cannot be printed now are retried later.
-   */
-  private autoPrintBackoff = new Map<string, number>();
-  public runAutoPrintPass(): number {
-    const shops = this.db.query<any>(`SELECT shop_id, auto_print FROM shop_counter_settings WHERE auto_print IN ('paid', 'all')`);
-    let dispatched = 0;
-    const now = Date.now();
-    for (const { shop_id: shopId, auto_print: mode } of shops) {
-      const candidates = this.db.query<any>(
-        `SELECT o.id FROM orders o
-         WHERE o.shop_id = ? AND o.status IN ('AWAITING_REVIEW', 'READY_FOR_PRINT')
-           AND EXISTS (SELECT 1 FROM print_jobs j WHERE j.order_id = o.id)
-           AND NOT EXISTS (SELECT 1 FROM print_jobs j WHERE j.order_id = o.id AND NOT (j.status = 'RECEIVED' AND j.printer_id IS NULL))
-         ORDER BY o.created_at ASC LIMIT 20`,
-        [shopId]
-      );
-      for (const { id } of candidates) {
-        if ((this.autoPrintBackoff.get(id) || 0) > now) continue;
-        const order = this.orderRepo.getOrderByIdForShop(id, shopId);
-        if (!order) continue;
-        if (mode === 'paid' && order.paymentStatus !== 'VERIFIED') continue;
-        const result = this.dispatchOrder(order);
-        if (result.status === 200) {
-          dispatched++;
-          this.autoPrintBackoff.delete(id);
-          this.db.execute(
-            `INSERT INTO audit_events (id, actor_user_id, actor_role, shop_id, organization_id, action, target_type, target_id, outcome, ip_address, details, created_at)
-             VALUES (?, NULL, 'SYSTEM', ?, NULL, 'ORDER_AUTO_PRINTED', 'ORDER', ?, 'SUCCESS', NULL, ?, ?)`,
-            [crypto.randomUUID(), shopId, id, JSON.stringify({ printerId: result.body.printerId, mode }), new Date().toISOString()]
-          );
-        } else {
-          this.autoPrintBackoff.set(id, now + 60_000);
-        }
-      }
-    }
-    return dispatched;
-  }
 }

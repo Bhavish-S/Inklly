@@ -1,11 +1,9 @@
 import * as crypto from 'node:crypto';
 import { DatabaseService, LedgerRepository, PricingRepository } from '@inklly/db';
 
-export type AutoPrintMode = 'off' | 'paid' | 'all';
 export type ServiceKind = 'bw_page' | 'color_page' | 'scan' | 'other';
 
 export interface CounterSettings {
-  autoPrint: AutoPrintMode;
   upiId: string | null;
   upiPayeeName: string | null;
 }
@@ -54,9 +52,7 @@ const KINDS: ServiceKind[] = ['bw_page', 'color_page', 'scan', 'other'];
 
 export function getCounterSettings(db: DatabaseService, shopId: string): CounterSettings {
   const row = db.queryOne<any>(`SELECT auto_print, upi_id, upi_payee_name FROM shop_counter_settings WHERE shop_id = ?`, [shopId]);
-  const mode = row?.auto_print;
   return {
-    autoPrint: mode === 'paid' || mode === 'all' ? mode : 'off',
     upiId: row?.upi_id || null,
     upiPayeeName: row?.upi_payee_name || null,
   };
@@ -64,8 +60,6 @@ export function getCounterSettings(db: DatabaseService, shopId: string): Counter
 
 export function updateCounterSettings(db: DatabaseService, shopId: string, input: any): CounterSettings {
   const current = getCounterSettings(db, shopId);
-  const autoPrint = input?.autoPrint === undefined ? current.autoPrint : input.autoPrint;
-  if (!['off', 'paid', 'all'].includes(autoPrint)) throw new CounterSaleError('autoPrint must be off, paid or all.');
   let upiId = input?.upiId === undefined ? current.upiId : input.upiId;
   if (upiId !== null) {
     if (typeof upiId !== 'string') throw new CounterSaleError('UPI ID must be text like shopname@okaxis.');
@@ -79,11 +73,11 @@ export function updateCounterSettings(db: DatabaseService, shopId: string, input
     upiPayeeName = upiPayeeName.trim() || null;
   }
   db.execute(
-    `INSERT INTO shop_counter_settings (shop_id, auto_print, upi_id, upi_payee_name, updated_at) VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(shop_id) DO UPDATE SET auto_print = excluded.auto_print, upi_id = excluded.upi_id, upi_payee_name = excluded.upi_payee_name, updated_at = excluded.updated_at`,
-    [shopId, autoPrint, upiId, upiPayeeName, new Date().toISOString()]
+    `INSERT INTO shop_counter_settings (shop_id, auto_print, upi_id, upi_payee_name, updated_at) VALUES (?, 'off', ?, ?, ?)
+     ON CONFLICT(shop_id) DO UPDATE SET upi_id = excluded.upi_id, upi_payee_name = excluded.upi_payee_name, updated_at = excluded.updated_at`,
+    [shopId, upiId, upiPayeeName, new Date().toISOString()]
   );
-  return { autoPrint, upiId, upiPayeeName };
+  return { upiId, upiPayeeName };
 }
 
 const mapService = (row: any): ShopService => ({

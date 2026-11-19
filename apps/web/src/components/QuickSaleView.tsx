@@ -10,7 +10,7 @@ interface Sale {
   items: Array<{ name: string; quantity: number; unitPricePaise: number; lineTotalPaise: number; unitLabel: string }>;
   totalPaise: number; paymentMethod: 'CASH' | 'UPI'; createdAt: string; voidedAt: string | null;
 }
-interface Settings { autoPrint: 'off' | 'paid' | 'all'; upiId: string | null; upiPayeeName: string | null }
+interface Settings { upiId: string | null; upiPayeeName: string | null }
 
 interface QuickSaleViewProps {
   shop: { name: string; address?: string; phone?: string };
@@ -177,7 +177,7 @@ export const QuickSaleView: React.FC<QuickSaleViewProps> = ({ shop, canManage })
         <div className="flex gap-1 rounded-xl bg-slate-100 dark:bg-slate-800 p-1 text-sm font-semibold">
           {(['bill', 'prices', 'settings'] as const).map((value) => (
             <button key={value} type="button" onClick={() => setTab(value)} className={`px-4 py-2 rounded-lg ${tab === value ? 'bg-white dark:bg-slate-900 shadow-sm text-slate-900 dark:text-white' : 'text-slate-500'}`}>
-              {value === 'bill' ? 'Bill' : value === 'prices' ? 'Price list' : 'Counter settings'}
+              {value === 'bill' ? 'Bill' : value === 'prices' ? 'Price list' : 'UPI settings'}
             </button>
           ))}
         </div>
@@ -374,7 +374,6 @@ const PriceListEditor: React.FC<{ services: Service[]; canManage: boolean; onSav
 };
 
 const CounterSettingsPanel: React.FC<{ settings: Settings; canManage: boolean; onSaved: (s: Settings) => void; onError: (m: string) => void }> = ({ settings, canManage, onSaved, onError }) => {
-  const [autoPrint, setAutoPrint] = useState(settings.autoPrint);
   const [upiId, setUpiId] = useState(settings.upiId || '');
   const [payee, setPayee] = useState(settings.upiPayeeName || '');
   const [saving, setSaving] = useState(false);
@@ -383,7 +382,7 @@ const CounterSettingsPanel: React.FC<{ settings: Settings; canManage: boolean; o
     setSaving(true);
     onError('');
     try {
-      onSaved(await api.updateCounterSettings({ autoPrint, upiId: upiId.trim() || null, upiPayeeName: payee.trim() || null }));
+      onSaved(await api.updateCounterSettings({ upiId: upiId.trim() || null, upiPayeeName: payee.trim() || null }));
       setSaved(true);
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Could not save counter settings.');
@@ -392,21 +391,7 @@ const CounterSettingsPanel: React.FC<{ settings: Settings; canManage: boolean; o
     }
   };
   return (
-    <div className="grid lg:grid-cols-2 gap-4 max-w-4xl">
-      <section className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4">
-        <h2 className="text-sm font-bold text-slate-900 dark:text-white">Auto-print</h2>
-        <p className="text-xs text-slate-500 mt-1 mb-3">Send QR orders to the right printer without pressing Print. Needs the Inklly app running on your print computer.</p>
-        {([
-          ['off', 'Off', 'Staff press Print for every order.'],
-          ['paid', 'Paid orders only', 'Orders paid online print straight away. Cash orders wait for you.'],
-          ['all', 'All orders', 'Every order prints as soon as it arrives. Collect cash at pickup.'],
-        ] as const).map(([value, title, hint]) => (
-          <label key={value} className={`flex gap-3 rounded-xl border p-3 mb-2 cursor-pointer ${autoPrint === value ? 'border-indigo-600 bg-indigo-50/60 dark:bg-indigo-950/40' : 'border-slate-200 dark:border-slate-700'}`}>
-            <input type="radio" name="autoPrint" disabled={!canManage} checked={autoPrint === value} onChange={() => { setAutoPrint(value); setSaved(false); }} className="mt-1" />
-            <span><span className="block text-sm font-bold text-slate-900 dark:text-white">{title}</span><span className="block text-xs text-slate-500">{hint}</span></span>
-          </label>
-        ))}
-      </section>
+    <div className="grid gap-4 max-w-xl">
       <section className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4">
         <h2 className="text-sm font-bold text-slate-900 dark:text-white">UPI at the counter</h2>
         <p className="text-xs text-slate-500 mt-1 mb-3">Quick sale shows a QR with the exact amount. Money goes straight to your UPI account; Inklly never holds it.</p>
@@ -418,7 +403,7 @@ const CounterSettingsPanel: React.FC<{ settings: Settings; canManage: boolean; o
         </label>
       </section>
       {canManage && (
-        <div className="lg:col-span-2 flex items-center gap-3">
+        <div className="flex items-center gap-3">
           <button type="button" disabled={saving} onClick={() => void save()} className="min-h-[44px] px-6 rounded-xl bg-indigo-600 text-white text-sm font-bold disabled:opacity-50">{saving ? 'Saving…' : 'Save counter settings'}</button>
           {saved && <span className="text-sm text-emerald-700">Saved</span>}
         </div>

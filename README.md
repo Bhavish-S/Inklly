@@ -24,7 +24,7 @@ By replacing chaotic WhatsApp file forwarding, USB pendrive malware risks, and m
 ## 🌟 Key Features
 
 ### 1. 📱 Customer Self-Service Countertop QR Portal
-* **Zero App Installation:** Customers scan the counter QR code (`inklly.vercel.app/p/<shopCode>`) using any smartphone browser.
+* **Zero App Installation:** Customers scan the counter QR code (`<your-domain>/p/<shopCode>`) using any smartphone browser.
 * **Document Upload:** PDF, JPG and PNG (export Word/Excel to PDF first), page count read on the server from the file itself.
 * **Document Editor:** drag-to-crop (mouse or touch), content-detecting auto-crop, 90° rotation, and scan enhancement (Document B&W, Enhanced, Grayscale, brightness/contrast). PDF crop/rotation keep text as vectors; enhancement re-renders pages at 200 dpi.
 * **Precise Print Customization:** Configure copies, print modes (**Black & White** vs **Full Color**), page orientations, single-sided or double-sided (duplex), and custom page ranges (e.g., `1-5, 8, 12-18`).
@@ -33,10 +33,10 @@ By replacing chaotic WhatsApp file forwarding, USB pendrive malware risks, and m
 * **Flexible Payment Methods:** Instant online payment via UPI/Razorpay or Cash-at-Counter collection.
 
 ### 2. 🏪 Merchant Counter POS Workspace (`/merchant`)
-* **Real-Time Live Queue:** Instant visibility of incoming customer print jobs categorized by status (`RECEIVED`, `READY_TO_PRINT`, `PRINTING`, `COMPLETED`).
+* **Live queue:** new QR orders arrive with a chime; filters for To print, Printing and Pickup.
 * **Document Peek Modal:** Full-screen inspector for operators to review customer files, page settings, and color flags before release.
-* **1-Click Print Routing:** Print sends each order to the best ready printer: the shop default if it can print every file, otherwise black-and-white work to a mono printer and colour/mixed work to a colour printer. Incompatible jobs are refused with reasons, never sent.
-* **Cash Collection Reconciliation:** Collect cash payments at the counter with one click, automatically posting balancing ledger entries to ensure financial accuracy.
+* **Counter screen (staff stay in control):** nothing prints automatically. Staff type the customer's token, name or phone, see every file and setting, choose a printer for each file (Inklly suggests colour files → colour printer, the rest → B&W printer), press Print, confirm the pages, then record cash or UPI (with an exact-amount UPI QR) and hand over. Keyboard: P print · K pages OK · C cash · U UPI · H hand over.
+* **Payment at handover:** Collect cash payments at the counter with one click, automatically posting balancing ledger entries to ensure financial accuracy.
 * **Custom Rate Engine:** Configure base per-page prices, duplex discounts, additional copy discount tiers, and custom paper surcharges (A4, A3, Legal, Glossy, Bond).
 * **Multi-Printer Hardware Management:** Register USB, LAN, or network printers with supported tray specifications and capability profiles.
 * **Role-Based Staff Access:** Grant granular permissions using pre-built roles (`Shop Manager`, `Print Operator`, `Front Desk Staff`).

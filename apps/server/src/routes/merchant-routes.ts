@@ -37,13 +37,6 @@ export function createMerchantRoutes(db: DatabaseService, fileStorage: PrivateFi
     fileStorage
   );
 
-  // Auto-print runs in the background for shops that switched it on.
-  const autoPrintTimer = setInterval(() => {
-    try { controller.runAutoPrintPass(); } catch (error) { console.error('[Auto-print] Pass failed', error); }
-  }, 10_000);
-  autoPrintTimer.unref();
-  (router as any).runAutoPrintPass = () => controller.runAutoPrintPass();
-
   // Apply authentication and tenant isolation
   router.use(authenticate(db));
   router.use(enforceTenantIsolation);

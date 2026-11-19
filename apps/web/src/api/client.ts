@@ -245,7 +245,7 @@ export const api = {
     return body;
   },
   getCounterSettings() { return this.counterRequest('/settings'); },
-  updateCounterSettings(settings: { autoPrint?: 'off' | 'paid' | 'all'; upiId?: string | null; upiPayeeName?: string | null }) {
+  updateCounterSettings(settings: { upiId?: string | null; upiPayeeName?: string | null }) {
     return this.counterRequest('/settings', { method: 'PUT', body: JSON.stringify(settings) });
   },
   getCounterServices() { return this.counterRequest('/services'); },
@@ -325,6 +325,30 @@ export const api = {
       throw new Error(err.error || 'Print dispatch failed');
     }
     return res.json();
+  },
+
+  /** Print with an optional printer for each file ({ fileId: printerId }). */
+  async printOrderToPrinters(orderId: string, assignments: Record<string, string>) {
+    const res = await fetch(`${API_BASE}/merchant/orders/${encodeURIComponent(orderId)}/print`, {
+      method: 'POST', headers: getHeaders(), body: JSON.stringify({ assignments }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const error = new Error(body.error || 'Could not send this order to the printer.') as Error & { issues?: string[] };
+      error.issues = Array.isArray(body.compatibilityIssues) ? body.compatibilityIssues : undefined;
+      throw error;
+    }
+    return body;
+  },
+
+  /** Records payment taken at the counter (cash or UPI) and closes the order. */
+  async collectAtCounter(orderId: string, method: 'CASH' | 'UPI') {
+    const res = await fetch(`${API_BASE}/payments/orders/${encodeURIComponent(orderId)}/collect-cash`, {
+      method: 'POST', headers: getHeaders(), body: JSON.stringify({ method }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not record the payment.');
+    return body;
   },
 
   async collectCash(orderId: string) {

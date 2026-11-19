@@ -1,114 +1,69 @@
 import React from 'react';
-import { ArrowRightIcon, CheckIcon, QrCodeIcon, MonitorIcon, PrinterIcon } from '../components/icons';
-import { RelatedLinks } from '../components/RelatedLinks';
+import { Reveal } from '../components/motion';
 
 interface HowItWorksPageProps {
   onNavigate: (path: string) => void;
 }
 
-const steps = [
-  {
-    number: '01',
-    title: 'Customer Scans & Configures',
-    description: 'The student opens your shop QR link in any mobile browser, uploads their PDF or document, selects B&W or color, duplex or simplex, and reviews the exact quote in rupees.',
-    icon: QrCodeIcon,
-  },
-  {
-    number: '02',
-    title: 'Staff Review in Counter POS',
-    description: 'Your shop team sees the incoming request in the merchant workspace, confirms the print parameters, collects cash or verifies Razorpay UPI checkout.',
-    icon: MonitorIcon,
-  },
-  {
-    number: '03',
-    title: 'Automated Print & Handover',
-    description: 'Approved jobs are sent to your local Windows agent and spooled to the printer. Staff verify physical sheets and mark the order ready for counter pickup.',
-    icon: PrinterIcon,
-  },
+const JOURNEY = [
+  { who: 'Customer', title: 'Scans your QR code', body: 'The poster at your counter opens your shop page in the phone browser — no app, no login.', tone: 'bg-indigo-600' },
+  { who: 'Customer', title: 'Uploads and chooses', body: 'PDFs, photos or a camera scan of a paper. B&W or colour, pages, copies, both sides, paper size. Crop and clean up scans.', tone: 'bg-indigo-600' },
+  { who: 'Customer', title: 'Sees the exact price and orders', body: 'Pay online, or choose to pay at the counter. They get a short token and a live page with their place in the queue.', tone: 'bg-indigo-600' },
+  { who: 'You', title: 'Hear the chime, find the order', body: 'New orders appear on your Counter screen. When the customer arrives, type their token or name.', tone: 'bg-emerald-600' },
+  { who: 'You', title: 'Choose the printer, press Print', body: 'Inklly suggests the right printer for each file — colour to colour, the rest to your laser. Change it if you like. Nothing prints until you press Print.', tone: 'bg-emerald-600' },
+  { who: 'You', title: 'Check the pages, collect, hand over', body: 'Confirm the pages, take cash or show a UPI QR with the exact amount, and hand over. The customer’s phone says “Ready”.', tone: 'bg-emerald-600' },
+];
+
+const SETUP = [
+  ['Create your shop', 'Sign up with your shop name and prices. Your QR page is ready immediately.'],
+  ['Connect your printers', 'Install the Inklly print app on the computer attached to your printers and enter the pairing code. Every printer appears with its colour, double-sided and paper sizes.'],
+  ['Print your poster', 'Download the A4 counter poster with your QR code and prices, and stick it at the counter.'],
 ];
 
 export const HowItWorksPage: React.FC<HowItWorksPageProps> = ({ onNavigate }) => (
-  <main className="min-h-screen bg-ink-app dark:bg-ink-dark-app text-ink-text dark:text-ink-dark-text">
-    {/* Hero Section */}
-    <section className="hero-stage py-20 md:py-28 text-center text-white">
-      <span className="aurora aurora-a" />
-      <span className="aurora aurora-b" />
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
-        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/[0.08] border border-white/[0.12] text-[#8293FF] text-xs font-semibold tracking-wider mb-6">
-          <span className="w-1.5 h-1.5 rounded-full bg-brand-dark animate-pulse" />
-          <span>WORKFLOW ARCHITECTURE</span>
-        </div>
-
-        <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold tracking-tight leading-tight mb-6 !text-white">
-          A clear, reliable path from customer request to counter pickup.
-        </h1>
-
-        <p className="text-base sm:text-lg text-[#A6B2C5] max-w-2xl mx-auto mb-8 leading-relaxed">
-          See how Inklly bridges student self-service ordering, shop staff review, and physical Windows printer automation into one synchronized workflow.
-        </p>
-
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-3.5">
-          <button
-            type="button"
-            onClick={() => onNavigate('/register')}
-            className="w-full sm:w-auto px-7 py-3.5 rounded-xl bg-brand hover:bg-brand-hover text-white font-semibold text-sm shadow-brand transition-all duration-200 cursor-pointer inline-flex items-center justify-center gap-2"
-          >
-            <span>Start Free 7-Day Trial</span>
-            <ArrowRightIcon size={14} />
-          </button>
-          <button
-            type="button"
-            onClick={() => onNavigate('/customer')}
-            className="w-full sm:w-auto px-7 py-3.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.15] text-white font-medium text-sm transition-all duration-200 cursor-pointer"
-          >
-            Try Customer Demo
-          </button>
-        </div>
-      </div>
+  <div className="bg-white dark:bg-slate-950 text-slate-900 dark:text-white">
+    <section className="max-w-4xl mx-auto px-5 pt-16 pb-12 text-center animate-slide-up">
+      <p className="text-sm font-bold uppercase tracking-widest text-indigo-600">How it works</p>
+      <h1 className="mt-2 text-4xl sm:text-5xl font-black tracking-tight">From the customer’s phone to your printer — on your terms.</h1>
+      <p className="mt-4 text-lg text-slate-600 dark:text-slate-300">Customers do the typing, choosing and counting. You stay in control of every print.</p>
     </section>
 
-    {/* Steps Grid */}
-    <section className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-16 md:py-24">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-16">
-        {steps.map((step) => {
-          const StepIcon = step.icon;
-          return (
-            <article
-              key={step.number}
-              className="rounded-2xl border border-ink-border dark:border-ink-dark-border bg-ink-surface dark:bg-ink-dark-surface p-7 sm:p-8 shadow-xs flex flex-col justify-between"
-            >
-              <div>
-                <div className="flex items-center justify-between mb-6">
-                  <span className="text-2xl font-black font-mono text-brand dark:text-brand-dark">
-                    {step.number}
-                  </span>
-                  <div className="w-10 h-10 rounded-xl bg-brand-soft dark:bg-brand-dark-soft text-brand dark:text-brand-dark flex items-center justify-center">
-                    <StepIcon size={20} />
-                  </div>
-                </div>
-                <h2 className="text-lg font-bold text-ink-text dark:text-ink-dark-text mb-3">
-                  {step.title}
-                </h2>
-                <p className="text-sm text-ink-text-secondary dark:text-ink-dark-text-secondary leading-relaxed">
-                  {step.description}
-                </p>
+    <section className="max-w-4xl mx-auto px-5 pb-16">
+      <ol className="relative border-l-2 border-dashed border-slate-200 dark:border-slate-800 ml-5 space-y-8">
+        {JOURNEY.map((step, index) => (
+          <Reveal as="li" key={step.title} delay={index * 60} className="relative pl-10">
+            <span className={`absolute -left-[21px] top-0 w-10 h-10 rounded-2xl ${step.tone} text-white font-black flex items-center justify-center shadow-md`}>{index + 1}</span>
+            <span className={`inline-block rounded-full px-2.5 py-0.5 text-[11px] font-bold ${step.who === 'You' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300' : 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300'}`}>{step.who}</span>
+            <h2 className="mt-1.5 text-xl font-extrabold">{step.title}</h2>
+            <p className="mt-1 text-slate-600 dark:text-slate-300 leading-relaxed">{step.body}</p>
+          </Reveal>
+        ))}
+      </ol>
+    </section>
+
+    <section className="bg-slate-50 dark:bg-slate-900/60 border-y border-slate-200/70 dark:border-slate-800">
+      <div className="max-w-6xl mx-auto px-5 py-16">
+        <h2 className="text-3xl font-black tracking-tight text-center">Set up in about 10 minutes</h2>
+        <div className="mt-10 grid md:grid-cols-3 gap-4">
+          {SETUP.map(([title, body], index) => (
+            <Reveal key={title} delay={index * 80}>
+              <div className="h-full rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6">
+                <span className="text-sm font-black text-indigo-600">Step {index + 1}</span>
+                <h3 className="mt-2 text-lg font-extrabold">{title}</h3>
+                <p className="mt-1.5 text-sm text-slate-600 dark:text-slate-300 leading-relaxed">{body}</p>
               </div>
-            </article>
-          );
-        })}
-      </div>
-
-      <div className="mt-8">
-        <RelatedLinks
-          heading="Explore Related Resources"
-          links={[
-            { label: 'Print Shop Automation Software', href: '/print-shop-automation-software' },
-            { label: 'QR Code Printing System', href: '/qr-code-printing-system' },
-            { label: 'Subscription Pricing Plans', href: '/pricing' },
-          ]}
-          onNavigate={onNavigate}
-        />
+            </Reveal>
+          ))}
+        </div>
       </div>
     </section>
-  </main>
+
+    <section className="max-w-4xl mx-auto px-5 py-16 text-center">
+      <h2 className="text-3xl font-black tracking-tight">Ready to try it at your counter?</h2>
+      <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-center">
+        <button type="button" onClick={() => onNavigate('/register')} className="min-h-[52px] px-7 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-lg shadow-indigo-600/25">Start free — 7 days</button>
+        <button type="button" onClick={() => onNavigate('/pricing')} className="min-h-[52px] px-7 rounded-2xl border border-slate-300 dark:border-slate-700 font-bold">See plans</button>
+      </div>
+    </section>
+  </div>
 );

@@ -462,6 +462,12 @@ export class PaymentController {
 
   public collectCashAtCounter = (req: Request, res: Response) => {
     const id = String(req.params.id);
+    // Counter payment for a pay-at-counter order: cash, or UPI to the shop's own account.
+    const counterMethod = req.body?.method === undefined ? 'CASH' : req.body.method;
+    if (counterMethod !== 'CASH' && counterMethod !== 'UPI') {
+      return res.status(400).json({ error: 'method must be CASH or UPI.' });
+    }
+    const provider = counterMethod === 'UPI' ? 'COUNTER_UPI' : 'MANUAL_CASH';
     let outcome: 'NOT_FOUND' | 'FORBIDDEN' | 'WRONG_METHOD' | 'ALREADY_RECORDED' | 'NOT_READY' | 'RECORDED' | 'IDEMPOTENT_RETRY';
     try {
       outcome = this.db.transaction(() => {
@@ -483,7 +489,7 @@ export class PaymentController {
         if (order.paymentMethod !== 'CASH_ON_COLLECTION') return 'WRONG_METHOD';
         if (order.paymentStatus === 'VERIFIED') {
           const existingCashPayment = this.db.queryOne<any>(
-            `SELECT id FROM payments WHERE order_id = ? AND provider = 'MANUAL_CASH' AND status = 'VERIFIED'`,
+            `SELECT id FROM payments WHERE order_id = ? AND provider IN ('MANUAL_CASH', 'COUNTER_UPI') AND status = 'VERIFIED'`,
             [order.id]
           );
           if (!existingCashPayment) return 'ALREADY_RECORDED';
@@ -499,11 +505,11 @@ export class PaymentController {
         if (order.status !== 'READY_FOR_COLLECTION') return 'NOT_READY';
 
         const now = new Date().toISOString();
-        const paymentId = `pay-cash-${order.id}`;
+        const paymentId = `${counterMethod === 'UPI' ? 'pay-upi' : 'pay-cash'}-${order.id}`;
         this.db.execute(
           `INSERT INTO payments (id, order_id, provider, provider_transaction_id, provider_event_id, amount_paise, currency, status, created_at, updated_at)
-           VALUES (?, ?, 'MANUAL_CASH', ?, ?, ?, ?, 'VERIFIED', ?, ?)`,
-          [paymentId, order.id, paymentId, paymentId, order.totalAmountPaise, order.currency, now, now]
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'VERIFIED', ?, ?)`,
+          [paymentId, order.id, provider, paymentId, paymentId, order.totalAmountPaise, order.currency, now, now]
         );
         this.orderRepo.updatePaymentStatus(order.id, 'VERIFIED');
         this.ledgerRepo.appendEntry({
@@ -513,9 +519,9 @@ export class PaymentController {
           orderId: order.id,
           amountPaise: order.totalAmountPaise,
           currency: order.currency,
-          provider: 'MANUAL_CASH',
+          provider,
           providerTransactionId: paymentId,
-          description: `Cash collected at counter for Order ${order.orderNumber}`,
+          description: `${counterMethod === 'UPI' ? 'UPI' : 'Cash'} collected at counter for Order ${order.orderNumber}`,
           createdAt: now,
         });
         const organization = this.db.queryOne<any>(`SELECT organization_id FROM shops WHERE id = ?`, [order.shopId]);
@@ -525,7 +531,7 @@ export class PaymentController {
             orderId: order.id,
             amountPaise: order.totalAmountPaise,
             currency: order.currency,
-            provider: 'MANUAL_CASH',
+            provider,
             capturedAt: now,
           });
         }

@@ -17,7 +17,7 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
     printerLimit: 1,
     fileSizeMaxMB: 15,
     includedConversionCredits: 100,
-    features: ['300 orders/month', '1 printer', 'Manual print release'],
+    features: ['300 QR orders a month', '1 printer', 'Counter, quick sale and receipts', 'Daily reports'],
   },
   {
     id: 'plan-growth',
@@ -30,7 +30,7 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
     printerLimit: 2,
     fileSizeMaxMB: 50,
     includedConversionCredits: 500,
-    features: ['1,500 orders/month', '2 printers', 'Payment-received auto print'],
+    features: ['1,500 QR orders a month', 'Up to 2 printers', 'Staff accounts', '“Now serving” TV screen'],
   },
   {
     id: 'plan-pro',
@@ -43,7 +43,7 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
     printerLimit: 5,
     fileSizeMaxMB: 150,
     includedConversionCredits: 2000,
-    features: ['6,000 orders/month', '5 printers', 'All-document auto print'],
+    features: ['6,000 QR orders a month', 'Up to 5 printers', 'Online payments to your Razorpay', 'Everything in Growth'],
   },
   {
     id: 'plan-scale',
@@ -56,7 +56,7 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
     printerLimit: 10,
     fileSizeMaxMB: 500,
     includedConversionCredits: 10000,
-    features: ['50,000 orders/month', '10 printers', 'All-document auto print'],
+    features: ['50,000 QR orders a month', 'Up to 10 printers', 'Busy campus and multi-counter shops', 'Priority support'],
   },
   {
     id: 'plan-lifetime',
@@ -69,7 +69,7 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
     printerLimit: 100,
     fileSizeMaxMB: 500,
     includedConversionCredits: 10000,
-    features: ['Unlimited orders/month', 'Unlimited printers', 'All-document auto print'],
+    features: ['One-time payment', 'All Scale features', 'No monthly bill', '0% commission on prints'],
   },
 ];
 

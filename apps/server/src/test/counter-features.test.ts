@@ -5,7 +5,7 @@ import { DatabaseService } from '@inklly/db';
 import { createApp } from '../index';
 import { makeTestPdf } from './test-pdf';
 
-describe('counter features: walk-in billing, auto-print, now-serving board', { concurrency: false }, () => {
+describe('counter features: walk-in billing, now-serving board', { concurrency: false }, () => {
   let db: DatabaseService;
   let server: http.Server;
   let baseUrl: string;
@@ -105,8 +105,7 @@ describe('counter features: walk-in billing, auto-print, now-serving board', { c
     assert.match(quote.upiLink, /^upi:\/\/pay\?pa=campusprint%40okaxis&pn=Campus\+Print&am=10\.00&cu=INR/);
   });
 
-  it('auto-prints a new order to a ready printer when the shop turns it on', async () => {
-    // Pair an agent that reports a ready A4 mono printer.
+  it('prints each file on the printer staff choose, then takes UPI at handover', async () => {
     const pairing = await (await api('/agents/pairing-code', { method: 'POST' })).json() as any;
     const enrolled = await (await fetch(`${baseUrl}/api/v1/agent/enroll`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -115,41 +114,65 @@ describe('counter features: walk-in billing, auto-print, now-serving board', { c
     const agentHeaders = { 'Content-Type': 'application/json', 'X-Agent-Id': enrolled.agentId, Authorization: `Bearer ${enrolled.agentSecret}` };
     const beat = await fetch(`${baseUrl}/api/v1/agent/heartbeat`, {
       method: 'POST', headers: agentHeaders,
-      body: JSON.stringify({ status: 'ONLINE', activePrintersCount: 1, localQueueDepth: 0, sqliteCacheHealthy: true, physicalPrintingEnabled: true,
-        printers: [{ name: 'Auto_Laser', driverName: 'Generic Laser', isOnline: true, isDefault: false, capabilities: { color: false, duplex: true, paperSizes: ['A4'] } }] }),
+      body: JSON.stringify({ status: 'ONLINE', activePrintersCount: 2, localQueueDepth: 0, sqliteCacheHealthy: true, physicalPrintingEnabled: true, printers: [
+        { name: 'Counter_Laser', driverName: 'Mono Laser', isOnline: true, isDefault: false, capabilities: { color: false, duplex: true, paperSizes: ['A4'] } },
+        { name: 'Colour_Inkjet', driverName: 'Colour Inkjet', isOnline: true, isDefault: false, capabilities: { color: true, duplex: false, paperSizes: ['A4'] } },
+      ] }),
     });
     assert.equal(beat.status, 200);
-    // Keep only this printer online so routing is deterministic.
-    db.execute(`UPDATE printers SET is_online = 0 WHERE shop_id = 'shop-campus-1' AND name <> 'Auto_Laser'`);
+    const printers = db.query<any>(`SELECT id, name FROM printers WHERE shop_id = 'shop-campus-1' AND name IN ('Counter_Laser', 'Colour_Inkjet')`);
+    const laser = printers.find((p) => p.name === 'Counter_Laser');
+    const inkjet = printers.find((p) => p.name === 'Colour_Inkjet');
 
-    const upload = await (await fetch(`${baseUrl}/api/v1/portal/upload`, {
+    const upload = async (name: string) => (await (await fetch(`${baseUrl}/api/v1/portal/upload`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shopId: 'shop-campus-1', fileName: 'auto.pdf', fileData: makeTestPdf(2).toString('base64'), pageCount: 2 }),
+      body: JSON.stringify({ shopId: 'shop-campus-1', fileName: name, fileData: makeTestPdf(2).toString('base64'), pageCount: 2 }),
+    })).json() as any).storageKey;
+    const base = { duplexMode: 'simplex', paperSize: 'A4', orientation: 'portrait', copies: 1, fitMode: 'fit', pagesPerSheet: 1, collation: true };
+    const notesKey = await upload('notes.pdf');
+    const coverKey = await upload('cover.pdf');
+    const quote = await (await fetch(`${baseUrl}/api/v1/portal/quote`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopId: 'shop-campus-1', files: [
+        { fileName: 'notes.pdf', pageCount: 2, options: { ...base, colorMode: 'bw' } },
+        { fileName: 'cover.pdf', pageCount: 2, options: { ...base, colorMode: 'color' } },
+      ] }),
     })).json() as any;
-    const options = { colorMode: 'bw', duplexMode: 'simplex', paperSize: 'A4', orientation: 'portrait', copies: 1, fitMode: 'fit', pagesPerSheet: 1, collation: true };
     const order = await (await fetch(`${baseUrl}/api/v1/portal/orders`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shopId: 'shop-campus-1', customerName: 'Auto Print', customerPhone: '9000000011', paymentMethod: 'CASH_ON_COLLECTION', quote: { totalPaise: 400 },
-        files: [{ fileName: 'auto.pdf', storageKey: upload.storageKey, pageCount: 2, options, subtotalPaise: 400 }] }),
+      body: JSON.stringify({ shopId: 'shop-campus-1', customerName: 'Two Files', customerPhone: '9000000012', paymentMethod: 'CASH_ON_COLLECTION', quote: { totalPaise: quote.totalPaise },
+        files: [
+          { fileName: 'notes.pdf', storageKey: notesKey, pageCount: 2, options: { ...base, colorMode: 'bw' } },
+          { fileName: 'cover.pdf', storageKey: coverKey, pageCount: 2, options: { ...base, colorMode: 'color' } },
+        ] }),
     })).json() as any;
-    assert.ok(order.orderId);
+    assert.ok(order.orderId, JSON.stringify(order));
+    const files = db.query<any>(`SELECT id, file_name FROM order_files WHERE order_id = ?`, [order.orderId]);
+    const notes = files.find((f) => f.file_name === 'notes.pdf');
+    const cover = files.find((f) => f.file_name === 'cover.pdf');
 
-    // Off by default: nothing is sent.
-    app.locals.runAutoPrintPass();
-    assert.notEqual(db.queryOne<any>(`SELECT status FROM orders WHERE id = ?`, [order.orderId]).status, 'IN_PROGRESS');
+    // A colour file on the mono laser is refused before anything is released.
+    const wrong = await api(`/orders/${order.orderId}/print`, { method: 'POST', body: JSON.stringify({ assignments: { [notes.id]: laser.id, [cover.id]: laser.id } }) });
+    assert.equal(wrong.status, 409);
+    assert.equal(db.queryOne<any>(`SELECT COUNT(*) AS c FROM print_jobs WHERE order_id = ? AND printer_id IS NOT NULL`, [order.orderId]).c, 0);
 
-    // "paid" waits for payment, so a cash order is still not sent.
-    await api('/counter/settings', { method: 'PUT', body: JSON.stringify({ autoPrint: 'paid' }) });
-    app.locals.runAutoPrintPass();
-    assert.notEqual(db.queryOne<any>(`SELECT status FROM orders WHERE id = ?`, [order.orderId]).status, 'IN_PROGRESS');
+    const printed = await api(`/orders/${order.orderId}/print`, { method: 'POST', body: JSON.stringify({ assignments: { [notes.id]: laser.id, [cover.id]: inkjet.id } }) });
+    assert.equal(printed.status, 200, await printed.clone().text());
+    assert.deepEqual(((await printed.json()) as any).printers.sort(), ['Colour_Inkjet', 'Counter_Laser']);
+    const jobs = db.query<any>(`SELECT order_file_id, printer_id, id FROM print_jobs WHERE order_id = ?`, [order.orderId]);
+    assert.equal(jobs.find((j) => j.order_file_id === notes.id).printer_id, laser.id);
+    assert.equal(jobs.find((j) => j.order_file_id === cover.id).printer_id, inkjet.id);
 
-    await api('/counter/settings', { method: 'PUT', body: JSON.stringify({ autoPrint: 'all' }) });
-    assert.ok(app.locals.runAutoPrintPass() >= 1);
-    assert.equal(db.queryOne<any>(`SELECT status FROM orders WHERE id = ?`, [order.orderId]).status, 'IN_PROGRESS');
-    const job = db.queryOne<any>(`SELECT p.name FROM print_jobs j JOIN printers p ON p.id = j.printer_id WHERE j.order_id = ?`, [order.orderId]);
-    assert.equal(job.name, 'Auto_Laser');
-    assert.ok(db.queryOne<any>(`SELECT id FROM audit_events WHERE action = 'ORDER_AUTO_PRINTED' AND target_id = ?`, [order.orderId]));
-    await api('/counter/settings', { method: 'PUT', body: JSON.stringify({ autoPrint: 'off' }) });
+    // Staff check the pages, then take UPI at the counter.
+    db.execute(`UPDATE print_jobs SET status = 'SUBMITTED_TO_SPOOLER' WHERE order_id = ?`, [order.orderId]);
+    const reconciled = await api(`/orders/${order.orderId}/reconcile-output`, { method: 'POST', body: JSON.stringify({ reason: 'Checked both files at the counter.', physicalOutputConfirmed: true, confirmedJobIds: jobs.map((j) => j.id) }) });
+    assert.equal(reconciled.status, 200, await reconciled.clone().text());
+    const paid = await fetch(`${baseUrl}/api/v1/payments/orders/${order.orderId}/collect-cash`, { method: 'POST', headers, body: JSON.stringify({ method: 'UPI' }) });
+    assert.equal(paid.status, 200, await paid.clone().text());
+    const final = db.queryOne<any>(`SELECT status, payment_status FROM orders WHERE id = ?`, [order.orderId]);
+    assert.deepEqual({ ...final }, { status: 'COLLECTED', payment_status: 'VERIFIED' });
+    assert.equal(db.queryOne<any>(`SELECT provider FROM ledger_entries WHERE order_id = ?`, [order.orderId]).provider, 'COUNTER_UPI');
+    assert.equal((await fetch(`${baseUrl}/api/v1/payments/orders/${order.orderId}/collect-cash`, { method: 'POST', headers, body: JSON.stringify({ method: 'CARD' }) })).status, 400);
   });
 
   it('shows tokens, not names, on the public now-serving board', async () => {

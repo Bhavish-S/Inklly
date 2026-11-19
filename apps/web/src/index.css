@@ -852,3 +852,28 @@ html, body {
 /* Horizontal chip rows on phones: scroll without a visible bar. */
 .no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* ── Motion system ───────────────────────────────────────────────
+   Short, purposeful animations. Everything is disabled for visitors
+   who ask their device for reduced motion. */
+@keyframes ink-fade-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes ink-slide-up { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+@keyframes ink-pop { 0% { opacity: 0; transform: scale(.92); } 70% { transform: scale(1.02); } 100% { opacity: 1; transform: none; } }
+@keyframes ink-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+@keyframes ink-paper { 0% { transform: translateY(-30%); opacity: 0; } 30% { opacity: 1; } 100% { transform: translateY(0); opacity: 1; } }
+@keyframes ink-blink { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@keyframes ink-gradient { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+
+.animate-fadeIn, .animate-fade-in { animation: ink-fade-in .28s ease-out both; }
+.animate-slide-up { animation: ink-slide-up .5s cubic-bezier(.2,.8,.2,1) both; }
+.animate-pop { animation: ink-pop .42s cubic-bezier(.2,.8,.2,1) both; }
+.animate-float { animation: ink-float 5s ease-in-out infinite; }
+.animate-paper { animation: ink-paper 1.6s ease-out infinite alternate; }
+.animate-blink { animation: ink-blink 1.4s ease-in-out infinite; }
+.bg-animated-gradient { background-size: 200% 200%; animation: ink-gradient 10s ease infinite; }
+.delay-100 { animation-delay: .1s; } .delay-200 { animation-delay: .2s; } .delay-300 { animation-delay: .3s; } .delay-500 { animation-delay: .5s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fadeIn, .animate-fade-in, .animate-slide-up, .animate-pop, .animate-float,
+  .animate-paper, .animate-blink, .bg-animated-gradient { animation: none !important; }
+}

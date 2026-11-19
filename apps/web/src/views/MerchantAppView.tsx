@@ -1,5 +1,6 @@
 import { DailyReportView } from '../components/DailyReportView';
 import { QuickSaleView } from '../components/QuickSaleView';
+import { CounterView } from '../components/CounterView';
 import { printReceipt } from '../receipt';
 import { QrPosterButton } from '../components/QrPosterButton';
 import { playChime, primeAudio, requestNotificationPermission, showNotification, vibrate } from '../ready-alert';
@@ -124,7 +125,7 @@ type MerchantStorageFileView = {
   mimeType: string;
 };
 
-const MERCHANT_VIEWS = ['dashboard', 'reports', 'quick_sale', 'orders', 'live_print', 'whatsapp_setup', 'storage', 'credits', 'withdraw', 'refunds', 'referrals', 'employees', 'train_bot', 'business_setup', 'shop_qr'] as const;
+const MERCHANT_VIEWS = ['counter', 'dashboard', 'reports', 'quick_sale', 'orders', 'live_print', 'whatsapp_setup', 'storage', 'credits', 'withdraw', 'refunds', 'referrals', 'employees', 'train_bot', 'business_setup', 'shop_qr'] as const;
 const SETUP_TABS = ['profile', 'printers', 'pricing', 'discounts', 'portal', 'automation'] as const;
 const ORDER_TABS = ['pending', 'payment_pending', 'processing', 'printing', 'rejected', 'print_failed', 'done', 'all'] as const;
 
@@ -139,6 +140,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   // Sidebar state
   const [sidebarExpanded, setSidebarExpanded] = useState<boolean>(() => typeof window === 'undefined' || window.innerWidth >= 768);
   const [activeView, setActiveView] = useState<
+    | 'counter'
     | 'dashboard'
     | 'reports'
     | 'quick_sale'
@@ -154,7 +156,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     | 'train_bot'
     | 'business_setup'
     | 'shop_qr'
-  >(() => readWorkspaceParam('view', MERCHANT_VIEWS, 'dashboard'));
+  >(() => readWorkspaceParam('view', MERCHANT_VIEWS, 'counter'));
 
   // Business Setup tab state
   const [merchantMenuOpen, setMerchantMenuOpen] = useState<boolean>(false);
@@ -230,10 +232,10 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     planTier: liveShop.planTier || 'starter',
     planBadge: liveSubscription?.status === 'TRIALING'
       ? `${(liveShop.planTier || 'STARTER').toUpperCase()} · FREE TRIAL`
-      : `${(liveShop.planTier || 'STARTER').toUpperCase()} · ${liveOrganization?.planStatus || 'PILOT'}`,
+      : `${(liveShop.planTier || 'STARTER').toUpperCase()} · ${liveOrganization?.planStatus || 'TRIAL'}`,
     planPriceText: liveSubscription?.status === 'TRIALING' && liveSubscription.current_period_end
       ? `Trial ends ${new Date(liveSubscription.current_period_end).toLocaleDateString()}`
-      : 'Pilot pricing',
+      : 'Free trial',
     billingCycle: 'monthly',
     maxPrinters: liveShop.planTier === 'starter' ? 1 : 3,
     monthlyOrderLimit: 1000,
@@ -255,8 +257,8 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     phone: '',
     email: '',
     planTier: 'starter',
-    planBadge: 'Pilot account',
-    planPriceText: 'Pilot pricing',
+    planBadge: 'Free trial',
+    planPriceText: 'Free trial',
     billingCycle: 'monthly',
     maxPrinters: 1,
     monthlyOrderLimit: 1000,
@@ -535,7 +537,9 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       const tag = document.activeElement?.tagName;
       const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (document.activeElement as HTMLElement | null)?.isContentEditable;
       if (e.key === 'F2') { e.preventDefault(); setActiveView('quick_sale'); return; }
+      if (e.key === 'F1') { e.preventDefault(); setActiveView('counter'); return; }
       if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key === '/' && activeViewRef.current === 'counter') return; // the Counter focuses its own search
       if (e.key === '/') {
         e.preventDefault();
         setActiveView('orders');
@@ -543,9 +547,9 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       } else if (e.key === '?') {
         e.preventDefault();
         setShortcutsOpen((open) => !open);
-      } else if (activeViewRef.current !== 'quick_sale') {
-        // Single-letter jumps between the main counter screens.
-        const jump: Record<string, any> = { o: 'orders', d: 'dashboard', r: 'reports', s: 'quick_sale', q: 'shop_qr', l: 'live_print' };
+      } else if (activeViewRef.current !== 'quick_sale' && activeViewRef.current !== 'counter') {
+        // Single-letter jumps between the main screens (the Counter and Quick sale use letters for actions).
+        const jump: Record<string, any> = { o: 'orders', d: 'dashboard', r: 'reports', s: 'quick_sale', q: 'shop_qr', l: 'live_print', c: 'counter' };
         const target = jump[e.key.toLowerCase()];
         if (target) { e.preventDefault(); setActiveView(target); }
       }
@@ -1050,7 +1054,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
   const handleConfirmUpgrade = () => {
     setUpgradeModalOpen(false);
     if (onNavigate) onNavigate('/contact');
-    else setSaveSuccessToast('Pilot pricing is configured directly with Inklly. Visit Contact to discuss your shop.');
+    else setSaveSuccessToast('Plans and billing are managed from Billing & usage.');
   };
 
   // Orders Search & Action Toast
@@ -1893,7 +1897,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     {
       step: 2,
       title: 'Printers & Desktop Agent Connection',
-      desc: 'Pair the Inklly desktop agent and register the shop printers it reports. Physical printing remains pilot-gated until hardware support is verified.',
+      desc: 'Pair the Inklly desktop agent and register the shop printers it reports.',
       badge: 'Step 2 of 5',
       targetTab: 'business_setup',
       targetSubtab: 'printers',
@@ -2201,6 +2205,13 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
 
   const navGroups = [
     {
+      title: 'COUNTER',
+      items: [
+        { id: 'counter', label: 'Counter', icon: <PrinterIcon size={18} /> },
+        { id: 'quick_sale', label: 'Quick sale', icon: <IndianRupeeIcon size={18} /> },
+      ],
+    },
+    {
       title: 'OVERVIEW',
       items: [
         { id: 'dashboard', label: 'Dashboard', icon: <PackageIcon size={18} /> },
@@ -2210,8 +2221,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     {
       title: 'OPERATIONS',
       items: [
-        { id: 'orders', label: 'Orders', icon: <InboxIcon size={18} /> },
-        { id: 'quick_sale', label: 'Quick sale', icon: <IndianRupeeIcon size={18} /> },
+        { id: 'orders', label: 'All orders', icon: <InboxIcon size={18} /> },
         { id: 'live_print', label: 'Live Print', icon: <WifiIcon size={18} /> },
       ],
     },
@@ -2436,7 +2446,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                 {currentMerchant.name}
               </span>
               <span className="px-1.5 py-0.5 rounded-md text-[10px] font-black bg-brand text-white uppercase shrink-0">
-                {currentMerchant.planBadge || 'Pilot pricing'}
+                {currentMerchant.planBadge || 'Free trial'}
               </span>
             </div>
 
@@ -2594,38 +2604,17 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
           </div>
         </header>
 
-        {/* Top Product Tour Banner */}
-        {showTourBanner && (
-          <div className="hidden md:flex bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white px-6 py-2.5 items-center justify-between text-xs shadow-xs animate-fadeIn">
-            <div className="flex items-center gap-2">
-              <span className="text-base">🚀</span>
-              <span>
-                <strong>Welcome to Inklly!</strong> Get your shop completely ready to accept print orders and connect your printer in 5 guided steps.
-              </span>
-            </div>
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={handleStartTour}
-                className="px-3 py-1 bg-white text-[#4D64E6] rounded-lg font-bold shadow-xs hover:bg-blue-50 transition-all cursor-pointer"
-              >
-                Start 2-Min Tour →
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowTourBanner(false)}
-                className="text-white/80 hover:text-white text-xs cursor-pointer"
-                title="Dismiss banner"
-              >
-                ✕
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* ─────────────────────────────────────────────────────────────
             VIEW 1: DASHBOARD (Matching Screenshot 2026-10-23 074343.png)
         ───────────────────────────────────────────────────────────── */}
+        {activeView === 'counter' && (
+          <CounterView
+            shop={{ name: currentMerchant.name, address: shopAddress, phone: shopPhone }}
+            onOpenPrinterSetup={() => { setActiveView('business_setup'); setSetupTab('printers' as any); }}
+          />
+        )}
+
         {activeView === 'reports' && <DailyReportView />}
 
         {activeView === 'quick_sale' && (
@@ -2641,8 +2630,10 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
               <h2 className="text-lg font-extrabold text-slate-900 dark:text-white mb-3">Keyboard shortcuts</h2>
               <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
                 {[
+                  ['F1 or C', 'Counter: find token, print, collect'],
                   ['F2 or S', 'Quick sale (walk-in billing)'],
-                  ['O', 'Orders queue'],
+                  ['P · K · C · U · H', 'Counter: Print · pages OK · cash · UPI · hand over'],
+                  ['O', 'All orders'],
                   ['/', 'Search orders by token, name or phone'],
                   ['D', 'Dashboard'],
                   ['R', 'Reports'],
@@ -4052,9 +4043,9 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
 ───────────────────────────────────────────────────────────── */}
 {activeView === 'credits' && (
   <section className="mx-auto my-10 max-w-3xl rounded-2xl border border-slate-200 bg-white p-8 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-    <p className="text-xs font-bold uppercase tracking-wider text-indigo-600">Pilot billing</p>
+    <p className="text-xs font-bold uppercase tracking-wider text-indigo-600">Billing</p>
     <h2 className="mt-2 text-2xl font-extrabold text-slate-900 dark:text-white">Print-side usage</h2>
-    <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">Usage counts only staff-confirmed physical output. Issued pilot statements show the configured monthly base and per-side rate; collection is manual and no payment is recorded here.</p>
+    <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">Usage counts only staff-confirmed physical output. Monthly statements show the configured monthly base and per-side rate; collection is manual and no payment is recorded here.</p>
     {liveUser?.role !== 'MERCHANT_OWNER' ? (
       <p className="mt-5 rounded-xl bg-slate-50 p-4 text-sm text-slate-600 dark:bg-slate-800 dark:text-slate-300">Usage totals are available to the merchant owner.</p>
     ) : subscriptionUsageLoading ? (
@@ -4079,7 +4070,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">Monthly Inklly subscription</h3>
-            <p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">The monthly base is charged to Inklly’s Razorpay account. Confirmed print-side usage is shown on separate pilot statements; collection for those statements remains manual.</p>
+            <p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">The monthly base is charged to Inklly’s Razorpay account. Confirmed printed pages are listed on monthly usage statements.</p>
           </div>
           {subscriptionBillingReadiness?.mode && <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${subscriptionBillingReadiness.mode === 'TEST' ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200' : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200'}`}>{subscriptionBillingReadiness.mode} MODE</span>}
         </div>
@@ -4113,7 +4104,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     )}
     <div className="mt-7 border-t border-slate-200 pt-5 dark:border-slate-700">
       <div className="flex items-center justify-between gap-3">
-        <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">Pilot billing statements</h3>
+        <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">Usage statements</h3>
         <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">Manual collection</span>
       </div>
       {subscriptionInvoiceError ? <p role="alert" className="mt-3 text-sm text-rose-700 dark:text-rose-300">{subscriptionInvoiceError}</p> : subscriptionInvoices.length === 0 ? <p className="mt-3 text-sm text-slate-500">No invoices have been issued for this organization.</p> : (
@@ -4128,7 +4119,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       )}
       <p className="mt-2 text-[11px] text-slate-500">Statements are immutable and before any tax, which is not configured. This view does not collect payment.</p>
     </div>
-    <button type="button" onClick={() => onNavigate?.('/pricing')} className="mt-6 min-h-11 rounded-xl bg-indigo-600 px-5 text-sm font-bold text-white hover:bg-indigo-700">View pilot pricing</button>
+    <button type="button" onClick={() => onNavigate?.('/pricing')} className="mt-6 min-h-11 rounded-xl bg-indigo-600 px-5 text-sm font-bold text-white hover:bg-indigo-700">View plans</button>
   </section>
 )}
 
@@ -4167,7 +4158,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
 {activeView === 'referrals' && (
   <section className="mx-auto my-10 max-w-3xl rounded-2xl border border-slate-200 bg-white p-8 shadow-sm dark:border-slate-700 dark:bg-slate-900">
     <p className="text-xs font-bold uppercase tracking-wider text-indigo-600">Referral program</p>
-    <h2 className="mt-2 text-2xl font-extrabold text-slate-900 dark:text-white">Referral rewards are not available in the pilot</h2>
+    <h2 className="mt-2 text-2xl font-extrabold text-slate-900 dark:text-white">Referral rewards are coming soon</h2>
     <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">No referral balance or reward has been issued. We will show this program here once eligibility and payment rules are live.</p>
   </section>
 )}
@@ -4242,7 +4233,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
               Shift Cash Reconciliation is Locked on {currentMerchant.planBadge}
             </span>
             <span className="text-purple-700 dark:text-purple-300 text-[11px]">
-              Cash-shift reconciliation is not included in the current pilot workspace. Contact Inklly to discuss availability.
+              Use Reports for daily cash, UPI and online totals.
             </span>
           </div>
         </div>
@@ -5026,7 +5017,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                 </div>
 
                 <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
-                  Service-specific prices for collage, merge, ID cards and passport photos are not configured in this pilot. Customer quotes use the saved per-side rates shown above.
+                  Service-specific prices for collage, merge, ID cards and passport photos are not configured yet. Customer quotes use the saved per-side rates shown above.
                 </div>
 
                 {/* Footer Navigation */}
@@ -5206,7 +5197,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                     </div>
 
                     <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3.5 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
-                      Registered queues are shown below. A shop registration or agent heartbeat does not verify physical printer output; hardware certification and dashboard test printing are unavailable in this pilot.
+                      Registered queues are shown below. A shop registration or agent heartbeat does not verify physical printer output; use “Printed from this computer” on the Counter if a printer is not connected.
                     </div>
 
                     {/* Service Rows */}
@@ -5692,104 +5683,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                       <input type="checkbox" disabled checked readOnly aria-label="Cash on collection available" className="toggle-checkbox w-4 h-4 text-[#4D64E6]" />
                     </div>
 
-                    <div className="pt-2 text-xs text-gray-500 dark:text-gray-400">Checkout branding is fixed for the pilot. Payment status is verified by the server through the shop's Razorpay integration.</div>
-                  </div>
-                </div>
-
-                {/* Auto-Print Configuration */}
-                <div className="bg-white dark:bg-gray-800 border border-[#E8EAF3] dark:border-gray-800 rounded-2xl p-6 shadow-xs space-y-4">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block">AUTO-PRINT CONFIGURATION</span>
-
-                  <div className="p-3 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 rounded-xl text-xs text-indigo-900 dark:text-indigo-300">
-                    Current plan: Starter. Locked modes can be activated by upgrading or purchasing an eligible add-on.
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-                    <div className="p-4 border rounded-2xl bg-gray-50/50 dark:bg-gray-900/40 opacity-75 space-y-2">
-                      <div className="flex items-center gap-1.5 font-bold text-gray-700 dark:text-gray-300">
-                        <span>⚡</span>
-                        <span>🔒</span>
-                        <span>Auto Print All Documents</span>
-                      </div>
-                      <p className="text-[11px] text-gray-400 leading-relaxed">
-                        After the customer confirms the order, every document is sent to the printer automatically. No merchant click is required.
-                      </p>
-                    </div>
-
-                    <div className="p-4 border rounded-2xl bg-gray-50/50 dark:bg-gray-900/40 opacity-75 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1.5 font-bold text-gray-700 dark:text-gray-300">
-                          <span>✓</span>
-                          <span>🔒</span>
-                          <span>Print Only After Payment</span>
-                        </div>
-                        <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">Recommended</span>
-                      </div>
-                      <p className="text-[11px] text-gray-400 leading-relaxed">
-                        Documents download to the shop after confirmation, then print automatically only after online payment is verified.
-                      </p>
-                    </div>
-
-                    <div className="p-4 border-2 border-indigo-500 dark:border-indigo-600 rounded-2xl bg-indigo-50/20 dark:bg-indigo-950/20 space-y-2">
-                      <div className="flex items-center gap-1.5 font-extrabold text-[#4F46E5] dark:text-indigo-300">
-                        <span>🔕</span>
-                        <span>✓</span>
-                        <span>Auto Print Off</span>
-                      </div>
-                      <p className="text-[11px] text-gray-600 dark:text-gray-300 leading-relaxed">
-                        Documents download to the shop, but printing starts only when the merchant uses One-Click Print on the order.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Order Separator */}
-                <div className="bg-white dark:bg-gray-800 border border-[#E8EAF3] dark:border-gray-800 rounded-2xl p-6 shadow-xs space-y-4">
-                  <div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block">ORDER SEPARATOR</span>
-                    <p className="text-[11px] text-gray-400">Prevent order mix-ups during busy auto-printing runs. Separator sheets print only when a real backlog exists — so you never waste paper in slow hours.</p>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-                    <div className="p-4 border-2 border-blue-500 rounded-2xl bg-blue-50/20 space-y-1">
-                      <div className="font-extrabold text-blue-700 dark:text-blue-300 flex items-center gap-1.5">
-                        <span>🚫</span> No Separator
-                      </div>
-                      <div className="text-[11px] text-gray-500">Orders print back-to-back</div>
-                    </div>
-
-                    <div className="p-4 border rounded-2xl space-y-1">
-                      <div className="font-bold flex items-center gap-1.5">
-                        <span>📄</span> B&amp;W Invoice
-                      </div>
-                      <div className="text-[11px] text-gray-500">Identified receipt sheet</div>
-                    </div>
-
-                    <div className="p-4 border rounded-2xl space-y-1">
-                      <div className="font-bold flex items-center gap-1.5">
-                        <span>📃</span> Blank Page
-                      </div>
-                      <div className="text-[11px] text-gray-500">Unmarked spacer sheet</div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Notifications & Receipts */}
-                <div className="bg-white dark:bg-gray-800 border border-[#E8EAF3] dark:border-gray-800 rounded-2xl p-6 shadow-xs space-y-4 text-xs">
-                  <h3 className="font-extrabold text-sm text-[#172031] dark:text-white">Notifications &amp; receipts</h3>
-                  <div className="flex justify-between items-center py-2 border-b">
-                    <div>
-                      <div className="font-bold">Push Notifications</div>
-                      <div className="text-[10px] text-gray-400">New orders and printer updates</div>
-                    </div>
-                    <input type="checkbox" defaultChecked className="toggle-checkbox w-4 h-4 text-[#4D64E6]" />
-                  </div>
-                  <div className="flex justify-between items-center py-2">
-                    <div>
-                      <div className="font-bold">Print Receipt</div>
-                      <div className="text-[10px] text-gray-400">Print a paper receipt for each completed order</div>
-                    </div>
-                    <input type="checkbox" defaultChecked className="toggle-checkbox w-4 h-4 text-[#4D64E6]" />
+                    <div className="pt-2 text-xs text-gray-500 dark:text-gray-400">Payment status is verified by the server through the shop's Razorpay integration.</div>
                   </div>
                 </div>
 
@@ -5894,7 +5788,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
               Custom Store Branding is Locked on {currentMerchant.planBadge}
             </span>
             <span className="text-purple-700 dark:text-purple-300 text-[11px]">
-              Custom shop branding is not available in the current pilot workspace. Contact Inklly to discuss availability.
+              Custom shop branding is coming soon.
             </span>
           </div>
         </div>
@@ -6056,72 +5950,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
           </div>
         )}
 
-      {/* ─────────────────────────────────────────────────────────────
-          REVIEW YOUR PLAN MODAL (Upgrade Plan)
-      ───────────────────────────────────────────────────────────── */}
-      {false && upgradeModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5 overflow-y-auto animate-fadeIn">
-          <div className="max-w-6xl w-full bg-white dark:bg-[#1E293B] rounded-3xl shadow-2xl border border-gray-100 dark:border-gray-800 overflow-hidden flex flex-col max-h-[94vh]">
-            {/* Header */}
-            <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between bg-gray-50/50 dark:bg-gray-900/40">
-              <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[#4D64E6] block">
-                  INKLLY PILOT
-                </span>
-                <h3 className="text-xl font-extrabold text-gray-900 dark:text-white">
-                  Discuss pilot pricing
-                </h3>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  Subscription checkout and usage charges are not enabled for the pilot account.
-                </p>
-              </div>
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-400 font-bold hidden sm:inline">Billing currency</span>
-                  <select className="px-3 py-1.5 border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-bold bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200">
-                    <option>INR — Indian Rupee</option>
-                  </select>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setUpgradeModalOpen(false)}
-                  className="w-8 h-8 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 flex items-center justify-center text-gray-400 hover:text-gray-700 dark:hover:text-white transition-colors"
-                >
-                  ✕
-                </button>
-              </div>
-            </div>
-
-            {/* Scrollable Body */}
-            <div className="p-6 overflow-y-auto space-y-6 text-xs">
-              <div className="max-w-2xl mx-auto rounded-2xl border border-indigo-100 dark:border-indigo-900 bg-indigo-50/70 dark:bg-indigo-950/30 p-6 space-y-3">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-300">Pilot billing</p>
-                <h4 className="text-lg font-extrabold text-slate-900 dark:text-white">Plan and usage rates are configured with Inklly</h4>
-                <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">The pilot uses a monthly subscription plus a configurable fee per successfully printed side. Subscription checkout and printed-side billing are not active here, so this screen will not start a payment or change your plan.</p>
-                <p className="text-xs text-slate-500 dark:text-slate-400">No charge will be made from this page. Contact Inklly to confirm your pilot terms.</p>
-              </div>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="px-6 py-3.5 border-t border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/40 flex items-center justify-between">
-              <button
-                type="button"
-                onClick={() => setUpgradeModalOpen(false)}
-                className="px-4 py-2 rounded-xl text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white font-semibold text-xs"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmUpgrade}
-                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#4D64E6] to-[#4338CA] hover:from-[#3F54D1] hover:to-[#3730A3] text-white font-bold text-xs shadow-md transition-all flex items-center gap-2 cursor-pointer"
-              >
-                <span>Discuss pilot pricing →</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ─────────────────────────────────────────────────────────────
           INTERACTIVE GUIDED PRODUCT TOUR MODAL

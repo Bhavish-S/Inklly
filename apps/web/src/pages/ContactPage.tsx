@@ -124,27 +124,14 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onNavigate }) => {
           </div>
 
           <div className="bg-ink-surface dark:bg-ink-dark-surface border border-ink-border dark:border-ink-dark-border rounded-2xl p-6 shadow-xs">
-            <h4 className="font-bold text-sm text-ink-text dark:text-ink-dark-text mb-1">Campus & Fleet Automation</h4>
-            <p className="text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary mb-3">Countertop QR rollouts for college bookstores and hubs.</p>
+            <h4 className="font-bold text-sm text-ink-text dark:text-ink-dark-text mb-1">Campus and multi-counter shops</h4>
+            <p className="text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary mb-3">Several printers, several staff, exam-season crowds — we’ll help you set it up.</p>
             <button
               type="button"
-              onClick={() => onNavigate('/customer')}
+              onClick={() => onNavigate('/register')}
               className="text-xs font-semibold text-brand dark:text-brand-dark hover:underline text-left cursor-pointer inline-flex items-center gap-1"
             >
-              <span>Try customer demo portal</span>
-              <ArrowRightIcon size={12} />
-            </button>
-          </div>
-
-          <div className="bg-ink-surface dark:bg-ink-dark-surface border border-ink-border dark:border-ink-dark-border rounded-2xl p-6 shadow-xs">
-            <h4 className="font-bold text-sm text-ink-text dark:text-ink-dark-text mb-1">Developer API & Integration</h4>
-            <p className="text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary mb-3">Integrate Inklly spooling engine into your ERP or apps.</p>
-            <button
-              type="button"
-              onClick={() => onNavigate('/developer')}
-              className="text-xs font-semibold text-brand dark:text-brand-dark hover:underline text-left cursor-pointer inline-flex items-center gap-1"
-            >
-              <span>View API documentation</span>
+              <span>Start a free trial</span>
               <ArrowRightIcon size={12} />
             </button>
           </div>
@@ -156,7 +143,6 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onNavigate }) => {
             links={[
               { label: 'View Pricing & Plans', href: '/pricing' },
               { label: 'How It Works', href: '/how-it-works' },
-              { label: 'Print Shop Automation', href: '/print-shop-automation-software' },
             ]}
             onNavigate={onNavigate}
           />

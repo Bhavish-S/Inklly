@@ -11,9 +11,6 @@ import { QrCodeIcon, PrinterIcon, Logo, ShieldIcon, CodeIcon } from './component
 // portal includes PDF rendering, so loading it only on /p/:shopCode materially
 // reduces the first download for public-site visitors.
 const HomePage = lazy(() => import('./pages/HomePage').then((module) => ({ default: module.HomePage })));
-const PrintAutomationPage = lazy(() => import('./pages/PrintAutomationPage').then((module) => ({ default: module.PrintAutomationPage })));
-const WhatsAppPrintingPage = lazy(() => import('./pages/WhatsAppPrintingPage').then((module) => ({ default: module.WhatsAppPrintingPage })));
-const QrOrderingPage = lazy(() => import('./pages/QrOrderingPage').then((module) => ({ default: module.QrOrderingPage })));
 const HowItWorksPage = lazy(() => import('./pages/HowItWorksPage').then((module) => ({ default: module.HowItWorksPage })));
 const PricingPage = lazy(() => import('./pages/PricingPage').then((module) => ({ default: module.PricingPage })));
 const ContactPage = lazy(() => import('./pages/ContactPage').then((module) => ({ default: module.ContactPage })));
@@ -30,7 +27,7 @@ const DeveloperPortalView = lazy(() => import('./views/DeveloperPortalView').the
 
 // A showcase shop for marketing demo links. Production builds set
 // VITE_DEFAULT_SHOP_CODE to a real demo shop; customers never fall back to it.
-const DEMO_SHOP_CODE = ((import.meta.env.VITE_DEFAULT_SHOP_CODE as string) || (import.meta.env.DEV ? 'campus1' : 'inklly-test-shop')).trim();
+const DEMO_SHOP_CODE = ((import.meta.env.VITE_DEFAULT_SHOP_CODE as string) || (import.meta.env.DEV ? 'campus1' : '')).trim();
 
 export const App: React.FC = () => {
   const [currentPath, setCurrentPath] = useState<string>(() => {
@@ -166,27 +163,9 @@ export const App: React.FC = () => {
         {/* Route 1: Home */}
         {currentPath === '/' && <HomePage onNavigate={navigate} />}
 
-        {/* Route 2: Print Shop Automation Software */}
-        {currentPath === '/print-shop-automation-software' && (
-          <PrintAutomationPage onNavigate={navigate} />
-        )}
-
-        {/* Route 3: WhatsApp Printing Software */}
-        {currentPath === '/whatsapp-printing-software' && (
-          <WhatsAppPrintingPage onNavigate={navigate} />
-        )}
-
-        {/* Route 4: QR Code Printing System */}
-        {currentPath === '/qr-code-printing-system' && (
-          <QrOrderingPage onNavigate={navigate} />
-        )}
-
-        {/* Redirects for excluded reference concepts */}
-        {currentPath === '/kiosk-software' && (
-          <PrintAutomationPage onNavigate={navigate} />
-        )}
-        {currentPath === '/franchise' && (
-          <PricingPage onNavigate={navigate} />
+        {/* Older product pages now live on the home page. */}
+        {['/print-shop-automation-software', '/whatsapp-printing-software', '/qr-code-printing-system', '/kiosk-software', '/franchise'].includes(currentPath) && (
+          <HomePage onNavigate={navigate} />
         )}
 
         {/* Route 5: How It Works */}
