@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { api, API_BASE } from '../api/client';
+import { api } from '../api/client';
 
 interface ShopPrinter {
   id: string;
@@ -144,17 +144,23 @@ export const PrinterSetupPanel: React.FC<{ onChanged?: () => void }> = ({ onChan
 
   const updateDraft = (id: string, patch: Partial<Draft>) => setDrafts((current) => ({ ...current, [id]: { ...current[id], ...patch } }));
 
-  const agentCommand = pairing
-    ? `set INKLLY_SERVER_URL=${API_BASE}\nset INKLLY_SHOP_ID=${pairing.shopId}\nset INKLLY_PAIRING_CODE=${pairing.pairingCode}\nstart-agent.bat`
-    : '';
+  const connected = printers.filter((printer) => printer.agentId && printer.healthStatus === 'ONLINE');
+  const downloadUrl = `${window.location.origin}/downloads/inklly-print-app.zip`;
+  const os = /Windows/i.test(navigator.userAgent) ? 'windows' : /Mac/i.test(navigator.userAgent) ? 'mac' : 'linux';
 
   return (
     <section aria-labelledby="printer-setup-title" className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-surface)] p-6 shadow-xs space-y-6">
-      <div>
-        <h3 id="printer-setup-title" className="text-sm font-extrabold text-[var(--text-primary)]">Connect your counter printers</h3>
-        <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
-          Two steps: pair the counter computer once, then confirm what each printer can print.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 id="printer-setup-title" className="text-base font-extrabold text-[var(--text-primary)]">Connect your printers</h3>
+          <p className="mt-1 text-xs text-[var(--text-secondary)] max-w-2xl">
+            Install the free Inklly Print App on the computer your printers are plugged into. Then the Counter sends each file
+            straight to the printer you choose — no print dialog. You can always use <strong>Print on this computer</strong> on the Counter without it.
+          </p>
+        </div>
+        <span className={`status-pill ${connected.length ? 'pill-success' : 'pill-neutral'}`}>
+          {connected.length ? `✓ ${connected.length} printer${connected.length > 1 ? 's' : ''} connected` : 'Not connected yet'}
+        </span>
       </div>
 
       {error && (
@@ -168,67 +174,54 @@ export const PrinterSetupPanel: React.FC<{ onChanged?: () => void }> = ({ onChan
         </div>
       )}
 
-      {/* Step 1 */}
-      <div className="rounded-xl border border-[var(--border-default)] p-4 space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-xs font-extrabold text-[var(--text-primary)]">
-              <span className="mr-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-[var(--brand)] text-[10px] text-white">1</span>
-              Pair the counter computer
-            </p>
-            <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
-              Run the Inklly print agent on the Windows PC your printers are connected to, and give it this one-time code.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={createPairingCode}
-            disabled={pairingBusy}
-            className="min-h-[36px] rounded-lg bg-[var(--brand)] px-4 text-xs font-bold text-white hover:bg-[var(--brand-hover)] disabled:opacity-60 cursor-pointer"
-          >
-            {pairingBusy ? 'Creating…' : pairing ? 'New pairing code' : 'Get pairing code'}
-          </button>
-        </div>
-
-        {pairing && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="rounded-xl bg-[#0D1422] p-4 text-white">
-              <p className="text-[10px] uppercase tracking-[0.18em] text-[#8293FF]">Pairing code</p>
-              <p className="my-1 break-all font-mono text-2xl font-black tracking-wider">{pairing.pairingCode}</p>
-              <p className="text-[11px] text-[#A6B2C5]">
-                Shop ID <span className="font-mono text-white">{pairing.shopId}</span> · valid until{' '}
-                {new Date(pairing.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · works once
-              </p>
-              <button type="button" onClick={() => copy(pairing.pairingCode, 'Pairing code')} className="mt-3 rounded-lg bg-white/10 px-3 py-1.5 text-[11px] font-bold hover:bg-white/20 cursor-pointer">
-                Copy code
-              </button>
+      <ol className="grid gap-3 lg:grid-cols-3">
+        <li className="rounded-xl border border-[var(--border-default)] p-4">
+          <p className="text-xs font-extrabold text-[var(--text-primary)]"><span className="mr-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-[var(--brand)] text-[10px] text-white">1</span>Download the print app</p>
+          <p className="mt-1 text-[11px] text-[var(--text-secondary)]">Do this on the computer connected to your printers. Windows, Mac or Linux · 7 MB.</p>
+          <a href={downloadUrl} download className="mt-3 inline-flex min-h-[40px] items-center rounded-lg bg-[var(--brand)] px-4 text-xs font-bold text-white hover:bg-[var(--brand-hover)]">⬇ Download Inklly Print App</a>
+        </li>
+        <li className="rounded-xl border border-[var(--border-default)] p-4">
+          <p className="text-xs font-extrabold text-[var(--text-primary)]"><span className="mr-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-[var(--brand)] text-[10px] text-white">2</span>Unzip and start it</p>
+          {os === 'windows' && <p className="mt-1 text-[11px] text-[var(--text-secondary)]">Right-click the zip → <strong>Extract All</strong>. Open the folder and double-click <strong>Start Inklly (Windows)</strong>. The first time it installs Node.js (free) — then double-click it again.</p>}
+          {os === 'mac' && <p className="mt-1 text-[11px] text-[var(--text-secondary)]">Open the zip. Right-click <strong>Start Inklly (Mac).command</strong> → <strong>Open</strong>. If asked, install Node.js LTS from nodejs.org and open it again.</p>}
+          {os === 'linux' && <p className="mt-1 text-[11px] text-[var(--text-secondary)]">Unzip, then run <code>./start-inklly-linux.sh</code> in a terminal (needs Node.js 22+).</p>}
+          <p className="mt-2 text-[10px] text-[var(--text-muted)]">Install your printers on that computer first, as you normally would.</p>
+        </li>
+        <li className="rounded-xl border border-[var(--border-default)] p-4">
+          <p className="text-xs font-extrabold text-[var(--text-primary)]"><span className="mr-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-[var(--brand)] text-[10px] text-white">3</span>Enter the pairing code</p>
+          <p className="mt-1 text-[11px] text-[var(--text-secondary)]">The app asks for a code. Create one here and type or paste it in.</p>
+          {pairing ? (
+            <div className="mt-3 rounded-xl bg-[#0D1422] p-3 text-white">
+              <p className="font-mono text-lg font-black tracking-wider break-all">{pairing.pairingCode}</p>
+              <p className="text-[10px] text-[#A6B2C5]">Works once · valid until {new Date(pairing.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+              <div className="mt-2 flex gap-2">
+                <button type="button" onClick={() => copy(pairing.pairingCode, 'Pairing code')} className="rounded-lg bg-white/15 px-3 py-1.5 text-[11px] font-bold hover:bg-white/25 cursor-pointer">Copy</button>
+                <button type="button" onClick={createPairingCode} disabled={pairingBusy} className="rounded-lg px-3 py-1.5 text-[11px] font-bold text-[#A6B2C5] hover:text-white cursor-pointer">New code</button>
+              </div>
+              {connected.length > 0
+                ? <p className="mt-2 text-[11px] font-bold text-emerald-300">✓ Connected — your printers are listed below.</p>
+                : <p className="mt-2 text-[11px] text-[#A6B2C5]">Waiting for your computer to connect…</p>}
             </div>
-            <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface-subtle)] p-4">
-              <p className="text-[11px] font-bold text-[var(--text-primary)]">On the counter PC, in the agent folder:</p>
-              <pre className="my-2 overflow-x-auto rounded-lg bg-[var(--bg-surface-muted)] p-3 text-[10px] leading-5 text-[var(--text-primary)]">{agentCommand}</pre>
-              <button type="button" onClick={() => copy(agentCommand, 'Commands')} className="rounded-lg border border-[var(--border-strong)] px-3 py-1.5 text-[11px] font-bold text-[var(--text-primary)] hover:bg-[var(--bg-surface-muted)] cursor-pointer">
-                Copy commands
-              </button>
-              <p className="mt-2 text-[10px] text-[var(--text-muted)]">
-                Your printers appear below within a few seconds of the agent starting.
-              </p>
-            </div>
-          </div>
-        )}
-      </div>
+          ) : (
+            <button type="button" onClick={createPairingCode} disabled={pairingBusy} className="mt-3 min-h-[40px] rounded-lg bg-[var(--brand)] px-4 text-xs font-bold text-white hover:bg-[var(--brand-hover)] disabled:opacity-60 cursor-pointer">
+              {pairingBusy ? 'Creating…' : 'Create pairing code'}
+            </button>
+          )}
+        </li>
+      </ol>
 
       {/* Step 2 */}
       <div className="space-y-3">
         <p className="text-xs font-extrabold text-[var(--text-primary)]">
-          <span className="mr-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-[var(--brand)] text-[10px] text-white">2</span>
-          Confirm what each printer can do
+          Your printers
         </p>
+        <p className="text-[11px] text-[var(--text-secondary)]">Colour, both-sides and paper sizes are read from each printer’s driver. Correct them here if needed; the Counter uses them to suggest the right printer.</p>
 
         {loading ? (
           <p className="py-6 text-center text-xs text-[var(--text-secondary)]" role="status">Loading printers…</p>
         ) : printers.length === 0 ? (
           <p className="rounded-xl border border-dashed border-[var(--border-strong)] py-8 text-center text-xs text-[var(--text-secondary)]">
-            No printers yet. They appear here once the counter computer is paired.
+            No printers yet. They appear here a few seconds after the print app connects.
           </p>
         ) : (
           printers.map((printer) => {

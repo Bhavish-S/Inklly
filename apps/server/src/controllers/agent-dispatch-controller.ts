@@ -5,6 +5,11 @@ import { AgentRepository, ShopRepository, PrinterRepository, DatabaseService } f
 import { SpoolerResult } from '@inklly/shared';
 import { PrivateFileStorage } from '../services/private-file-storage';
 
+/** INK-ABCD-EFGH-JKLM-NPQR → canonical upper-case code without separators. */
+export function normalizePairingCode(value: string): string {
+  return value.toUpperCase().replace(/^INK/, '').replace(/[^A-Z0-9]/g, '');
+}
+
 export class AgentDispatchController {
   constructor(
     private agentRepo: AgentRepository,
@@ -15,17 +20,26 @@ export class AgentDispatchController {
   ) {}
 
   public enroll = (req: Request, res: Response) => {
-    const { shopId, pairingCode, hostname, osPlatform, osVersion, agentVersion } = req.body;
-
-    if (typeof shopId !== 'string' || typeof pairingCode !== 'string' || pairingCode.length < 32 || pairingCode.length > 128) {
-      return res.status(400).json({ error: 'A valid shopId and one-time pairingCode are required' });
+    const { shopId, hostname, osPlatform, osVersion, agentVersion } = req.body || {};
+    // Codes are shown as INK-XXXX-XXXX-XXXX-XXXX; accept them with or without dashes and in any case.
+    const rawCode = typeof req.body?.pairingCode === 'string' ? req.body.pairingCode.trim() : '';
+    const pairingCode = /^ink[-\s]?/i.test(rawCode) || /^[A-Za-z0-9]{4}([-\s]?[A-Za-z0-9]{4}){3}$/.test(rawCode) ? normalizePairingCode(rawCode) : rawCode;
+    if (!pairingCode || pairingCode.length < 16 || pairingCode.length > 128 || (shopId !== undefined && typeof shopId !== 'string')) {
+      return res.status(400).json({ error: 'Enter the pairing code shown in Inklly → Printers.' });
     }
 
-    const shop = this.shopRepo.getShopById(shopId) || this.shopRepo.getShopByCode(shopId);
-    if (!shop) {
-      return res.status(401).json({ error: 'Invalid pairing credentials' });
+    let shop;
+    if (typeof shopId === 'string' && shopId) {
+      shop = this.shopRepo.getShopById(shopId) || this.shopRepo.getShopByCode(shopId);
+      if (!shop || !this.agentRepo.consumePairingCode(shop.id, pairingCode)) {
+        return res.status(401).json({ error: 'That pairing code is wrong or has expired. Create a new one in Inklly → Printers.' });
+      }
+    } else {
+      const pairedShopId = this.agentRepo.consumePairingCodeForAnyShop(pairingCode);
+      shop = pairedShopId ? this.shopRepo.getShopById(pairedShopId) : null;
+      if (!shop) return res.status(401).json({ error: 'That pairing code is wrong or has expired. Create a new one in Inklly → Printers.' });
     }
-    if (!this.agentRepo.consumePairingCode(shop.id, pairingCode)) return res.status(401).json({ error: 'Invalid or expired pairing credentials' });
+    if (!shop.isActive) return res.status(403).json({ error: 'This shop is not active.' });
 
     const agentId = `agt-${crypto.randomUUID()}`;
     const agentSecret = crypto.randomBytes(32).toString('base64url');
@@ -34,10 +48,10 @@ export class AgentDispatchController {
       agentId,
       shopId: shop.id,
       secretKey: agentSecret,
-      hostname: hostname || 'DESKTOP-POS-1',
-      osPlatform: osPlatform || process.platform,
-      osVersion: osVersion || 'Windows 11 / macOS Sonoma',
-      agentVersion: agentVersion || '1.0.0',
+      hostname: typeof hostname === 'string' && hostname.trim() ? hostname.trim().slice(0, 100) : 'Print computer',
+      osPlatform: typeof osPlatform === 'string' ? osPlatform.slice(0, 40) : 'unknown',
+      osVersion: typeof osVersion === 'string' ? osVersion.slice(0, 100) : 'unknown',
+      agentVersion: typeof agentVersion === 'string' ? agentVersion.slice(0, 20) : '1.0.0',
     });
 
     res.status(201).json({

@@ -48,10 +48,14 @@ export class AgentDaemon {
       });
     });
 
-    // Auto-enroll if not yet paired
+    // Pair with the shop: from INKLLY_PAIRING_CODE, or by asking in this window.
     if (!config.isPaired && config.pairingCode) {
       await this.enrollWithServer();
     }
+    if (!this.configManager.get().isPaired && process.stdin.isTTY && process.env.INKLLY_NO_PROMPT !== 'true') {
+      await this.promptForPairing();
+    }
+    this.printStatus();
 
     // Start background tasks
     this.heartbeatInterval = setInterval(() => this.sendHeartbeat(), config.heartbeatIntervalMs);
@@ -111,17 +115,65 @@ export class AgentDaemon {
     });
   }
 
+  /** Asks for the pairing code shown in Inklly → Printers until pairing succeeds. */
+  private async promptForPairing(): Promise<void> {
+    const readline = await import('node:readline/promises');
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    try {
+      console.log('');
+      console.log('  To connect this computer to your shop:');
+      console.log('  1. On your Inklly dashboard open  Business Setup → Printers');
+      console.log('  2. Click  “Create pairing code”');
+      console.log('  3. Type or paste the code here (it looks like INK-ABCD-EFGH-JKLM-NPQR)');
+      console.log('');
+      for (let attempt = 0; attempt < 10 && this.isRunning; attempt++) {
+        const code = (await rl.question('  Pairing code: ')).trim();
+        if (!code) continue;
+        this.configManager.update({ pairingCode: code });
+        if (await this.enrollWithServer()) return;
+        console.log('  ✗ ' + (this.lastEnrollError || 'That code did not work. Create a new code and try again.'));
+      }
+    } finally {
+      rl.close();
+    }
+  }
+
+  private lastEnrollError = '';
+
+  /** A plain-language summary shopkeepers can read in the app window. */
+  private printStatus(): void {
+    const config = this.configManager.get();
+    const printing = process.env.INKLLY_ENABLE_PHYSICAL_PRINTING === 'true';
+    console.log('');
+    console.log('  ────────────────────────────────────────────────');
+    console.log(config.isPaired ? `  ✓ Connected to shop: ${config.shopCode || config.shopId}` : '  ✗ Not connected to a shop yet (restart and enter a pairing code)');
+    console.log(printing ? '  ✓ Printing is ON' : '  ! Printing is OFF (set INKLLY_ENABLE_PHYSICAL_PRINTING=true)');
+    if (this.printers.length) {
+      console.log('  Printers found on this computer:');
+      for (const printer of this.printers) {
+        const caps = printer.capabilities;
+        const traits = [caps.color ? 'colour' : caps.color === false ? 'B&W' : null, caps.duplex ? 'both sides' : null, caps.paperSizes.join('/') || null].filter(Boolean).join(', ');
+        console.log(`   • ${printer.name}${printer.isOnline ? '' : ' (offline)'}${traits ? ` — ${traits}` : ''}`);
+      }
+    } else {
+      console.log('  ! No printers found. Install your printer on this computer first, then restart Inklly.');
+    }
+    console.log('  Keep this window open while the shop is open. Orders print when staff press Print.');
+    console.log('  ────────────────────────────────────────────────');
+    console.log('');
+  }
+
   public async enrollWithServer(shopId?: string, _secretKey?: string): Promise<boolean> {
     const config = this.configManager.get();
     const targetShopId = shopId || config.shopId;
-    if (!targetShopId || !config.pairingCode) return false;
+    if (!config.pairingCode) return false;
 
     try {
       const res = await fetch(`${config.serverUrl}/agent/enroll`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          shopId: targetShopId,
+          ...(targetShopId ? { shopId: targetShopId } : {}),
           pairingCode: config.pairingCode,
           hostname: (process.env.COMPUTERNAME || os.hostname() || 'print-computer').slice(0, 100),
           osPlatform: process.platform,
@@ -141,10 +193,15 @@ export class AgentDaemon {
           isPaired: true,
         });
         delete process.env.INKLLY_PAIRING_CODE;
-        console.log(`[Inklly Agent] Successfully paired with shop ${body.shopCode} (${body.agentId})`);
+        console.log(`  ✓ Paired with ${body.shopName || body.shopCode}.`);
+        await this.sendHeartbeat();
         return true;
       }
+      const failure = (await res.json().catch(() => ({}))) as any;
+      this.lastEnrollError = failure.error || `The server refused the code (HTTP ${res.status}).`;
+      this.configManager.update({ pairingCode: undefined });
     } catch (err: any) {
+      this.lastEnrollError = `Could not reach Inklly (${err.message}). Check the internet connection.`;
       console.warn('[Inklly Agent] Enrollment pending server availability:', err.message);
     }
     return false;

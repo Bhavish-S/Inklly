@@ -3,6 +3,7 @@ import QRCode from 'qrcode';
 import { api } from '../api/client';
 import { formatInr, printReceipt } from '../receipt';
 import { playChime } from '../ready-alert';
+import { BrowserPrintJob, buildJobPdf, openPrintDialog, planBrowserPrintJobs } from '../browser-print';
 
 /**
  * The shop counter, in the order the work actually happens:
@@ -137,6 +138,8 @@ export const CounterView: React.FC<CounterViewProps> = ({ shop, onOpenPrinterSet
   const [upiQr, setUpiQr] = useState<string | null>(null);
   const [showUpi, setShowUpi] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  // Printing through this computer's print dialog (no print app needed).
+  const [browserJobs, setBrowserJobs] = useState<{ orderId: string; jobs: BrowserPrintJob[]; printed: string[] } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const knownIds = useRef<Set<string> | null>(null);
 
@@ -210,6 +213,8 @@ export const CounterView: React.FC<CounterViewProps> = ({ shop, onOpenPrinterSet
     collect: orders.filter((order) => stageOf(order) === 'collect').length,
   }), [orders]);
 
+  const agentReady = printers.some((printer) => printer.agentId && printer.healthStatus === 'ONLINE');
+
   const selected = useMemo(
     () => [...orders, ...(searchResults || [])].find((order) => order.id === selectedId) || null,
     [orders, searchResults, selectedId]
@@ -227,6 +232,7 @@ export const CounterView: React.FC<CounterViewProps> = ({ shop, onOpenPrinterSet
   useEffect(() => {
     setShowUpi(false);
     setError(null);
+    setBrowserJobs((current) => (current && current.orderId === selectedId ? current : null));
   }, [selectedId]);
 
   useEffect(() => {
@@ -279,6 +285,47 @@ export const CounterView: React.FC<CounterViewProps> = ({ shop, onOpenPrinterSet
     if (!selected) return;
     const jobIds = (selected.printJobs || []).filter((job) => job.status !== 'PRINT_CONFIRMED').map((job) => job.id);
     void run('pages', () => api.reconcilePrintOutput(selected.id, 'Staff checked the printed pages at the counter.', jobIds), `${token(selected)} is ready for pickup`);
+  };
+
+  /** Downloads the files and prepares one print job per colour/sides/paper group. */
+  const prepareBrowserPrint = async () => {
+    if (!selected || busy) return;
+    setBusy('browser');
+    setError(null);
+    try {
+      const files = await Promise.all(selected.files.map(async (file) => ({
+        fileName: file.fileName,
+        mimeType: file.mimeType,
+        pageCount: file.pageCount,
+        blob: await api.fetchOrderFileBlob(selected.id, file.id),
+        options: file.printOptions || {},
+      })));
+      const jobs = planBrowserPrintJobs(files as any);
+      setBrowserJobs({ orderId: selected.id, jobs, printed: [] });
+      if (jobs.length === 1) await printBrowserJob(jobs[0], selected.id);
+    } catch (err) {
+      setError({ message: err instanceof Error ? err.message : 'Could not prepare the files for printing.' });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const printBrowserJob = async (job: BrowserPrintJob, orderId = browserJobs?.orderId) => {
+    try {
+      const bytes = await buildJobPdf(job);
+      await openPrintDialog(bytes, `${job.label} — ${job.files.map((f) => f.fileName).join(', ')}`);
+      setBrowserJobs((current) => current && current.orderId === orderId
+        ? { ...current, printed: [...new Set([...current.printed, job.key])] }
+        : current ?? (orderId ? { orderId, jobs: [job], printed: [job.key] } : null));
+    } catch (err) {
+      setError({ message: err instanceof Error ? err.message : 'Could not open the print dialog.' });
+    }
+  };
+
+  const confirmBrowserPrinted = () => {
+    if (!selected) return;
+    void run('manual', () => api.reconcilePrintOutput(selected.id, 'Printed from the counter computer and checked by staff.', undefined, true), `${token(selected)} is ready for pickup`)
+      .then(() => setBrowserJobs(null));
   };
 
   const printedHere = () => {
@@ -348,7 +395,7 @@ export const CounterView: React.FC<CounterViewProps> = ({ shop, onOpenPrinterSet
       if (event.ctrlKey || event.metaKey || event.altKey || !selected) return;
       const stage = stageOf(selected);
       const key = event.key.toLowerCase();
-      if (key === 'p' && stage === 'print') { event.preventDefault(); printSelected(); }
+      if (key === 'p' && stage === 'print') { event.preventDefault(); if (agentReady) printSelected(); else void prepareBrowserPrint(); }
       else if (key === 'k' && stage === 'printing') { event.preventDefault(); confirmPages(); }
       else if (key === 'c' && stage === 'collect' && !isPaid(selected)) { event.preventDefault(); collect('CASH'); }
       else if (key === 'u' && stage === 'collect' && !isPaid(selected)) { event.preventDefault(); setShowUpi(true); }
@@ -476,6 +523,11 @@ export const CounterView: React.FC<CounterViewProps> = ({ shop, onOpenPrinterSet
             showUpi={showUpi}
             onShowUpi={() => setShowUpi(true)}
             onPrint={printSelected}
+            agentReady={agentReady}
+            browserJobs={browserJobs && browserJobs.orderId === selected.id ? browserJobs : null}
+            onBrowserPrint={() => void prepareBrowserPrint()}
+            onPrintBrowserJob={(job) => void printBrowserJob(job, selected.id)}
+            onConfirmBrowserPrinted={confirmBrowserPrinted}
             onPrintedHere={printedHere}
             onPagesOk={confirmPages}
             onCollect={collect}
@@ -503,6 +555,11 @@ interface OrderPanelProps {
   showUpi: boolean;
   onShowUpi: () => void;
   onPrint: () => void;
+  agentReady: boolean;
+  browserJobs: { orderId: string; jobs: BrowserPrintJob[]; printed: string[] } | null;
+  onBrowserPrint: () => void;
+  onPrintBrowserJob: (job: BrowserPrintJob) => void;
+  onConfirmBrowserPrinted: () => void;
   onPrintedHere: () => void;
   onPagesOk: () => void;
   onCollect: (method: 'CASH' | 'UPI') => void;
@@ -596,6 +653,7 @@ const OrderPanel: React.FC<OrderPanelProps> = (props) => {
                   {options.note && <p className="mt-2 rounded-lg bg-amber-50 border border-amber-200 px-2.5 py-1.5 text-xs text-amber-900">📝 {options.note}</p>}
                 </div>
               </div>
+              {((props.agentReady && canChoose) || selectedPrinter) && (
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <label className="text-xs font-semibold text-slate-500" htmlFor={`printer-${file.id}`}>Printer</label>
                 <select
@@ -619,6 +677,7 @@ const OrderPanel: React.FC<OrderPanelProps> = (props) => {
                 </select>
                 {status && status !== 'RECEIVED' && <span className="text-[11px] font-bold text-sky-700 bg-sky-50 rounded-md px-2 py-1">{status.replace(/_/g, ' ').toLowerCase()}</span>}
               </div>
+              )}
             </div>
           );
         })}
@@ -630,22 +689,56 @@ const OrderPanel: React.FC<OrderPanelProps> = (props) => {
           <p className="text-sm text-slate-600 dark:text-slate-300">The customer chose to pay online and hasn’t finished paying. You can print once the payment shows as received, or cancel the order.</p>
         )}
 
-        {stage === 'print' && (
-          <>
-            {printers.filter((p) => p.agentId).length === 0 && (
-              <p className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900">
-                No printer is connected yet. Install the Inklly print app on the computer attached to your printers{props.onOpenPrinterSetup ? <>, then <button type="button" className="font-bold underline" onClick={props.onOpenPrinterSetup}>set up printers</button></> : ''}. Until then, use “Print from this computer”.
-              </p>
-            )}
+        {stage === 'print' && !props.browserJobs && (
+          props.agentReady ? (
             <div className="grid sm:grid-cols-[1fr_auto] gap-2">
               <button type="button" onClick={props.onPrint} disabled={Boolean(busy)} className="min-h-[60px] rounded-2xl bg-indigo-600 hover:bg-indigo-700 active:scale-[0.99] text-white text-lg font-extrabold shadow-md disabled:opacity-50 transition">
                 {busy === 'print' ? 'Sending…' : '🖨️  Print'} <span className="ml-2 text-xs font-mono opacity-70">P</span>
               </button>
-              <button type="button" onClick={props.onPrintedHere} disabled={Boolean(busy)} className="min-h-[60px] px-5 rounded-2xl border border-slate-200 dark:border-slate-700 text-sm font-bold text-slate-700 dark:text-slate-200 disabled:opacity-50">
-                Printed from this computer
+              <button type="button" onClick={props.onBrowserPrint} disabled={Boolean(busy)} className="min-h-[60px] px-5 rounded-2xl border border-slate-200 dark:border-slate-700 text-sm font-bold text-slate-700 dark:text-slate-200 disabled:opacity-50">
+                {busy === 'browser' ? 'Preparing…' : 'Print on this computer instead'}
               </button>
             </div>
-          </>
+          ) : (
+            <>
+              <button type="button" onClick={props.onBrowserPrint} disabled={Boolean(busy)} className="w-full min-h-[64px] rounded-2xl bg-indigo-600 hover:bg-indigo-700 active:scale-[0.99] text-white text-lg font-extrabold shadow-md disabled:opacity-50 transition">
+                {busy === 'browser' ? 'Preparing files…' : '🖨️  Print on this computer'} <span className="ml-2 text-xs font-mono opacity-70">P</span>
+              </button>
+              <p className="text-xs text-slate-500">Opens your computer’s print dialog — pick your printer there. Pages and copies are already set. To send jobs straight to your printers without a dialog, {props.onOpenPrinterSetup ? <button type="button" className="font-semibold text-indigo-600 underline" onClick={props.onOpenPrinterSetup}>install the Inklly print app</button> : 'install the Inklly print app'}.</p>
+            </>
+          )
+        )}
+
+        {stage === 'print' && props.browserJobs && (
+          <div className="space-y-3 animate-fadeIn">
+            <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">In the print dialog, choose your printer and check these settings:</p>
+            {props.browserJobs.jobs.map((job, index) => {
+              const done = props.browserJobs!.printed.includes(job.key);
+              return (
+                <div key={job.key} className={`rounded-2xl border p-3 flex flex-wrap items-center gap-3 ${done ? 'border-emerald-200 bg-emerald-50/60 dark:bg-emerald-950/30' : 'border-slate-200 dark:border-slate-700'}`}>
+                  <div className="flex-1 min-w-[200px]">
+                    <p className="text-sm font-bold text-slate-900 dark:text-white">{props.browserJobs!.jobs.length > 1 ? `Job ${index + 1}: ` : ''}{job.files.map((f) => f.fileName).join(', ')}</p>
+                    <div className="mt-1 flex flex-wrap gap-1.5 text-[11px] font-bold">
+                      <span className={`rounded-md px-2 py-0.5 ${job.colour ? 'bg-fuchsia-100 text-fuchsia-700' : 'bg-slate-900 text-white'}`}>Colour: {job.colour ? 'Colour' : 'Black & white'}</span>
+                      <span className="rounded-md bg-slate-100 px-2 py-0.5 text-slate-700">Two-sided: {job.duplex ? 'On (long edge)' : 'Off'}</span>
+                      <span className="rounded-md bg-slate-100 px-2 py-0.5 text-slate-700">Paper: {job.paperSize}</span>
+                      {job.landscape && <span className="rounded-md bg-slate-100 px-2 py-0.5 text-slate-700">Landscape</span>}
+                      <span className="rounded-md bg-indigo-50 px-2 py-0.5 text-indigo-700">{job.sheets} page{job.sheets === 1 ? '' : 's'} · copies already included</span>
+                    </div>
+                  </div>
+                  <button type="button" onClick={() => props.onPrintBrowserJob(job)} className={`min-h-[44px] px-5 rounded-xl font-bold text-sm ${done ? 'border border-emerald-300 text-emerald-800' : 'bg-indigo-600 text-white'}`}>
+                    {done ? 'Print again' : 'Open print dialog'}
+                  </button>
+                </div>
+              );
+            })}
+            <div className="grid sm:grid-cols-[1fr_auto] gap-2 pt-1">
+              <button type="button" onClick={props.onConfirmBrowserPrinted} disabled={Boolean(busy) || props.browserJobs.printed.length === 0} className="min-h-[56px] rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold disabled:opacity-40">
+                {busy === 'manual' ? 'Saving…' : '✓ All pages printed correctly'}
+              </button>
+              <p className="self-center text-xs text-slate-500 sm:max-w-[200px]">Check the pages first. Then take payment and hand over.</p>
+            </div>
+          </div>
         )}
 
         {stage === 'printing' && (

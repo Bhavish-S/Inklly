@@ -16,11 +16,10 @@ export interface AgentConfig {
 }
 
 const DEFAULT_CONFIG: AgentConfig = {
-  serverUrl: process.env.INKLLY_SERVER_URL || 'http://localhost:4000/api/v1',
+  serverUrl: process.env.INKLLY_SERVER_URL || 'https://inklly.onrender.com/api/v1',
   localPort: Number(process.env.INKLLY_AGENT_PORT) || 8765,
   shopId: process.env.INKLLY_SHOP_ID || '',
   pairingCode: process.env.INKLLY_PAIRING_CODE,
-  shopCode: 'campus1',
   isPaired: false,
   pollIntervalMs: 5000,
   heartbeatIntervalMs: 15000,

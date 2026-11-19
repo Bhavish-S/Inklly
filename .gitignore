@@ -55,3 +55,6 @@ apps/server/downloads/*.msi
 apps/server/downloads/*.zip
 apps/server/downloads/*.exe
 uploads/
+
+# Print app packaging staging
+apps/agent/dist-package/

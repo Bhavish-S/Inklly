@@ -98,10 +98,16 @@ export class MerchantController {
   public createAgentPairingCode = (req: Request, res: Response) => {
     const shopId = req.user?.shopId;
     if (!shopId) return res.status(403).json({ error: 'Shop owner account required' });
-    const pairingCode = crypto.randomBytes(32).toString('base64url');
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-    this.agentRepo.issuePairingCode(shopId, req.user!.userId, pairingCode, expiresAt);
-    return res.status(201).json({ pairingCode, expiresAt, shopId });
+    // A readable one-time code (80 random bits) that is easy to paste or type:
+    // INK-XXXX-XXXX-XXXX-XXXX, valid for 30 minutes.
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const bytes = crypto.randomBytes(16);
+    const code = Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join('');
+    const display = `INK-${code.slice(0, 4)}-${code.slice(4, 8)}-${code.slice(8, 12)}-${code.slice(12, 16)}`;
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    this.agentRepo.issuePairingCode(shopId, req.user!.userId, code, expiresAt);
+    const shop = this.shopRepo.getShopById(shopId);
+    return res.status(201).json({ pairingCode: display, expiresAt, shopId, shopCode: shop?.shopCode });
   };
 
   public revokeAgent = (req: Request, res: Response) => {

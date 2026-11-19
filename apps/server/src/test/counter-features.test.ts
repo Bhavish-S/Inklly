@@ -175,6 +175,23 @@ describe('counter features: walk-in billing, now-serving board', { concurrency: 
     assert.equal((await fetch(`${baseUrl}/api/v1/payments/orders/${order.orderId}/collect-cash`, { method: 'POST', headers, body: JSON.stringify({ method: 'CARD' }) })).status, 400);
   });
 
+  it('pairs a print app with just the pasted code, once', async () => {
+    const pairing = await (await api('/agents/pairing-code', { method: 'POST' })).json() as any;
+    assert.match(pairing.pairingCode, /^INK-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+    const typed = pairing.pairingCode.toLowerCase().replace(/-/g, ' ');
+    const enroll = (code: string) => fetch(`${baseUrl}/api/v1/agent/enroll`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pairingCode: code, hostname: 'Counter laptop' }),
+    });
+    const first = await enroll(typed);
+    assert.equal(first.status, 201, await first.clone().text());
+    const body = await first.json() as any;
+    assert.equal(body.shopCode, 'campus1');
+    assert.ok(body.agentSecret);
+    assert.equal((await enroll(pairing.pairingCode)).status, 401);
+    assert.equal((await enroll('INK-AAAA-BBBB-CCCC-DDDD')).status, 401);
+    assert.equal((await enroll('')).status, 400);
+  });
+
   it('shows tokens, not names, on the public now-serving board', async () => {
     const res = await fetch(`${baseUrl}/api/v1/portal/shop/campus1/display`);
     assert.equal(res.status, 200);

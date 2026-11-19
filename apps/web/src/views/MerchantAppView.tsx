@@ -4596,78 +4596,12 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
             {setupTab === 'printers' && (
               <div className="space-y-6">
                 <div className="text-xs text-gray-400">
-                  <span>Shop settings</span> &gt; <span className="text-gray-600 dark:text-gray-300 font-bold">Printers & Agent Connection</span>
+                  <span>Shop settings</span> &gt; <span className="text-gray-600 dark:text-gray-300 font-bold">Printers</span>
                 </div>
                 <div>
-                  <h2 className="text-xl font-extrabold text-[#172031] dark:text-white">Printers & Agent Connection</h2>
-                  <p className="text-xs text-gray-400">Add printers, review detected capabilities, and control order routing</p>
+                  <h2 className="text-xl font-extrabold text-[#172031] dark:text-white">Printers</h2>
+                  <p className="text-xs text-gray-400">Connect the computer your printers are plugged into, and check what each printer can do</p>
                 </div>
-
-                <section aria-labelledby="agent-availability-title" className="bg-white dark:bg-gray-800 border border-indigo-100 dark:border-indigo-900/60 rounded-2xl p-6 shadow-xs space-y-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-100 dark:border-gray-700 pb-4">
-                    <div className="flex items-start gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 flex items-center justify-center text-lg">🖨️</div>
-                      <div>
-                        <h3 id="agent-availability-title" className="font-extrabold text-sm text-[#172031] dark:text-white">Counter Print Operations Hub</h3>
-                        <p className="mt-1 max-w-2xl text-[11px] text-gray-500 dark:text-gray-400">Configure your counter printing modes. Inklly supports zero-install direct browser printing for any device, as well as an optional silent background spooler for high-volume counters.</p>
-                      </div>
-                    </div>
-                    <span className="text-[10px] font-black px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300">
-                      DIRECT PRINT READY
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                    {/* Mode 1 Card */}
-                    <div className="rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/30 dark:bg-indigo-950/20 p-4 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                          <span>⚡ Mode 1: Web-Direct Print</span>
-                          <span className="text-[9px] px-2 py-0.2 bg-emerald-500 text-white rounded-full font-bold">ACTIVE</span>
-                        </div>
-                      </div>
-                      <p className="text-[11px] leading-5 text-gray-600 dark:text-gray-300">
-                        Zero software or agent install required. Click <strong>Direct</strong> or <strong>Peek</strong> on any order in your queue to immediately print via your system print dialog with exact customer paper size and color settings.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={handlePrintTestAlignmentPage}
-                        className="mt-1 px-3 py-1.5 rounded-lg bg-[#4D64E6] hover:bg-[#3F54D1] text-white text-[11px] font-bold shadow-xs cursor-pointer flex items-center gap-1"
-                      >
-                        <span>🖨️</span> Send A4 Calibration Test Page
-                      </button>
-                    </div>
-
-                    {/* Mode 2 Card */}
-                    <div className="rounded-xl border border-gray-200 dark:border-gray-700 p-4 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="font-bold text-slate-900 dark:text-white">🚀 Mode 2: Silent Hardware Spooler</div>
-                        <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${agentOnline ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-500'}`}>
-                          {agentOnline ? 'CONNECTED' : 'STANDBY'}
-                        </span>
-                      </div>
-                      <p className="text-[11px] leading-5 text-gray-500 dark:text-gray-400">
-                        For high-volume Windows counters. Sends print jobs silently to your physical printers without opening print preview windows.
-                      </p>
-                      <div className="flex items-center gap-2 pt-1">
-                        <button
-                          type="button"
-                          onClick={() => checkAgentHealth(true)}
-                          className="rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-[11px] font-bold hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
-                        >
-                          Check Local Agent
-                        </button>
-                        <a
-                          href="/downloads/Inklly-Agent-Setup.bat"
-                          download="Inklly-Agent-Setup.bat"
-                          className="rounded-lg border border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950/40 px-3 py-1.5 text-[11px] font-bold text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 cursor-pointer"
-                        >
-                          Download Agent (.bat)
-                        </a>
-                      </div>
-                    </div>
-                  </div>
-                </section>
 
                 <PrinterSetupPanel onChanged={() => void handleRefreshPrinters(false)} />
 
@@ -4676,42 +4610,6 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                   <div>
                     <h3 className="font-extrabold text-sm text-[#172031] dark:text-white">Your printers</h3>
                     <p className="text-[11px] text-gray-400">Add a printer or change its print settings</p>
-                  </div>
-
-                  {/* Agent connection details */}
-                  <div className="p-4 bg-gray-50 dark:bg-gray-900/50 rounded-2xl border border-gray-100 dark:border-gray-700 space-y-3">
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="font-bold text-gray-500 uppercase tracking-wider text-[10px]">▼ Agent connection details</span>
-                      <span className="text-[10px] font-bold text-gray-400">INKLLY AGENT STATUS</span>
-                    </div>
-                    <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className={`w-2.5 h-2.5 rounded-full ${agentOnline ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
-                          <span className="font-bold text-xs">Inklly Agent</span>
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${agentOnline ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300' : 'bg-gray-200 text-gray-600'}`}>
-                            {agentOnline ? 'PAIRED · LOCAL' : 'NOT PAIRED'}
-                          </span>
-                        </div>
-                        <div className="text-[11px] text-gray-500 mt-0.5">
-                          {agentOnline
-                            ? agentInfo?.physicalPrintingEnabled === true
-                              ? 'Local agent reports physical printing is enabled. This does not confirm printer readiness or physical output; verify the supported hardware before accepting live jobs.'
-                              : agentInfo?.physicalPrintingEnabled === false
-                                ? 'Local agent is paired, but physical printing is disabled. No print jobs will be released to it.'
-                                : 'Local agent responds, but its physical-printing readiness is not reported. No print jobs should be released.'
-                            : 'No paired local agent response. A verified production installer is not available yet.'}
-                        </div>
-                        <div className="text-[10px] text-gray-400 font-mono mt-0.5">
-                          {agentInfo ? `127.0.0.1:8765 · ${agentInfo.version || 'version unavailable'}` : 'Local agent status not checked'}
-                        </div>
-                      </div>
-                      <div className="flex gap-2">
-                        <button type="button" onClick={() => checkAgentHealth(true)} className="px-3 py-1.5 border rounded-xl text-xs font-bold bg-white dark:bg-gray-800 flex items-center gap-1 cursor-pointer hover:bg-gray-50">
-                          <span>🔄</span> Check again
-                        </button>
-                      </div>
-                    </div>
                   </div>
 
                   {/* Printers Listed / Added */}
@@ -4735,12 +4633,12 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                       <span className="text-gray-600 dark:text-gray-300 font-medium">
                         {detectedPrinters.length > 0
                           ? `Preferred printer queue: ${selectedDefaultPrinter || 'none selected'}.`
-                          : 'Click Add Printer to select a printer detected by your agent.'}
+                          : 'No printers yet. Start the Inklly Print App on the computer your printers are plugged into.'}
                       </span>
                       <div className="flex items-center gap-2">
                         {detectingPrinters ? (
                           <span className="text-[11px] font-bold text-[#4D64E6] flex items-center gap-1">
-                            <span className="animate-spin inline-block">↻</span> Scanning Windows Spooler...
+                            <span className="animate-spin inline-block">↻</span> Checking printers…
                           </span>
                         ) : (
                           <button

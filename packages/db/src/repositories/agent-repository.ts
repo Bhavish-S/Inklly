@@ -115,6 +115,16 @@ export class AgentRepository {
     return Boolean(consumed);
   }
 
+  /** Consumes a one-time pairing code on its own and returns the shop it belongs to. */
+  public consumePairingCodeForAnyShop(pairingCode: string): string | null {
+    const codeHash = crypto.createHash('sha256').update(pairingCode).digest('hex');
+    const consumed = this.db.queryOne<any>(
+      `DELETE FROM agent_pairing_codes WHERE code_hash = ? AND expires_at > ? RETURNING shop_id`,
+      [codeHash, new Date().toISOString()]
+    );
+    return consumed?.shop_id ? String(consumed.shop_id) : null;
+  }
+
   public authenticateAgent(agentId: string, secret: string): { agentId: string; shopId: string } | null {
     if (!agentId || typeof secret !== 'string' || secret.length < 40 || secret.length > 100) return null;
     const row = this.db.queryOne<any>(
