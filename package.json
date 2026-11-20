@@ -1,12 +1,14 @@
 {
   "name": "inklly",
   "version": "1.0.0",
-  "description": "Inklly — Modern Print-Shop Automation & Self-Service Document OS",
+  "description": "Inklly \u2014 Modern Print-Shop Automation & Self-Service Document OS",
   "license": "MIT",
   "private": true,
   "workspaces": [
     "packages/*",
-    "apps/*"
+    "apps/web",
+    "apps/server",
+    "apps/agent"
   ],
   "scripts": {
     "build": "npm run build:render && npm run build --workspace=apps/agent && npm run build --workspace=apps/web",

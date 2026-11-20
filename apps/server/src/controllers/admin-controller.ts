@@ -1,10 +1,26 @@
 import { Request, Response } from 'express';
-import { DatabaseService, EnquiryRepository, LedgerRepository, UserRepository, hashPassword } from '@inklly/db';
-import { SubscriptionPlan } from '@inklly/shared';
+import { AgentRepository, DatabaseService, EnquiryRepository, LedgerRepository, OrderRepository, UserRepository, hashPassword } from '@inklly/db';
+import { SubscriptionPlan, canTransitionOrder } from '@inklly/shared';
 import * as crypto from 'node:crypto';
 import { PrivateFileStorage } from '../services/private-file-storage';
 import { purgeExpiredPrintFiles } from '../services/print-file-retention';
 import { PilotBillingError, PilotBillingService } from '../services/pilot-billing';
+import { ConsoleQueryError, PlatformConsoleService } from '../services/platform-console';
+import { PlatformSettingsError, mergeSettingsPatch, readPlatformSettings, writePlatformSettings } from '../services/platform-settings';
+
+const SHOP_PHONE = /^\+?[0-9][0-9 ()-]{5,19}$/;
+
+/** Admin writes that change customer or shop state must carry a short human reason for the audit log. */
+function readAuditNote(body: any, required: boolean): { note: string; error?: string } {
+  const raw = body?.note ?? body?.reason;
+  if (raw === undefined || raw === null || raw === '') {
+    return required ? { note: '', error: 'Add a short note (5 to 500 characters) explaining this change. It is saved in the audit log.' } : { note: '' };
+  }
+  if (typeof raw !== 'string') return { note: '', error: 'note must be text.' };
+  const note = raw.trim();
+  if ((required || note) && (note.length < 5 || note.length > 500)) return { note, error: 'The note must be 5 to 500 characters.' };
+  return { note };
+}
 
 export const SAAS_PLANS: SubscriptionPlan[] = [
   {
@@ -71,6 +87,8 @@ export const PLATFORM_ADMIN_PERMISSION_OPTIONS = [
 
 export class AdminController {
   private readonly pilotBilling: PilotBillingService;
+  private readonly consoleService: PlatformConsoleService;
+  private readonly orderRepo: OrderRepository;
 
   constructor(
     private db: DatabaseService,
@@ -78,7 +96,11 @@ export class AdminController {
     private userRepo: UserRepository,
     private enquiryRepo: EnquiryRepository,
     private fileStorage: PrivateFileStorage
-  ) { this.pilotBilling = new PilotBillingService(db); }
+  ) {
+    this.pilotBilling = new PilotBillingService(db);
+    this.consoleService = new PlatformConsoleService(db);
+    this.orderRepo = new OrderRepository(db);
+  }
 
   public listPlatformAdmins = (_req: Request, res: Response) => {
     const rows = this.db.query<any>(
@@ -146,12 +168,14 @@ export class AdminController {
     const gmvRow = this.db.queryOne<any>(
       `SELECT SUM(amount_paise) as total FROM ledger_entries WHERE domain = 'CUSTOMER_PRINT_PAYMENT'`
     );
+    const live = this.consoleService.overview();
 
     res.json({
       metrics: {
-        totalOrganizations: orgs[0]?.count || 0,
-        totalShops: shops[0]?.count || 0,
-        totalOrdersProcessed: orders[0]?.count || 0,
+        ...live.metrics,
+        totalOrganizations: Number(orgs[0]?.count || 0),
+        totalShops: Number(shops[0]?.count || 0),
+        totalOrdersProcessed: Number(orders[0]?.count || 0),
         platformGMVPaise: Number(gmvRow?.total ?? 0),
         // Subscription billing creation/collection is not implemented yet, so
         // ledger totals cannot be presented as recurring monthly revenue.
@@ -164,6 +188,8 @@ export class AdminController {
         version: '1.0.0',
         timestamp: new Date().toISOString(),
       },
+      recentOrders: live.recentOrders,
+      alerts: live.alerts,
     });
   };
 
@@ -615,7 +641,20 @@ export class AdminController {
     }
     const rows = this.userRepo.getAuditEvents(limit + 1, undefined, cursor);
     const hasMore = rows.length > limit;
-    const events = hasMore ? rows.slice(0, limit) : rows;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+    // Add display names so the console can show "Asha (owner) deactivated Campus Print"
+    // instead of raw identifiers. Identifiers stay in the payload for exports.
+    const lookup = (sql: string, ids: string[]) => ids.length
+      ? new Map(this.db.query<any>(`${sql} (${ids.map(() => '?').join(', ')})`, ids).map((row) => [String(row.id), row]))
+      : new Map<string, any>();
+    const users = lookup(`SELECT id, full_name, email FROM users WHERE id IN`, [...new Set(page.map((event) => event.actorUserId).filter((id): id is string => Boolean(id)))]);
+    const shops = lookup(`SELECT id, name FROM shops WHERE id IN`, [...new Set(page.map((event) => event.shopId).filter((id): id is string => Boolean(id)))]);
+    const events = page.map((event) => ({
+      ...event,
+      actorName: event.actorUserId ? users.get(event.actorUserId)?.full_name || null : null,
+      actorEmail: event.actorUserId ? users.get(event.actorUserId)?.email || null : null,
+      shopName: event.shopId ? shops.get(event.shopId)?.name || null : null,
+    }));
     const last = events[events.length - 1];
     const nextCursor = hasMore && last
       ? Buffer.from(JSON.stringify({ createdAt: last.createdAt, id: last.id })).toString('base64url')
@@ -1030,5 +1069,270 @@ export class AdminController {
       if (error instanceof PilotBillingError) return res.status(error.statusCode).json({ error: error.message });
       throw error;
     }
+  };
+
+  // ─── Control centre: shops, orders, customers, settings ─────────────────
+
+  private consoleRead(res: Response, read: () => unknown) {
+    try {
+      return res.json(read());
+    } catch (error) {
+      if (error instanceof ConsoleQueryError) return res.status(error.status).json({ error: error.message });
+      throw error;
+    }
+  }
+
+  private audit(req: Request, input: { action: string; targetType: string; targetId: string; organizationId?: string | null; shopId?: string | null; details: Record<string, unknown>; createdAt: string }) {
+    this.userRepo.logAuditEvent({
+      id: crypto.randomUUID(), actorUserId: req.user?.userId, actorRole: req.user?.role,
+      organizationId: input.organizationId || undefined, shopId: input.shopId || undefined,
+      action: input.action, targetType: input.targetType, targetId: input.targetId,
+      outcome: 'SUCCESS', ipAddress: req.ip, details: input.details, createdAt: input.createdAt,
+    });
+  }
+
+  public listShops = (req: Request, res: Response) => this.consoleRead(res, () => this.consoleService.listShops(req.query));
+
+  public getShop = (req: Request, res: Response) => {
+    const detail = this.consoleService.shopDetail(String(req.params.id || ''));
+    if (!detail) return res.status(404).json({ error: 'Shop not found.' });
+    return res.json(detail);
+  };
+
+  public updateShop = (req: Request, res: Response) => {
+    const id = String(req.params.id || '');
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : null;
+    if (!body) return res.status(400).json({ error: 'Request body must be an object.' });
+    const current = this.db.queryOne<any>(`SELECT id, organization_id, name, phone, address, city FROM shops WHERE id = ?`, [id]);
+    if (!current) return res.status(404).json({ error: 'Shop not found.' });
+    const profile = this.db.queryOne<any>(`SELECT listed_on_map FROM shop_profiles WHERE shop_id = ?`, [id]);
+    const { note, error: noteError } = readAuditNote(body, false);
+    if (noteError) return res.status(400).json({ error: noteError });
+
+    const allowed = ['name', 'phone', 'address', 'city', 'listedOnMap', 'note', 'reason'];
+    const unknown = Object.keys(body).filter((key) => !allowed.includes(key));
+    if (unknown.length) return res.status(400).json({ error: `Unsupported field(s): ${unknown.join(', ')}.` });
+
+    const next: Record<string, string> = {};
+    const textField = (key: 'name' | 'phone' | 'address' | 'city', min: number, max: number, label: string): string | null => {
+      if (!(key in body)) return null;
+      if (typeof body[key] !== 'string') return `${label} must be text.`;
+      const value = body[key].trim().replace(/\s+/g, ' ');
+      if (value.length < min || value.length > max) return min ? `${label} must be ${min} to ${max} characters.` : `${label} must be at most ${max} characters.`;
+      if (value !== (current[key] || '')) next[key] = value;
+      return null;
+    };
+    const fieldError = textField('name', 2, 160, 'Shop name') || textField('phone', 0, 20, 'Phone') || textField('address', 0, 300, 'Address') || textField('city', 0, 80, 'City');
+    if (fieldError) return res.status(400).json({ error: fieldError });
+    if (next.phone && !SHOP_PHONE.test(next.phone)) return res.status(400).json({ error: 'Phone must look like +91 98765 43210.' });
+    if ('listedOnMap' in body && typeof body.listedOnMap !== 'boolean') return res.status(400).json({ error: 'listedOnMap must be true or false.' });
+    const currentListed = profile ? Boolean(Number(profile.listed_on_map)) : true;
+    const listedChanged = typeof body.listedOnMap === 'boolean' && body.listedOnMap !== currentListed;
+
+    if (!Object.keys(next).length && !listedChanged) return res.json({ success: true, unchanged: true, shop: this.consoleService.shopDetail(id) });
+
+    const now = new Date().toISOString();
+    this.db.transaction(() => {
+      const keys = Object.keys(next);
+      if (keys.length) {
+        this.db.execute(
+          `UPDATE shops SET ${keys.map((key) => `${key} = ?`).join(', ')}, updated_at = ? WHERE id = ?`,
+          [...keys.map((key) => next[key]), now, id]
+        );
+      }
+      if (listedChanged) {
+        this.db.execute(
+          `INSERT INTO shop_profiles (shop_id, listed_on_map, updated_at) VALUES (?, ?, ?)
+           ON CONFLICT(shop_id) DO UPDATE SET listed_on_map = excluded.listed_on_map, updated_at = excluded.updated_at`,
+          [id, body.listedOnMap ? 1 : 0, now]
+        );
+      }
+      const changes: Record<string, { from: unknown; to: unknown }> = {};
+      for (const key of keys) changes[key] = { from: current[key] || '', to: next[key] };
+      if (listedChanged) changes.listedOnMap = { from: currentListed, to: body.listedOnMap };
+      this.audit(req, { action: 'PLATFORM_SHOP_UPDATED', targetType: 'SHOP', targetId: id, organizationId: current.organization_id, shopId: id, details: { changes, note: note || null }, createdAt: now });
+    });
+    return res.json({ success: true, unchanged: false, shop: this.consoleService.shopDetail(id) });
+  };
+
+  public setShopStatus = (req: Request, res: Response) => {
+    const id = String(req.params.id || '');
+    const current = this.db.queryOne<any>(`SELECT id, organization_id, is_active FROM shops WHERE id = ?`, [id]);
+    if (!current) return res.status(404).json({ error: 'Shop not found.' });
+    if (typeof req.body?.active !== 'boolean') return res.status(400).json({ error: 'active must be true or false.' });
+    const { note, error } = readAuditNote(req.body, true);
+    if (error) return res.status(400).json({ error });
+    const active = req.body.active as boolean;
+    if (Boolean(Number(current.is_active)) === active) return res.json({ success: true, unchanged: true, isActive: active });
+    const now = new Date().toISOString();
+    this.db.transaction(() => {
+      // Deactivation is a soft switch: data, orders, and ledger history are kept.
+      this.db.execute(`UPDATE shops SET is_active = ?, updated_at = ? WHERE id = ?`, [active ? 1 : 0, now, id]);
+      this.audit(req, {
+        action: active ? 'PLATFORM_SHOP_ACTIVATED' : 'PLATFORM_SHOP_DEACTIVATED', targetType: 'SHOP', targetId: id,
+        organizationId: current.organization_id, shopId: id, details: { previousActive: !active, active, note }, createdAt: now,
+      });
+    });
+    return res.json({ success: true, unchanged: false, isActive: active });
+  };
+
+  public resetShopAgentPairing = (req: Request, res: Response) => {
+    const id = String(req.params.id || '');
+    const shop = this.db.queryOne<any>(`SELECT id, organization_id FROM shops WHERE id = ?`, [id]);
+    if (!shop) return res.status(404).json({ error: 'Shop not found.' });
+    const { note, error } = readAuditNote(req.body, true);
+    if (error) return res.status(400).json({ error });
+    const now = new Date().toISOString();
+    const revoked = this.db.transaction(() => {
+      const agents = this.db.query<{ id: string }>(`SELECT id FROM agent_registrations WHERE shop_id = ? AND is_active = 1`, [id]).map((row) => row.id);
+      this.db.execute(`UPDATE agent_registrations SET is_active = 0, updated_at = ? WHERE shop_id = ? AND is_active = 1`, [now, id]);
+      const codes = this.db.query<{ id: string }>(`SELECT id FROM agent_pairing_codes WHERE shop_id = ?`, [id]);
+      this.db.execute(`DELETE FROM agent_pairing_codes WHERE shop_id = ?`, [id]);
+      // Printers reported by a revoked agent are no longer live.
+      this.db.execute(`UPDATE printers SET is_online = 0, updated_at = ? WHERE shop_id = ? AND is_online = 1`, [now, id]);
+      this.audit(req, {
+        action: 'PLATFORM_SHOP_AGENT_PAIRING_RESET', targetType: 'SHOP', targetId: id, organizationId: shop.organization_id, shopId: id,
+        details: { revokedAgentIds: agents, clearedPairingCodes: codes.length, note }, createdAt: now,
+      });
+      return agents.length;
+    });
+    return res.json({ success: true, revokedAgents: revoked });
+  };
+
+  public listOrders = (req: Request, res: Response) => this.consoleRead(res, () => this.consoleService.listOrders(req.query));
+
+  public getOrder = (req: Request, res: Response) => {
+    const detail = this.consoleService.orderDetail(String(req.params.id || ''));
+    if (!detail) return res.status(404).json({ error: 'Order not found.' });
+    return res.json(detail);
+  };
+
+  public cancelOrder = (req: Request, res: Response) => {
+    const id = String(req.params.id || '');
+    const { note, error } = readAuditNote(req.body, true);
+    if (error) return res.status(400).json({ error });
+    const order = this.orderRepo.getOrderById(id);
+    if (!order) return res.status(404).json({ error: 'Order not found.' });
+    if (order.status === 'CANCELLED') return res.status(409).json({ error: 'This order is already cancelled.' });
+    if (order.status === 'COLLECTED') return res.status(409).json({ error: 'This order was already handed over and cannot be cancelled.' });
+    const shop = this.db.queryOne<any>(`SELECT organization_id FROM shops WHERE id = ?`, [order.shopId]);
+    const now = new Date().toISOString();
+    const refundRequired = order.paymentStatus === 'VERIFIED';
+    // Printed-but-uncollected orders cannot jump straight to CANCELLED; the state
+    // machine allows READY_FOR_COLLECTION -> ON_HOLD -> CANCELLED, so take that path.
+    const viaHold = !canTransitionOrder(order.status, 'CANCELLED') && order.status === 'READY_FOR_COLLECTION';
+    try {
+      this.db.transaction(() => {
+        if (viaHold) this.orderRepo.updateOrderStatus(id, 'ON_HOLD');
+        this.orderRepo.updateOrderStatus(id, 'CANCELLED');
+        this.audit(req, {
+          action: 'PLATFORM_ORDER_CANCELLED', targetType: 'ORDER', targetId: id, organizationId: shop?.organization_id, shopId: order.shopId,
+          details: { orderNumber: order.orderNumber, previousStatus: order.status, paymentStatus: order.paymentStatus, refundRequired, viaOnHold: viaHold, note }, createdAt: now,
+        });
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '';
+      if (/Illegal order transition/.test(message)) {
+        return res.status(409).json({ error: `An order that is ${order.status.replace(/_/g, ' ').toLowerCase()} cannot be cancelled while it is printing. Wait for the print to finish, then cancel.` });
+      }
+      throw err;
+    }
+    return res.json({ success: true, refundRequired, order: this.consoleService.orderDetail(id)?.order });
+  };
+
+  public markOrderPaid = (req: Request, res: Response) => {
+    const id = String(req.params.id || '');
+    const { note, error } = readAuditNote(req.body, true);
+    if (error) return res.status(400).json({ error });
+    const via = req.body?.collectedVia === undefined ? null : req.body.collectedVia;
+    if (via !== null && via !== 'CASH' && via !== 'UPI') return res.status(400).json({ error: 'collectedVia must be CASH or UPI.' });
+
+    type Outcome = { status: number; error: string } | { status: 200; paymentId: string };
+    const outcome = this.db.transaction((): Outcome => {
+      const locked = this.db.queryOne<any>(`UPDATE orders SET updated_at = updated_at WHERE id = ? RETURNING id`, [id]);
+      if (!locked) return { status: 404, error: 'Order not found.' };
+      const order = this.orderRepo.getOrderById(id);
+      if (!order) return { status: 404, error: 'Order not found.' };
+      if (order.status === 'CANCELLED' || order.status === 'DRAFT') return { status: 409, error: 'A cancelled or draft order cannot be marked paid.' };
+      if (order.paymentStatus === 'VERIFIED') return { status: 409, error: 'This order is already marked paid.' };
+      if ((order.paymentMethod as string) === 'ONLINE_RAZORPAY') {
+        return { status: 409, error: 'Online Razorpay payments are confirmed by Razorpay. Check the payment in the Razorpay dashboard instead.' };
+      }
+      const upi = via ? via === 'UPI' : (order.paymentMethod as string) === 'UPI_DIRECT';
+      const provider = upi ? 'COUNTER_UPI' : 'MANUAL_CASH';
+      const now = new Date().toISOString();
+      const paymentId = `pay-admin-${crypto.randomUUID()}`;
+      this.db.execute(
+        `INSERT INTO payments (id, order_id, provider, provider_transaction_id, provider_event_id, amount_paise, currency, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'VERIFIED', ?, ?)`,
+        [paymentId, order.id, provider, paymentId, paymentId, order.totalAmountPaise, order.currency, now, now]
+      );
+      this.orderRepo.updatePaymentStatus(order.id, 'VERIFIED');
+      const shop = this.db.queryOne<any>(`SELECT organization_id FROM shops WHERE id = ?`, [order.shopId]);
+      this.ledgerRepo.appendEntry({
+        id: `led-admin-${crypto.randomUUID()}`,
+        domain: 'CUSTOMER_PRINT_PAYMENT',
+        organizationId: shop?.organization_id,
+        shopId: order.shopId,
+        orderId: order.id,
+        amountPaise: order.totalAmountPaise,
+        currency: order.currency,
+        provider: provider as any,
+        providerTransactionId: paymentId,
+        description: `${upi ? 'UPI' : 'Cash'} payment for Order ${order.orderNumber} recorded by platform admin`,
+        metadata: { recordedBy: req.user?.userId, note },
+        createdAt: now,
+      } as any);
+      if (shop) {
+        new AgentRepository(this.db).enqueueWebhookEvent(shop.organization_id, 'payment.succeeded', `payment.succeeded:${paymentId}`, {
+          paymentId, orderId: order.id, amountPaise: order.totalAmountPaise, currency: order.currency, provider, capturedAt: now,
+        });
+      }
+      this.audit(req, {
+        action: 'PLATFORM_ORDER_MARKED_PAID', targetType: 'ORDER', targetId: order.id, organizationId: shop?.organization_id, shopId: order.shopId,
+        details: { orderNumber: order.orderNumber, paymentMethod: order.paymentMethod, previousPaymentStatus: order.paymentStatus, provider, amountPaise: order.totalAmountPaise, paymentId, note },
+        createdAt: now,
+      });
+      return { status: 200, paymentId };
+    });
+    if ('error' in outcome) return res.status(outcome.status).json({ error: outcome.error });
+    return res.json({ success: true, paymentId: outcome.paymentId, order: this.consoleService.orderDetail(id)?.order });
+  };
+
+  public listCustomers = (req: Request, res: Response) => this.consoleRead(res, () => this.consoleService.listCustomers(req.query));
+
+  public getPlatformSettings = (_req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.json(readPlatformSettings(this.db));
+  };
+
+  public updatePlatformSettings = (req: Request, res: Response) => {
+    const { note, error: noteError } = readAuditNote(req.body, false);
+    if (noteError) return res.status(400).json({ error: noteError });
+    const current = readPlatformSettings(this.db).settings;
+    let merged: ReturnType<typeof mergeSettingsPatch>;
+    try {
+      merged = mergeSettingsPatch(current, req.body);
+    } catch (error) {
+      if (error instanceof PlatformSettingsError) return res.status(400).json({ error: error.message });
+      throw error;
+    }
+    if (!merged.changed.length) return res.json({ ...readPlatformSettings(this.db), unchanged: true });
+    const now = new Date().toISOString();
+    this.db.transaction(() => {
+      writePlatformSettings(this.db, merged.next, merged.changed, req.user?.userId || null, now);
+      this.audit(req, {
+        action: 'PLATFORM_SETTINGS_UPDATED', targetType: 'PLATFORM_SETTINGS', targetId: merged.changed.join(','),
+        details: {
+          changed: merged.changed,
+          previous: Object.fromEntries(merged.changed.map((key) => [key, current[key]])),
+          next: Object.fromEntries(merged.changed.map((key) => [key, merged.next[key]])),
+          note: note || null,
+        },
+        createdAt: now,
+      });
+    });
+    res.setHeader('Cache-Control', 'no-store');
+    return res.json({ ...readPlatformSettings(this.db), unchanged: false });
   };
 }

@@ -165,6 +165,20 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
                 <li key={item} className="flex items-center gap-1.5"><span className="text-emerald-500">✓</span>{item}</li>
               ))}
             </ul>
+            <button
+              type="button"
+              onClick={() => onNavigate('/shops')}
+              className="group mt-8 w-full sm:w-auto flex items-center gap-3 rounded-2xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50/80 dark:bg-emerald-950/30 px-4 py-3 text-left hover:border-emerald-400 hover:shadow-md transition"
+            >
+              <span className="shrink-0 w-10 h-10 rounded-xl bg-emerald-500 text-white flex items-center justify-center" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 21s-7-6.1-7-11a7 7 0 0 1 14 0c0 4.9-7 11-7 11z" /><circle cx="12" cy="10" r="2.5" /></svg>
+              </span>
+              <span className="min-w-0">
+                <span className="block font-extrabold text-slate-900 dark:text-white">Find a print shop near you</span>
+                <span className="block text-xs text-slate-600 dark:text-slate-400">Need prints? See nearby shops on the map, upload and pay from your phone.</span>
+              </span>
+              <span className="ml-auto text-emerald-600 dark:text-emerald-400 font-black transition-transform group-hover:translate-x-1" aria-hidden="true">→</span>
+            </button>
           </div>
           <HeroScene />
         </div>

@@ -41,6 +41,7 @@ const ROUTE_META: Record<string, RouteMeta> = {
   },
   '/login': { title: 'Sign in — Inklly', description: 'Sign in to your Inklly shop workspace.' },
   '/register': { title: 'Set up your shop — Inklly', description: 'Create your Inklly shop, set your rates and get your counter QR code.' },
+  '/shops': { title: 'Find a print shop near you — Inklly', description: 'See xerox and print shops near you on a map, then upload your files and pay from your phone.' },
 };
 
 /** Routes that are private workspaces or per-order pages and must not be indexed. */

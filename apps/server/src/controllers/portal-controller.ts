@@ -6,6 +6,8 @@ import { getOperatingStatus, getQueueEstimate } from '../services/shop-operation
 import { ShopPaymentCredentialsService } from '../services/shop-payment-credentials';
 import { PrivateFileStorage } from '../services/private-file-storage';
 import { inspectDocument } from '../services/document-page-count';
+import { getPublicPlatformConfig } from '../services/platform-settings';
+import { buildUpiDetails, getUpiClaim, recordUpiClaim, upiDirectAvailable } from '../services/upi-direct';
 
 const AGENT_SUPPORTED_PAPER_SIZES = new Set(['A4', 'A3', 'PLAIN']);
 const AGENT_SUPPORTED_COLOR_MODES = new Set(['bw', 'color']);
@@ -31,6 +33,12 @@ export class PortalController {
     private paymentCredentials: ShopPaymentCredentialsService,
     private fileStorage: PrivateFileStorage
   ) {}
+
+  /** Public, safe subset of platform settings (announcement, flags, support contacts, map defaults). */
+  public getPlatformConfig = (_req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    res.json(getPublicPlatformConfig(this.db));
+  };
 
   /**
    * A 4-digit counter token that no other open order in this shop is using,
@@ -101,6 +109,7 @@ export class PortalController {
       currency: shop.currency,
       paymentGateway: shop.paymentGateway,
       acceptCashOnCollection: shop.acceptCashOnCollection,
+      upiDirectAvailable: shop.currency === 'INR' && upiDirectAvailable(this.db, shop.id),
       portalSettings,
       onlinePaymentAvailable: shop.currency === 'INR' && paymentStatus.configured && paymentStatus.webhookConfigured && paymentStatus.verified,
       acceptingOrders: operating.acceptingOrders,
@@ -228,11 +237,14 @@ export class PortalController {
     }
     const shopId = shop.id;
 
-    if (!['CASH_ON_COLLECTION', 'ONLINE_RAZORPAY'].includes(normalizedPaymentMethod)) {
+    if (!['CASH_ON_COLLECTION', 'ONLINE_RAZORPAY', 'UPI_DIRECT'].includes(normalizedPaymentMethod)) {
       return res.status(400).json({ error: 'Unsupported payment method.' });
     }
     if (normalizedPaymentMethod === 'CASH_ON_COLLECTION' && !shop.acceptCashOnCollection) {
       return res.status(422).json({ error: 'This shop is not accepting cash-on-collection orders.' });
+    }
+    if (normalizedPaymentMethod === 'UPI_DIRECT' && (shop.currency !== 'INR' || !upiDirectAvailable(this.db, shopId))) {
+      return res.status(422).json({ error: 'This shop has not added a UPI ID yet. Choose cash at the counter.' });
     }
     if (normalizedPaymentMethod === 'ONLINE_RAZORPAY') {
       const credentials = this.paymentCredentials.getRazorpayCredentials(shopId);
@@ -339,8 +351,11 @@ export class PortalController {
       lineSubtotalPaise: serverQuote.lineItems[idx].subtotalPaise,
     }));
 
-    const initialStatus: OrderStatus = normalizedPaymentMethod === 'CASH_ON_COLLECTION' ? 'AWAITING_REVIEW' : 'AWAITING_PAYMENT';
-    const initialPaymentStatus: PaymentStatus = normalizedPaymentMethod === 'CASH_ON_COLLECTION' ? 'PENDING' : 'NOT_STARTED';
+    // Cash and direct-UPI orders go straight to the counter queue; the shop
+    // confirms the money (cash in hand / credit in its UPI app) at handover.
+    const paysAtShop = normalizedPaymentMethod === 'CASH_ON_COLLECTION' || normalizedPaymentMethod === 'UPI_DIRECT';
+    const initialStatus: OrderStatus = paysAtShop ? 'AWAITING_REVIEW' : 'AWAITING_PAYMENT';
+    const initialPaymentStatus: PaymentStatus = paysAtShop ? 'PENDING' : 'NOT_STARTED';
 
     const order = {
       id: orderId,
@@ -383,6 +398,7 @@ export class PortalController {
         success: true, orderId: prior.id, orderNumber: prior.orderNumber, tokenNumber: prior.tokenNumber,
         status: prior.status, paymentStatus: prior.paymentStatus,
         totalAmountPaise: prior.totalAmountPaise, currency: prior.currency, idempotentReplay: true,
+        upiPayment: prior.paymentMethod === 'UPI_DIRECT' ? buildUpiDetails(this.db, shop, prior) : null,
       });
     }
 
@@ -395,7 +411,23 @@ export class PortalController {
       paymentStatus: order.paymentStatus,
       totalAmountPaise: order.totalAmountPaise,
       currency: order.currency,
+      upiPayment: normalizedPaymentMethod === 'UPI_DIRECT' ? buildUpiDetails(this.db, shop, order) : null,
     });
+  };
+
+  /** Customer reports a direct UPI payment (optional UTR). The shop verifies it at the counter. */
+  public claimUpiPayment = (req: Request, res: Response) => {
+    const order = this.orderRepo.getOrderById(String(req.params.id));
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+    if (order.paymentMethod !== 'UPI_DIRECT') return res.status(409).json({ error: 'This order is not paid by UPI.' });
+    if (order.paymentStatus === 'VERIFIED') return res.json({ success: true, paymentStatus: order.paymentStatus });
+    if (order.status === 'CANCELLED') return res.status(409).json({ error: 'This order was cancelled.' });
+    try {
+      const claim = recordUpiClaim(this.db, order.id, order.shopId, req.body?.upiReference, req.body?.payerApp);
+      return res.json({ success: true, paymentStatus: order.paymentStatus, ...claim });
+    } catch (error: any) {
+      return res.status(422).json({ error: error.message || 'Could not save the UPI reference.' });
+    }
   };
 
   private validatePortalOptions(settings: ReturnType<ShopRepository['getPortalSettings']>, files: any[]): string | null {
@@ -485,6 +517,10 @@ export class PortalController {
         ? null
         : getQueueEstimate(this.db, order.shopId, order.createdAt),
       paymentMethod: order.paymentMethod,
+      upiPayment: order.paymentMethod === 'UPI_DIRECT' && order.paymentStatus !== 'VERIFIED' && order.status !== 'CANCELLED' && orderShop
+        ? buildUpiDetails(this.db, orderShop, order)
+        : null,
+      upiClaim: order.paymentMethod === 'UPI_DIRECT' ? getUpiClaim(this.db, order.id) : null,
       customerName: order.customerName,
       status: order.status,
       paymentStatus: order.paymentStatus,

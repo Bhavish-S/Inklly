@@ -39,30 +39,31 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     <div className="relative bg-slate-950 rounded-2xl overflow-hidden min-h-[340px] flex flex-col items-center justify-between border border-slate-800 shadow-inner group">
       {/* Top Bar: File Details & Edit Shortcut */}
       <div className="w-full flex items-center justify-between px-3 py-2 bg-slate-900/90 border-b border-slate-800 backdrop-blur-sm z-20">
-        <div className="flex items-center gap-2 truncate max-w-[50%]">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
           <FileTextIcon size={14} className="text-[#A9B6FF] shrink-0" />
           <span className="text-xs font-bold text-slate-200 truncate">{fileName}</span>
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-1.5">
           {onRotate && (
             <button
               type="button"
               onClick={onRotate}
-              className="text-[11px] font-bold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 cursor-pointer"
+              className="text-[11px] font-bold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 min-h-[36px] whitespace-nowrap px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 cursor-pointer"
               title="Rotate document 90 degrees clockwise"
+              aria-label="Rotate 90 degrees"
             >
               <RotateCwIcon size={12} />
-              <span>Rotate 90°</span>
+              <span>Rotate</span>
             </button>
           )}
           {onOpenEditor && (
             <button
               type="button"
               onClick={onOpenEditor}
-              className="text-[11px] font-bold text-indigo-300 hover:text-white bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-400/30 px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 cursor-pointer"
+              className="text-[11px] font-bold text-indigo-300 hover:text-white bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-400/30 min-h-[36px] whitespace-nowrap px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 cursor-pointer"
             >
               <CropIcon size={12} />
-              <span>Edit / Crop</span>
+              <span>Edit</span>
             </button>
           )}
         </div>

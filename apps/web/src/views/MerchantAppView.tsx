@@ -8,6 +8,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import QRCode from 'qrcode';
 import { api } from '../api/client';
 import { PrinterSetupPanel } from '../components/PrinterSetupPanel';
+import { ShopLocationPanel } from '../components/ShopLocationPanel';
+import { UpiSetupPanel } from '../components/UpiSetupPanel';
 import { checkMerchantConnections, formatMerchantConnectionResult } from '../merchant-health-check.mjs';
 import { parseRupeesToPaise } from '../money-input.mjs';
 import {
@@ -349,7 +351,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
     } catch {
       setAgentOnline(false);
       if (showToast) {
-        setGlobalToast('No paired Inklly Agent responded on this computer. A verified installer is not available yet.');
+        setGlobalToast('No print app is connected. Download it from Business Setup → Printers, or use Print on this computer in the Counter.');
       }
     }
     return false;
@@ -1990,7 +1992,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       setAgentConnected(livePrinters.some((printer: any) => printer.healthStatus === 'ONLINE'));
       setSelectedDefaultPrinter(livePrinters.find((printer: any) => printer.isDefault)?.name || '');
       if (showResult) {
-        triggerSaveNotification(livePrinters.length ? `Loaded ${livePrinters.length} printer(s) registered with this shop.` : 'No printers are registered yet. Pair the desktop agent to discover local printers.');
+        triggerSaveNotification(livePrinters.length ? `Loaded ${livePrinters.length} printer(s) registered with this shop.` : 'No printers yet. Start the Inklly Print App on the computer your printers use.');
       }
       return true;
     } catch (error) {
@@ -2411,7 +2413,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
             </button>
             <div className="min-w-0">
               <span className="text-[10px] font-bold uppercase tracking-wider text-ink-text-muted dark:text-ink-dark-text-muted block leading-tight">
-                MERCHANT COUNTER OS
+                YOUR SHOP
               </span>
               <h2 className="text-sm sm:text-base font-bold text-ink-text dark:text-ink-dark-text leading-tight truncate">
                 {currentMerchant.name}
@@ -2657,7 +2659,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
           <div className="p-6 max-w-7xl w-full mx-auto space-y-6">
             {/* Live data freshness and currency context */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-500">
-              <p>Revenue is the lifetime total of verified INR payments recorded in the shop ledger.</p>
+              <p>Money received so far — cash, UPI and online, once confirmed.</p>
               <span>{isRefreshingOrders ? 'Updating…' : lastOrderSyncTime ? `Updated ${lastOrderSyncTime}` : 'Waiting for shop data'}</span>
             </div>
 
@@ -2676,10 +2678,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                     ₹{totalRevenueNumber}
                   </div>
                   <div className="flex justify-between items-center text-[11px] text-blue-100 mt-1">
-                    <span>Verified ledger total</span>
-                    <span className="bg-white/20 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
-                      <TrendingUpIcon size={11} /> <span>—</span>
-                    </span>
+                    <span>Confirmed payments</span>
                   </div>
                 </div>
               </div>
@@ -2795,7 +2794,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                           <tr key={order.id} className="text-gray-700 dark:text-gray-200">
                             <td className="py-3 pr-3"><div className="font-semibold">{order.customer || 'Customer'}</div><div className="text-[10px] text-gray-400">{order.time}</div></td>
                             <td className="py-3 pr-3 max-w-[14rem] truncate">{order.document || 'Print order'}</td>
-                            <td className="py-3 pr-3"><span className="rounded-full bg-slate-100 dark:bg-slate-700 px-2 py-1">{order.rawStatus || order.status}</span></td>
+                            <td className="py-3 pr-3"><span className={`rounded-full px-2 py-1 font-semibold ${['COLLECTED', 'READY_FOR_COLLECTION'].includes(order.rawStatus || order.status) ? 'bg-emerald-50 text-emerald-700' : ['CANCELLED', 'PRINT_FAILED', 'FAILED_REQUIRES_SUPPORT'].includes(order.rawStatus || order.status) ? 'bg-rose-50 text-rose-700' : 'bg-indigo-50 text-indigo-700'}`}>{({ AWAITING_REVIEW: 'To print', READY_FOR_PRINT: 'To print', AWAITING_PAYMENT: 'Awaiting payment', IN_PROGRESS: 'Printing', PENDING_RELEASE: 'Printing', PENDING_AGENT_SPOOL: 'Printing', READY_FOR_COLLECTION: 'Ready for pickup', COLLECTED: 'Completed', CANCELLED: 'Cancelled', PRINT_FAILED: 'Print failed', PRINT_UNCONFIRMED: 'Check pages', ON_HOLD: 'On hold' } as Record<string, string>)[order.rawStatus || order.status] || String(order.rawStatus || order.status).replace(/_/g, ' ').toLowerCase()}</span></td>
                             <td className="py-3 text-right font-bold">{order.amount}</td>
                           </tr>
                         ))}
@@ -4414,8 +4413,11 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                 </div>
                 <div>
                   <h2 className="text-xl font-extrabold text-[#172031] dark:text-white">Business Profile</h2>
-                  <p className="text-xs text-gray-400">Shop identity and customer print services</p>
+                  <p className="text-xs text-gray-400">How customers find you, pay you, and see your shop</p>
                 </div>
+
+                <UpiSetupPanel />
+                <ShopLocationPanel />
 
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
                   {/* Left Column */}
@@ -4507,22 +4509,19 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
                       <div>
                         <h3 className="font-extrabold text-sm text-[#172031] dark:text-white flex items-center gap-2">
                           <span>Setup checklist</span>
-                          <span className="text-[10px] bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-bold px-2 py-0.5 rounded-full">
-                            Live setup status
-                          </span>
                         </h3>
-                        <p className="text-[11px] text-gray-400">Click any section to inspect or update settings.</p>
+                        <p className="text-[11px] text-gray-400">Tap a step to finish it.</p>
                       </div>
                     </div>
 
                     <div className="space-y-2.5 text-xs">
                       {[
                         { title: 'Profile', tab: 'profile', desc: shopName.trim() && shopPhone.trim() ? 'Shop identity and contact details entered' : 'Complete shop identity and contact details', state: shopName.trim() && shopPhone.trim() ? 'ready' : 'attention', stateLabel: shopName.trim() && shopPhone.trim() ? 'Ready' : 'Complete profile' },
-                        { title: 'Printers', tab: 'printers', desc: detectedPrinters.length > 0 ? `${detectedPrinters.length} printer records · physical output is not hardware-verified` : 'No verified printer connection', state: 'attention', stateLabel: detectedPrinters.length > 0 ? 'Unverified' : 'No connection' },
+                        { title: 'Printers', tab: 'printers', desc: detectedPrinters.some((printer: any) => printer.healthStatus === 'ONLINE') ? `Print app connected · ${detectedPrinters.filter((printer: any) => printer.healthStatus === 'ONLINE').length} printer(s) online` : 'Print from the Counter on this computer, or connect the Inklly Print App', state: detectedPrinters.some((printer: any) => printer.healthStatus === 'ONLINE') ? 'ready' : 'optional', stateLabel: detectedPrinters.some((printer: any) => printer.healthStatus === 'ONLINE') ? 'Connected' : 'Browser printing' },
                         { title: 'Pricing', tab: 'pricing', desc: pricingRulesLoaded ? 'Saved A4 per-side rates loaded' : pricingRulesError ? 'Could not load saved rate rules' : 'Loading saved rate rules', state: pricingRulesLoaded ? 'ready' : pricingRulesError ? 'attention' : 'loading', stateLabel: pricingRulesLoaded ? 'Ready' : pricingRulesError ? 'Unavailable' : 'Loading' },
                         { title: 'Discounts', tab: 'discounts', desc: !pricingRulesLoaded ? 'Saved discount rules not loaded' : bulkDiscountEnabled ? 'One threshold discount enabled' : 'Bulk discount is disabled', state: pricingRulesLoaded ? 'ready' : 'loading', stateLabel: pricingRulesLoaded ? (bulkDiscountEnabled ? 'Configured' : 'Optional') : 'Loading' },
                         { title: 'Customer Portal', tab: 'portal', desc: portalSettingsLoaded ? 'Saved customer options loaded' : 'Loading saved customer options', state: portalSettingsLoaded ? 'ready' : 'loading', stateLabel: portalSettingsLoaded ? 'Ready' : 'Loading' },
-                        { title: 'Automation & Payment', tab: 'automation', desc: razorpayCheckoutConfigured ? 'Razorpay credentials saved; live checkout remains unverified' : liveShop?.acceptCashOnCollection !== false ? 'Cash at collection is available; Razorpay is optional and not configured' : 'No customer payment method is enabled for this shop', state: razorpayCheckoutConfigured ? 'attention' : liveShop?.acceptCashOnCollection !== false ? 'optional' : 'attention', stateLabel: razorpayCheckoutConfigured ? 'Test live flow' : liveShop?.acceptCashOnCollection !== false ? 'Cash enabled' : 'Configure payment' },
+                        { title: 'Automation & Payment', tab: 'automation', desc: razorpayCheckoutConfigured ? 'Razorpay connected for online UPI payments' : liveShop?.acceptCashOnCollection !== false ? 'Cash at the counter is on. Add your UPI ID above so customers can pay by UPI' : 'Turn on cash at the counter or add your UPI ID', state: razorpayCheckoutConfigured || liveShop?.acceptCashOnCollection !== false ? 'ready' : 'attention', stateLabel: razorpayCheckoutConfigured ? 'Online on' : liveShop?.acceptCashOnCollection !== false ? 'Cash on' : 'Set up payment' },
                       ].map((item) => (
                         <button
                           key={item.title}
@@ -5829,12 +5828,12 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
             </div>
 
             {/* Offline Toast Notification matching screenshot */}
-            {!agentOnline && showOfflineToast && <div className="hidden md:flex fixed bottom-6 right-6 z-40 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-4 shadow-xl flex items-start gap-3 max-w-sm animate-fadeIn">
+            {!agentOnline && showOfflineToast && detectedPrinters.some((printer: any) => printer.agentId) && <div className="hidden md:flex fixed bottom-6 right-6 z-40 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-4 shadow-xl flex items-start gap-3 max-w-sm animate-fadeIn">
               <span className="text-amber-500 font-bold text-base mt-0.5">⚠</span>
               <div className="text-xs space-y-0.5">
-                <div className="font-extrabold text-[#172031] dark:text-white">Print computer is offline</div>
+                <div className="font-extrabold text-[#172031] dark:text-white">No print app connected</div>
                 <div className="text-gray-500 dark:text-gray-400 text-[11px] leading-tight">
-                  Open Inklly on your print computer, then refresh the printer list.
+                  You can still print from this computer: open Counter and press Print on this computer.
                 </div>
               </div>
               <button
@@ -6018,12 +6017,12 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
       {/* ─────────────────────────────────────────────────────────────
           GLOBAL OFFLINE TOAST (Bottom-Right)
       ───────────────────────────────────────────────────────────── */}
-      {showOfflineToast && !agentOnline && ['orders', 'live_print', 'dashboard'].includes(activeView) && (
+      {showOfflineToast && !agentOnline && detectedPrinters.some((printer: any) => printer.agentId) && ['orders', 'live_print', 'dashboard'].includes(activeView) && (
         <div className="hidden md:flex fixed bottom-4 right-4 bg-white dark:bg-gray-800 border border-amber-300 dark:border-amber-700 rounded-2xl p-4 shadow-xl z-50 max-w-sm flex items-start gap-3 animate-fade-in">
           <span className="text-xl">⚠️</span>
           <div>
             <div className="flex items-center justify-between">
-              <h4 className="font-bold text-xs text-gray-900 dark:text-white">Print computer is offline</h4>
+              <h4 className="font-bold text-xs text-gray-900 dark:text-white">No print app connected</h4>
               <button
                 type="button"
                 onClick={() => setShowOfflineToast(false)}
@@ -6033,7 +6032,7 @@ export const MerchantAppView: React.FC<MerchantAppViewProps> = ({ onNavigate }) 
               </button>
             </div>
             <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
-              Open Inklly on your print computer, then refresh the printer list.
+              You can still print from this computer: open Counter and press Print on this computer.
             </p>
           </div>
         </div>

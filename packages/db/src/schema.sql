@@ -828,3 +828,36 @@ CREATE TABLE IF NOT EXISTS counter_sales (
     FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_counter_sales_shop_created ON counter_sales(shop_id, created_at DESC);
+
+-- Public listing of a shop on the customer map (location, hours, landmark).
+CREATE TABLE IF NOT EXISTS shop_profiles (
+    shop_id TEXT PRIMARY KEY,
+    latitude REAL,
+    longitude REAL,
+    landmark TEXT,
+    opening_hours TEXT,
+    listed_on_map INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_shop_profiles_geo ON shop_profiles(latitude, longitude);
+
+-- Customer paid the shop's own UPI ID from their UPI app. The shop confirms
+-- the money arrived before handover. Inklly never holds the money.
+CREATE TABLE IF NOT EXISTS order_upi_claims (
+    order_id TEXT PRIMARY KEY,
+    shop_id TEXT NOT NULL,
+    upi_reference TEXT,
+    payer_app TEXT,
+    claimed_at TEXT NOT NULL,
+    FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+);
+
+-- Platform-wide settings the admin can edit (announcement, feature flags, ...).
+CREATE TABLE IF NOT EXISTS platform_settings (
+    setting_key TEXT PRIMARY KEY,
+    setting_value TEXT NOT NULL,
+    updated_by TEXT,
+    updated_at TEXT NOT NULL
+);

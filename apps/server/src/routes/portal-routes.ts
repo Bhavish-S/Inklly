@@ -3,6 +3,7 @@ import { PortalController } from '../controllers/portal-controller';
 import { DatabaseService, OrderRepository, PricingRepository, ShopRepository } from '@inklly/db';
 import { ShopPaymentCredentialsService } from '../services/shop-payment-credentials';
 import { PrivateFileStorage } from '../services/private-file-storage';
+import { createNearbyRateLimit, createNearbyShopsHandler } from '../services/shop-profiles';
 
 export function createPortalRoutes(db: DatabaseService, fileStorage: PrivateFileStorage): Router {
   const router = Router();
@@ -12,12 +13,15 @@ export function createPortalRoutes(db: DatabaseService, fileStorage: PrivateFile
 
   const controller = new PortalController(db, shopRepo, pricingRepo, orderRepo, new ShopPaymentCredentialsService(db), fileStorage);
 
+  router.get('/shops/nearby', createNearbyRateLimit(), createNearbyShopsHandler(db));
+  router.get('/platform-config', controller.getPlatformConfig);
   router.get('/shop/:shop_code/display', controller.getDisplayBoard);
   router.get('/shop/:shop_code', controller.getShopByCode);
   router.post('/upload', controller.uploadDocument);
   router.post('/quote', controller.getQuote);
   router.post(['/orders', '/order'], controller.submitOrder);
   router.get(['/orders/:id', '/order/:id'], controller.getOrderStatus);
+  router.post('/orders/:id/upi-claim', controller.claimUpiPayment);
 
   return router;
 }

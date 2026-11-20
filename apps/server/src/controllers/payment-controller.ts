@@ -486,7 +486,7 @@ export class PaymentController {
           req.user?.role !== 'PLATFORM_OWNER' &&
           (!effectiveShopId || order.shopId !== effectiveShopId)
         ) return 'FORBIDDEN';
-        if (order.paymentMethod !== 'CASH_ON_COLLECTION') return 'WRONG_METHOD';
+        if (order.paymentMethod !== 'CASH_ON_COLLECTION' && order.paymentMethod !== 'UPI_DIRECT') return 'WRONG_METHOD';
         if (order.paymentStatus === 'VERIFIED') {
           const existingCashPayment = this.db.queryOne<any>(
             `SELECT id FROM payments WHERE order_id = ? AND provider IN ('MANUAL_CASH', 'COUNTER_UPI') AND status = 'VERIFIED'`,

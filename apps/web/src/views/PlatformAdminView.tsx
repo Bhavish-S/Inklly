@@ -1,1724 +1,197 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
-import { ShieldIcon, SearchIcon, DownloadIcon, CheckCircleIcon, PrinterIcon, UsersIcon, FileTextIcon, SlidersIcon } from '../components/icons';
+import {
+  FileTextIcon, IndianRupeeIcon, LifebuoyIcon, MonitorIcon, RotateCwIcon, ShieldIcon, SlidersIcon, StoreIcon, TrendingUpIcon, UserIcon, UsersIcon,
+} from '../components/icons';
+import { Button, ErrorNotice, Toast, cx, errorMessage, useToast } from '../components/console-ui';
+import { ConsoleContext, ConsoleTab } from './platform/context';
+import { OverviewSection } from './platform/OverviewSection';
+import { ShopsSection } from './platform/ShopsSection';
+import { ShopDrawer } from './platform/ShopDrawer';
+import { OrdersSection } from './platform/OrdersSection';
+import { OrderDrawer } from './platform/OrderDrawer';
+import { CustomersSection } from './platform/CustomersSection';
+import { PaymentsSection } from './platform/PaymentsSection';
+import { AgentsSection } from './platform/AgentsSection';
+import { SupportSection } from './platform/SupportSection';
+import { SettingsSection } from './platform/SettingsSection';
+import { AuditSection } from './platform/AuditSection';
+import { TeamSection } from './platform/TeamSection';
 
-type AdminTab = 'overview' | 'merchants' | 'enquiries' | 'builds' | 'plans' | 'ledger' | 'agents' | 'incidents' | 'retention' | 'audit' | 'access' | 'config';
-const PLATFORM_PERMISSION_OPTIONS = ['platform:view', 'platform:manage', 'support:view', 'support:manage', 'finance:view', 'security:audit', 'billing:view', 'billing:manage'];
-const INCIDENT_STATUSES = ['OPEN', 'INVESTIGATING', 'RESOLVED', 'CLOSED'] as const;
-const INCIDENT_SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const;
+/**
+ * Platform owner control centre (/platform, /admin).
+ *
+ * The shell handles access, navigation and the shop/order drawers; each
+ * section lives in views/platform/* and loads its own data. Every write goes
+ * through an audited server endpoint.
+ */
 
 export interface PlatformAdminProps {
   onNavigate?: (path: string) => void;
 }
 
-export const PlatformAdminView: React.FC<PlatformAdminProps> = ({ onNavigate }) => {
-  const [activeTab, setActiveTab] = useState<AdminTab>('overview');
-  const [isPlatformOwner] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('inklly_user') || 'null')?.role === 'PLATFORM_OWNER'; }
-    catch { return false; }
+interface NavItem { id: ConsoleTab; label: string; icon: React.ReactNode; group: 'Operate' | 'Money' | 'Platform'; visible: boolean }
+
+const TAB_STORAGE_KEY = 'inklly_platform_tab';
+
+function readStoredTab(): ConsoleTab | null {
+  try { return (sessionStorage.getItem(TAB_STORAGE_KEY) as ConsoleTab | null) || null; } catch { return null; }
+}
+
+export const PlatformAdminView: React.FC<PlatformAdminProps> = () => {
+  const [isOwner] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('inklly_user') || 'null')?.role === 'PLATFORM_OWNER'; } catch { return false; }
   });
-  const [currentPermissions, setCurrentPermissions] = useState<string[]>(() => isPlatformOwner ? ['*'] : []);
-  const [platformAccessReady, setPlatformAccessReady] = useState(isPlatformOwner);
-  const [overview, setOverview] = useState<any>(null);
-  const [merchants, setMerchants] = useState<any[]>([]);
-  const [ledgerEntries, setLedgerEntries] = useState<any[]>([]);
-  const [ledgerNextCursor, setLedgerNextCursor] = useState<string | null>(null);
-  const [ledgerLoadingMore, setLedgerLoadingMore] = useState(false);
-  const [ledgerExporting, setLedgerExporting] = useState(false);
-  const [auditLogs, setAuditLogs] = useState<any[]>([]);
-  const [auditNextCursor, setAuditNextCursor] = useState<string | null>(null);
-  const [auditLoadingMore, setAuditLoadingMore] = useState(false);
-  const [auditExporting, setAuditExporting] = useState(false);
-  const [enquiries, setEnquiries] = useState<any[]>([]);
-  const [incidents, setIncidents] = useState<any[]>([]);
-  const [incidentNextCursor, setIncidentNextCursor] = useState<string | null>(null);
-  const [incidentLoading, setIncidentLoading] = useState(false);
-  const [incidentLoadingMore, setIncidentLoadingMore] = useState(false);
-  const [incidentError, setIncidentError] = useState('');
-  const [incidentStatusFilter, setIncidentStatusFilter] = useState('ALL');
-  const [incidentSeverityFilter, setIncidentSeverityFilter] = useState('ALL');
-  const [incidentAssignees, setIncidentAssignees] = useState<any[]>([]);
-  const [incidentCreateBusy, setIncidentCreateBusy] = useState(false);
-  const [incidentSavingId, setIncidentSavingId] = useState<string | null>(null);
-  const [incidentDrafts, setIncidentDrafts] = useState<Record<string, { status: string; severity: string; assignedToUserId: string; resolutionNotes: string }>>({});
-  const [incidentForm, setIncidentForm] = useState({ title: '', description: '', severity: 'MEDIUM', organizationId: '', shopId: '', orderId: '', agentId: '', assignedToUserId: '' });
-  const [selectedDomain, setSelectedDomain] = useState<string>('ALL');
-  const [merchantSearchQuery, setMerchantSearchQuery] = useState<string>('');
-  const [merchantStatusFilter, setMerchantStatusFilter] = useState<string>('ALL');
-  const [merchantCursor, setMerchantCursor] = useState<string | null>(null);
-  const [merchantHasMore, setMerchantHasMore] = useState(false);
-  const [merchantTotal, setMerchantTotal] = useState(0);
-  const [merchantListLoading, setMerchantListLoading] = useState(false);
-  const [merchantListError, setMerchantListError] = useState('');
-  const merchantRequestSequence = useRef(0);
-  const [selectedMerchantDetail, setSelectedMerchantDetail] = useState<any | null>(null);
-  const [merchantStatusAction, setMerchantStatusAction] = useState<{ id: string; name: string; currentStatus: string; nextStatus: string } | null>(null);
-  const [merchantStatusReason, setMerchantStatusReason] = useState('');
-  const [merchantStatusBusy, setMerchantStatusBusy] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [permissions, setPermissions] = useState<string[]>(() => (isOwner ? ['*'] : []));
+  const [accessReady, setAccessReady] = useState(isOwner);
+  const [accessError, setAccessError] = useState('');
+  const [tab, setTab] = useState<ConsoleTab>(() => readStoredTab() || 'overview');
+  const [tabFilter, setTabFilter] = useState<Record<string, string> | undefined>(undefined);
+  const [shopId, setShopId] = useState<string | null>(null);
+  const [orderId, setOrderId] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [dataVersion, setDataVersion] = useState(0);
+  const { toast, show } = useToast();
 
-  // Onboard Merchant Modal State
-  const [showOnboardModal, setShowOnboardModal] = useState<boolean>(false);
-  const [newOrgName, setNewOrgName] = useState('');
-  const [newShopCode, setNewShopCode] = useState('');
-  const [newOwnerName, setNewOwnerName] = useState('');
-  const [newOwnerEmail, setNewOwnerEmail] = useState('');
-  const [newPlanTier, setNewPlanTier] = useState('GROWTH');
-  const [isOnboarding, setIsOnboarding] = useState(false);
-  const [provisionedInvitationLink, setProvisionedInvitationLink] = useState('');
-
-  const [agentFleet, setAgentFleet] = useState<any[]>([]);
-  const [agentFleetCursor, setAgentFleetCursor] = useState<string | null>(null);
-  const [agentFleetHasMore, setAgentFleetHasMore] = useState(false);
-  const [agentFleetRefreshing, setAgentFleetRefreshing] = useState(false);
-  const [agentFleetError, setAgentFleetError] = useState('');
-  const [agentFleetUpdatedAt, setAgentFleetUpdatedAt] = useState<string | null>(null);
-  const [platformPlans, setPlatformPlans] = useState<any[]>([]);
-  const [subscriptionSummary, setSubscriptionSummary] = useState<Array<{ planTier: string; status: string; count: number }>>([]);
-  const [billingOrganizationId, setBillingOrganizationId] = useState('');
-  const [billingOrganizations, setBillingOrganizations] = useState<any[]>([]);
-  const [billingOrganizationsCursor, setBillingOrganizationsCursor] = useState<string | null>(null);
-  const [billingOrganizationsHasMore, setBillingOrganizationsHasMore] = useState(false);
-  const [billingOrganizationsLoading, setBillingOrganizationsLoading] = useState(false);
-  const [billingTariffs, setBillingTariffs] = useState<any[]>([]);
-  const [pilotInvoices, setPilotInvoices] = useState<any[]>([]);
-  const [billingBaseRupees, setBillingBaseRupees] = useState('');
-  const [billingSideRupees, setBillingSideRupees] = useState('');
-  const [billingIncludedSides, setBillingIncludedSides] = useState('0');
-  const [billingEffectiveMonth, setBillingEffectiveMonth] = useState(() => new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() + 1, 1)).toISOString().slice(0, 7));
-  const [billingInvoiceMonth, setBillingInvoiceMonth] = useState(() => new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - 1, 1)).toISOString().slice(0, 7));
-  const [billingBusy, setBillingBusy] = useState(false);
-  const [billingError, setBillingError] = useState('');
-  const [platformAdmins, setPlatformAdmins] = useState<any[]>([]);
-  const [platformAdminDrafts, setPlatformAdminDrafts] = useState<Record<string, string[]>>({});
-  const [platformAdminLoading, setPlatformAdminLoading] = useState(false);
-  const [platformAdminSaving, setPlatformAdminSaving] = useState<string | null>(null);
-  const [platformAdminError, setPlatformAdminError] = useState('');
-
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3500);
-  };
-
-  const refreshAgentFleet = async () => {
-    if (agentFleetRefreshing) return;
-    setAgentFleetRefreshing(true);
-    setAgentFleetError('');
-    try {
-      const refreshed = await api.getPlatformAgents(100);
-      setAgentFleet(refreshed.agents);
-      setAgentFleetCursor(refreshed.nextCursor);
-      setAgentFleetHasMore(refreshed.hasMore);
-      setAgentFleetUpdatedAt(new Date().toISOString());
-      showToast(`Loaded ${refreshed.agents.length} newest agent records from the server.`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not refresh registered agent data.';
-      setAgentFleetError(message);
-    } finally {
-      setAgentFleetRefreshing(false);
-    }
-  };
-
-  const loadMoreAgentFleet = async () => {
-    if (agentFleetRefreshing || !agentFleetHasMore || !agentFleetCursor) return;
-    setAgentFleetRefreshing(true);
-    setAgentFleetError('');
-    try {
-      const page = await api.getPlatformAgents(100, agentFleetCursor);
-      setAgentFleet((current) => {
-        const knownIds = new Set(current.map((agent) => agent.agentId));
-        return [...current, ...page.agents.filter((agent) => !knownIds.has(agent.agentId))];
-      });
-      setAgentFleetCursor(page.nextCursor);
-      setAgentFleetHasMore(page.hasMore);
-    } catch (error) {
-      setAgentFleetError(error instanceof Error ? error.message : 'Could not load older agent records.');
-    } finally {
-      setAgentFleetRefreshing(false);
-    }
-  };
-
-  const hasPlatformPermission = (permission: string) => isPlatformOwner || currentPermissions.includes('*') || currentPermissions.includes(permission);
-  const canManageIncidents = hasPlatformPermission('support:manage');
-
-  const refreshIncidents = async () => {
-    setIncidentLoading(true);
-    setIncidentError('');
-    try {
-      const page = await api.getPlatformIncidents(undefined, 50, { status: incidentStatusFilter, severity: incidentSeverityFilter });
-      const rows = Array.isArray(page.incidents) ? page.incidents : [];
-      setIncidents(rows);
-      setIncidentNextCursor(typeof page.nextCursor === 'string' ? page.nextCursor : null);
-      setIncidentDrafts(Object.fromEntries(rows.map((incident: any) => [incident.id, {
-        status: incident.status, severity: incident.severity, assignedToUserId: incident.assignedToUserId || '', resolutionNotes: incident.resolutionNotes || '',
-      }])));
-    } catch (error) {
-      setIncidentError(error instanceof Error ? error.message : 'Could not load incidents.');
-    } finally {
-      setIncidentLoading(false);
-    }
-  };
-
-  const loadMoreIncidents = async () => {
-    if (!incidentNextCursor || incidentLoadingMore) return;
-    setIncidentLoadingMore(true);
-    setIncidentError('');
-    try {
-      const page = await api.getPlatformIncidents(incidentNextCursor, 50, { status: incidentStatusFilter, severity: incidentSeverityFilter });
-      const rows = Array.isArray(page.incidents) ? page.incidents : [];
-      setIncidents((current) => [...current, ...rows.filter((row: any) => !current.some((item) => item.id === row.id))]);
-      setIncidentNextCursor(typeof page.nextCursor === 'string' ? page.nextCursor : null);
-      setIncidentDrafts((current) => ({
-        ...current,
-        ...Object.fromEntries(rows.map((incident: any) => [incident.id, {
-          status: incident.status, severity: incident.severity, assignedToUserId: incident.assignedToUserId || '',
-          resolutionNotes: incident.resolutionNotes || '',
-        }])),
-      }));
-    } catch (error) {
-      setIncidentError(error instanceof Error ? error.message : 'Could not load older incidents.');
-    } finally {
-      setIncidentLoadingMore(false);
-    }
-  };
-
-  const createIncident = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setIncidentCreateBusy(true);
-    setIncidentError('');
-    try {
-      const payload = Object.fromEntries(Object.entries(incidentForm).filter(([key, value]) => key === 'severity' || value.trim()));
-      await api.createPlatformIncident(payload);
-      await refreshIncidents();
-      setIncidentForm({ title: '', description: '', severity: 'MEDIUM', organizationId: '', shopId: '', orderId: '', agentId: '', assignedToUserId: '' });
-      showToast('Incident created and audit logged.');
-    } catch (error) {
-      setIncidentError(error instanceof Error ? error.message : 'Could not create incident.');
-    } finally {
-      setIncidentCreateBusy(false);
-    }
-  };
-
-  const saveIncident = async (incidentId: string) => {
-    const draft = incidentDrafts[incidentId];
-    if (!draft) return;
-    if (['RESOLVED', 'CLOSED'].includes(draft.status) && !draft.resolutionNotes.trim()) {
-      setIncidentError('Add resolution notes before resolving or closing an incident.');
-      return;
-    }
-    setIncidentSavingId(incidentId);
-    setIncidentError('');
-    try {
-      await api.updatePlatformIncident(incidentId, {
-        status: draft.status, severity: draft.severity, assignedToUserId: draft.assignedToUserId || null, resolutionNotes: draft.resolutionNotes.trim(),
-      });
-      await refreshIncidents();
-      showToast('Incident updated and audit logged.');
-    } catch (error) {
-      setIncidentError(error instanceof Error ? error.message : 'Could not update incident.');
-    } finally {
-      setIncidentSavingId(null);
-    }
-  };
-
+  // Platform admins: load their current grants from the server (owners hold all).
   useEffect(() => {
-    if (isPlatformOwner) return;
+    if (isOwner) return;
     let cancelled = false;
-    api.getMe().then((session: any) => {
-      if (cancelled) return;
-      setCurrentPermissions(Array.isArray(session.permissions) ? session.permissions : []);
-    }).catch((error: unknown) => {
-      if (!cancelled) setPlatformAdminError(error instanceof Error ? error.message : 'Could not verify platform access.');
-    }).finally(() => { if (!cancelled) setPlatformAccessReady(true); });
+    api.getMe()
+      .then((session: any) => { if (!cancelled) setPermissions(Array.isArray(session.permissions) ? session.permissions : []); })
+      .catch((error: unknown) => { if (!cancelled) setAccessError(errorMessage(error, 'Could not check your platform access.')); })
+      .finally(() => { if (!cancelled) setAccessReady(true); });
     return () => { cancelled = true; };
-  }, [isPlatformOwner]);
+  }, [isOwner]);
+
+  const can = useCallback((permission: string) => isOwner || permissions.includes('*') || permissions.includes(permission), [isOwner, permissions]);
+
+  const nav: NavItem[] = useMemo(() => [
+    { id: 'overview', label: 'Overview', icon: <TrendingUpIcon size={18} />, group: 'Operate', visible: can('platform:view') },
+    { id: 'shops', label: 'Shops', icon: <StoreIcon size={18} />, group: 'Operate', visible: can('platform:view') },
+    { id: 'orders', label: 'Orders', icon: <FileTextIcon size={18} />, group: 'Operate', visible: can('platform:view') },
+    { id: 'customers', label: 'Customers', icon: <UserIcon size={18} />, group: 'Operate', visible: can('platform:view') },
+    { id: 'agents', label: 'Printers & agents', icon: <MonitorIcon size={18} />, group: 'Operate', visible: can('platform:view') },
+    { id: 'support', label: 'Support', icon: <LifebuoyIcon size={18} />, group: 'Operate', visible: can('support:view') || can('support:manage') },
+    { id: 'payments', label: 'Payments', icon: <IndianRupeeIcon size={18} />, group: 'Money', visible: can('finance:view') || can('billing:view') },
+    { id: 'settings', label: 'Settings', icon: <SlidersIcon size={18} />, group: 'Platform', visible: can('platform:view') },
+    { id: 'audit', label: 'Audit log', icon: <ShieldIcon size={18} />, group: 'Platform', visible: can('security:audit') },
+    { id: 'team', label: 'Team', icon: <UsersIcon size={18} />, group: 'Platform', visible: isOwner },
+  ], [can, isOwner]);
+  const visibleNav = nav.filter((item) => item.visible);
+
+  // Keep the selected tab valid for this account.
+  useEffect(() => {
+    if (!accessReady || !visibleNav.length) return;
+    if (!visibleNav.some((item) => item.id === tab)) setTab(visibleNav[0].id);
+  }, [accessReady, visibleNav, tab]);
 
   useEffect(() => {
-    if (platformAccessReady) loadPlatformData();
-  }, [selectedDomain, platformAccessReady, currentPermissions.join('|')]);
+    try { sessionStorage.setItem(TAB_STORAGE_KEY, tab); } catch { /* ignore */ }
+  }, [tab]);
 
-  useEffect(() => {
-    if (platformAccessReady && (hasPlatformPermission('support:view') || hasPlatformPermission('support:manage'))) void refreshIncidents();
-  }, [platformAccessReady, currentPermissions.join('|'), incidentStatusFilter, incidentSeverityFilter]);
+  const goTo = useCallback((next: ConsoleTab, filter?: Record<string, string>) => {
+    setTabFilter(filter ? { ...filter } : undefined);
+    setTab(next);
+    setShopId(null);
+    setOrderId(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
 
-  useEffect(() => {
-    if (!platformAccessReady || activeTab !== 'incidents' || !hasPlatformPermission('support:manage')) return;
-    let cancelled = false;
-    api.getPlatformIncidentAssignees().then((result: any) => {
-      if (!cancelled) setIncidentAssignees(Array.isArray(result.assignees) ? result.assignees : []);
-    }).catch((error: unknown) => {
-      if (!cancelled) setIncidentError(error instanceof Error ? error.message : 'Could not load incident assignees.');
-    });
-    return () => { cancelled = true; };
-  }, [activeTab, platformAccessReady, currentPermissions.join('|')]);
+  const ctx: ConsoleContext = useMemo(() => ({
+    can, isOwner, notify: show, goTo,
+    openShop: (id: string) => setShopId(id),
+    openOrder: (id: string) => setOrderId(id),
+    refreshKey,
+  }), [can, isOwner, show, goTo, refreshKey]);
 
-  useEffect(() => {
-    if (!platformAccessReady || isPlatformOwner || hasPlatformPermission('platform:view')) return;
-    const firstAvailableTab: AdminTab | null = hasPlatformPermission('finance:view') ? 'ledger'
-      : hasPlatformPermission('security:audit') ? 'audit'
-        : (hasPlatformPermission('support:view') || hasPlatformPermission('support:manage')) ? 'incidents' : null;
-    if (firstAvailableTab) setActiveTab(firstAvailableTab);
-  }, [platformAccessReady, isPlatformOwner, currentPermissions.join('|')]);
+  const onDataChanged = useCallback(() => setDataVersion((value) => value + 1), []);
+  const selectTab = (next: ConsoleTab) => { setTabFilter(undefined); setTab(next); };
 
-  useEffect(() => {
-    if (!billingOrganizationId && billingOrganizations.length > 0) setBillingOrganizationId(billingOrganizations[0].id);
-  }, [billingOrganizations, billingOrganizationId]);
-
-  useEffect(() => {
-    if (activeTab !== 'plans' || !billingOrganizationId) return;
-    let cancelled = false;
-    setBillingError('');
-    Promise.all([api.getPlatformBillingTariffs(billingOrganizationId), api.getPlatformBillingInvoices(billingOrganizationId)])
-      .then(([tariffs, invoices]) => {
-        if (cancelled) return;
-        setBillingTariffs(tariffs);
-        setPilotInvoices(invoices);
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) setBillingError(error instanceof Error ? error.message : 'Could not load pilot billing data.');
-      });
-    return () => { cancelled = true; };
-  }, [activeTab, billingOrganizationId]);
-
-  useEffect(() => {
-    if (activeTab !== 'access' || !isPlatformOwner) return;
-    let cancelled = false;
-    setPlatformAdminLoading(true);
-    setPlatformAdminError('');
-    api.getPlatformAdmins().then((admins: any[]) => {
-      if (cancelled) return;
-      setPlatformAdmins(admins);
-      setPlatformAdminDrafts(Object.fromEntries(admins.map((admin) => [admin.id, admin.permissions])));
-    }).catch((error: unknown) => {
-      if (!cancelled) setPlatformAdminError(error instanceof Error ? error.message : 'Could not load platform admin access.');
-    }).finally(() => { if (!cancelled) setPlatformAdminLoading(false); });
-    return () => { cancelled = true; };
-  }, [activeTab, isPlatformOwner]);
-
-  const refreshMerchantPage = async (append = false) => {
-    if (append && (!merchantCursor || merchantListLoading)) return;
-    const requestSequence = ++merchantRequestSequence.current;
-    setMerchantListLoading(true);
-    setMerchantListError('');
-    try {
-      const page = await api.getPlatformMerchants(
-        100,
-        append ? merchantCursor || undefined : undefined,
-        merchantSearchQuery,
-        merchantStatusFilter
-      );
-      if (requestSequence !== merchantRequestSequence.current) return;
-      setMerchants((current) => {
-        if (!append) return page.merchants;
-        const seen = new Set(current.map((merchant) => merchant.id));
-        return [...current, ...page.merchants.filter((merchant) => !seen.has(merchant.id))];
-      });
-      setMerchantCursor(page.nextCursor);
-      setMerchantHasMore(page.hasMore);
-      setMerchantTotal(page.total);
-    } catch (error) {
-      if (requestSequence === merchantRequestSequence.current) {
-        setMerchantListError(error instanceof Error ? error.message : 'Could not load merchant organizations.');
-      }
-    } finally {
-      if (requestSequence === merchantRequestSequence.current) setMerchantListLoading(false);
-    }
-  };
-
-  const loadPlatformData = async () => {
-    try {
-      setLoading(true);
-      const [ovData, merData, ledData, audData, enquiryData, agentData, retentionData, plansData, subscriptionData, billingOrgData] = await Promise.all([
-        hasPlatformPermission('platform:view') ? api.getPlatformOverview() : Promise.resolve(null),
-        hasPlatformPermission('platform:view') ? api.getPlatformMerchants(100, undefined, merchantSearchQuery, merchantStatusFilter) : Promise.resolve(null),
-        hasPlatformPermission('finance:view') ? api.getPlatformLedger(selectedDomain === 'ALL' ? undefined : selectedDomain) : Promise.resolve(null),
-        hasPlatformPermission('security:audit') ? api.getAuditLogs() : Promise.resolve(null),
-        hasPlatformPermission('support:view') ? api.getPlatformEnquiries() : Promise.resolve(null),
-        hasPlatformPermission('platform:view') ? api.getPlatformAgents(100) : Promise.resolve(null),
-        hasPlatformPermission('platform:view') ? api.getPlatformRetentionStats() : Promise.resolve(null),
-        hasPlatformPermission('platform:view') ? api.getPlatformPlans() : Promise.resolve(null),
-        hasPlatformPermission('billing:view') ? api.getSubscriptionSummary() : Promise.resolve(null),
-        hasPlatformPermission('platform:view') ? api.getPlatformMerchants(100) : Promise.resolve(null),
-      ]);
-      if (ovData) setOverview(ovData);
-      if (merData) {
-        setMerchants(merData.merchants);
-        setMerchantCursor(merData.nextCursor);
-        setMerchantHasMore(merData.hasMore);
-        setMerchantTotal(merData.total);
-      }
-      if (ledData) {
-        setLedgerEntries(Array.isArray(ledData.entries) ? ledData.entries : []);
-        setLedgerNextCursor(typeof ledData.nextCursor === 'string' ? ledData.nextCursor : null);
-      }
-      if (audData) {
-        setAuditLogs(Array.isArray(audData.events) ? audData.events : []);
-        setAuditNextCursor(typeof audData.nextCursor === 'string' ? audData.nextCursor : null);
-      }
-      if (enquiryData) setEnquiries(enquiryData);
-      if (agentData) {
-        setAgentFleet(agentData.agents);
-        setAgentFleetCursor(agentData.nextCursor);
-        setAgentFleetHasMore(agentData.hasMore);
-        setAgentFleetUpdatedAt(new Date().toISOString());
-        setAgentFleetError('');
-      }
-      if (retentionData) setStorageStats(retentionData);
-      if (plansData) setPlatformPlans(plansData);
-      if (subscriptionData) setSubscriptionSummary(subscriptionData);
-      if (billingOrgData) {
-        setBillingOrganizations(billingOrgData.merchants);
-        setBillingOrganizationsCursor(billingOrgData.nextCursor);
-        setBillingOrganizationsHasMore(billingOrgData.hasMore);
-      }
-    } catch (err: any) {
-      console.error('Failed to load platform data:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadMoreBillingOrganizations = async () => {
-    if (!billingOrganizationsCursor || !billingOrganizationsHasMore || billingOrganizationsLoading) return;
-    setBillingOrganizationsLoading(true);
-    try {
-      const page = await api.getPlatformMerchants(100, billingOrganizationsCursor);
-      setBillingOrganizations((current) => {
-        const seen = new Set(current.map((organization) => organization.id));
-        return [...current, ...page.merchants.filter((organization) => !seen.has(organization.id))];
-      });
-      setBillingOrganizationsCursor(page.nextCursor);
-      setBillingOrganizationsHasMore(page.hasMore);
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Could not load more organizations.');
-    } finally {
-      setBillingOrganizationsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!platformAccessReady || activeTab !== 'merchants') return;
-    const timer = window.setTimeout(() => { void refreshMerchantPage(false); }, 250);
-    return () => window.clearTimeout(timer);
-  }, [activeTab, merchantSearchQuery, merchantStatusFilter, platformAccessReady]);
-
-  const parseRupees = (value: string): number | null => {
-    const match = /^(0|[1-9]\d*)(?:\.(\d{1,2}))?$/.exec(value.trim());
-    if (!match) return null;
-    const paise = Number(match[1]) * 100 + Number((match[2] || '').padEnd(2, '0'));
-    return Number.isSafeInteger(paise) ? paise : null;
-  };
-
-  const refreshPilotBilling = async () => {
-    const [tariffs, invoices] = await Promise.all([
-      api.getPlatformBillingTariffs(billingOrganizationId), api.getPlatformBillingInvoices(billingOrganizationId),
-    ]);
-    setBillingTariffs(tariffs);
-    setPilotInvoices(invoices);
-  };
-
-  const savePilotTariff = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!billingOrganizationId) return;
-    const monthlyBasePaise = parseRupees(billingBaseRupees);
-    const perSidePaise = parseRupees(billingSideRupees);
-    const includedSides = Number(billingIncludedSides);
-    if (monthlyBasePaise === null || perSidePaise === null || !Number.isSafeInteger(includedSides) || includedSides < 0) {
-      showToast('Enter valid INR amounts with up to two decimal places and a whole-number side allowance.');
-      return;
-    }
-    try {
-      setBillingBusy(true);
-      await api.addPlatformBillingTariff(billingOrganizationId, { monthlyBasePaise, perSidePaise, includedSides, effectiveFrom: `${billingEffectiveMonth}-01` });
-      setBillingBaseRupees('');
-      setBillingSideRupees('');
-      showToast('Pilot tariff saved as an immutable effective-dated rate.');
-      await refreshPilotBilling();
-    } catch (error: unknown) {
-      showToast(error instanceof Error ? error.message : 'Could not save pilot tariff.');
-    } finally { setBillingBusy(false); }
-  };
-
-  const issuePilotInvoice = async () => {
-    if (!billingOrganizationId) return;
-    try {
-      setBillingBusy(true);
-      const result = await api.issuePlatformBillingInvoice({ organizationId: billingOrganizationId, period: billingInvoiceMonth });
-      showToast(result.created ? 'Invoice issued. No payment was collected.' : 'This invoice already exists; the existing statement was returned.');
-      await refreshPilotBilling();
-    } catch (error: unknown) {
-      showToast(error instanceof Error ? error.message : 'Could not issue pilot invoice.');
-    } finally { setBillingBusy(false); }
-  };
-
-  const savePlatformAdminPermissions = async (adminId: string) => {
-    try {
-      setPlatformAdminSaving(adminId);
-      const result = await api.updatePlatformAdminPermissions(adminId, platformAdminDrafts[adminId] || []);
-      setPlatformAdmins((admins) => admins.map((admin) => admin.id === adminId ? { ...admin, permissions: result.permissions } : admin));
-      setPlatformAdminDrafts((drafts) => ({ ...drafts, [adminId]: result.permissions }));
-      showToast('Platform admin permissions saved and audited. Changes apply immediately.');
-    } catch (error: unknown) {
-      setPlatformAdminError(error instanceof Error ? error.message : 'Could not save platform admin permissions.');
-    } finally { setPlatformAdminSaving(null); }
-  };
-
-  const handleToggleMerchantStatus = (orgId: string, currentStatus: string) => {
-    if (!['ACTIVE', 'SUSPENDED'].includes(currentStatus)) {
-      showToast(`This tenant is ${currentStatus.toLowerCase()}. Manage trial or billing status through the subscription workflow.`);
-      return;
-    }
-    const nextStatus = currentStatus === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE';
-    const merchant = merchants.find((item) => item.id === orgId) || selectedMerchantDetail;
-    setMerchantStatusReason('');
-    setMerchantStatusAction({ id: orgId, name: merchant?.name || orgId, currentStatus, nextStatus });
-  };
-
-  const confirmMerchantStatusChange = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!merchantStatusAction) return;
-    const reason = merchantStatusReason.trim();
-    if (reason.length < 10 || reason.length > 500) {
-      showToast('Enter a reason between 10 and 500 characters.');
-      return;
-    }
-    try {
-      setMerchantStatusBusy(true);
-      await api.updateMerchantStatus(merchantStatusAction.id, { planStatus: merchantStatusAction.nextStatus, reason });
-      await refreshMerchantPage(false);
-      showToast(`Tenant status updated to ${merchantStatusAction.nextStatus}. The reason was added to the audit record.`);
-      setSelectedMerchantDetail(null);
-      setMerchantStatusAction(null);
-    } catch (err: any) {
-      showToast(`Error: ${err.message}`);
-    } finally {
-      setMerchantStatusBusy(false);
-    }
-  };
-
-  const [storageStats, setStorageStats] = useState<any>(null);
-  const [isPurgingRetention, setIsPurgingRetention] = useState(false);
-
-  const handleTriggerRetentionPurge = async () => {
-    setIsPurgingRetention(true);
-    try {
-      const result = await api.runPlatformRetentionPurge();
-      setStorageStats(await api.getPlatformRetentionStats());
-      const { expiredFilesDeleted, orphanFilesDeleted, expiredFilesFailed, orphanFilesFailed } = result.summary;
-      showToast(`Retention pass: ${expiredFilesDeleted} order files and ${orphanFilesDeleted} unclaimed uploads deleted; ${expiredFilesFailed + orphanFilesFailed} failures.`);
-    } catch (err: any) {
-      showToast(`Retention purge failed: ${err.message}`);
-    } finally {
-      setIsPurgingRetention(false);
-    }
-  };
-
-  const handleExportMerchantsCsv = async () => {
-    try {
-    const allMerchants = await api.getAllPlatformMerchants(merchantSearchQuery, merchantStatusFilter);
-    const headers = ['Merchant ID', 'Organization Name', 'Shop Code', 'Owner Name', 'Owner Email', 'Plan Tier', 'Status', 'Shops Count', 'Created At'];
-    const rows = allMerchants.map((m) => [
-      m.id,
-      `"${(m.name || '').replace(/"/g, '""')}"`,
-      m.shopCode,
-      `"${(m.owner?.name || '').replace(/"/g, '""')}"`,
-      m.owner?.email || '',
-      m.planTier,
-      m.planStatus,
-      m.shopsCount || 1,
-      m.createdAt,
-    ]);
-    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `Inklly-Merchants-Directory-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    showToast(`Exported ${allMerchants.length} matching merchants.`);
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Could not export the merchant directory.');
-    }
-  };
-
-  const loadMoreLedger = async () => {
-    if (!ledgerNextCursor || ledgerLoadingMore) return;
-    try {
-      setLedgerLoadingMore(true);
-      const page = await api.getPlatformLedger(selectedDomain === 'ALL' ? undefined : selectedDomain, ledgerNextCursor);
-      setLedgerEntries((current) => {
-        const seen = new Set(current.map((entry) => entry.id));
-        return [...current, ...(page.entries || []).filter((entry: any) => !seen.has(entry.id))];
-      });
-      setLedgerNextCursor(typeof page.nextCursor === 'string' ? page.nextCursor : null);
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Could not load more ledger entries.');
-    } finally {
-      setLedgerLoadingMore(false);
-    }
-  };
-
-  const handleExportLedgerCsv = async () => {
-    if (ledgerExporting) return;
-    try {
-      setLedgerExporting(true);
-      const allEntries: any[] = [];
-      let cursor: string | undefined;
-      do {
-        const page = await api.getPlatformLedger(undefined, cursor);
-        allEntries.push(...(page.entries || []));
-        cursor = typeof page.nextCursor === 'string' ? page.nextCursor : undefined;
-      } while (cursor);
-      const csvCell = (value: unknown) => {
-        const text = String(value ?? '');
-        const safe = /^[=+@\-\t\r]/.test(text) ? `'${text}` : text;
-        return `"${safe.replace(/"/g, '""')}"`;
-      };
-      const headers = ['Ledger ID', 'Domain', 'Description', 'Provider', 'Amount (minor units)', 'Currency', 'Created At'];
-      const rows = allEntries.map((le) => [
-        le.id, le.domain, le.description, le.provider, le.amount_paise, le.currency, le.created_at,
-      ].map(csvCell));
-      const csvContent = [headers.map(csvCell).join(','), ...rows.map((r) => r.join(','))].join('\r\n');
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `Inklly-Platform-Financial-Ledger-${new Date().toISOString().slice(0, 10)}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      showToast(`Exported ${allEntries.length} ledger entries across all domains.`);
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Could not export the full ledger.');
-    } finally {
-      setLedgerExporting(false);
-    }
-  };
-
-  const loadMoreAudit = async () => {
-    if (!auditNextCursor || auditLoadingMore) return;
-    try {
-      setAuditLoadingMore(true);
-      const page = await api.getAuditLogs(auditNextCursor);
-      setAuditLogs((current) => {
-        const seen = new Set(current.map((event) => event.id));
-        return [...current, ...(page.events || []).filter((event: any) => !seen.has(event.id))];
-      });
-      setAuditNextCursor(typeof page.nextCursor === 'string' ? page.nextCursor : null);
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Could not load more audit events.');
-    } finally {
-      setAuditLoadingMore(false);
-    }
-  };
-
-  const handleExportAuditCsv = async () => {
-    if (auditExporting) return;
-    try {
-      setAuditExporting(true);
-      const allEvents: any[] = [];
-      let cursor: string | undefined;
-      do {
-        const page = await api.getAuditLogs(cursor);
-        allEvents.push(...(page.events || []));
-        cursor = typeof page.nextCursor === 'string' ? page.nextCursor : undefined;
-      } while (cursor);
-
-      const csvCell = (value: unknown) => {
-        const text = String(value ?? '').replace(/[\r\n]+/g, ' ');
-        const safe = /^[\s]*[=+@\-\t\r]/.test(text) ? `'${text}` : text;
-        return `"${safe.replace(/"/g, '""')}"`;
-      };
-      const headers = ['Event ID', 'Actor User ID', 'Actor Role', 'Action', 'Target Type', 'Target ID', 'Outcome', 'IP Address', 'Timestamp'];
-      const rows = allEvents.map((log) => [
-        log.id, log.actorUserId, log.actorRole, log.action, log.targetType, log.targetId, log.outcome, log.ipAddress, log.createdAt,
-      ].map(csvCell));
-      const csvContent = [headers.map(csvCell).join(','), ...rows.map((r) => r.join(','))].join('\r\n');
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `Inklly-Platform-Audit-Trail-${new Date().toISOString().slice(0, 10)}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      showToast(`Exported ${allEvents.length} audit events to CSV.`);
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Could not export the full audit log.');
-    } finally {
-      setAuditExporting(false);
-    }
-  };
-
-  const handleOnboardMerchant = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsOnboarding(true);
-    try {
-      const result = await api.createPlatformMerchant({
-        organizationName: newOrgName.trim(),
-        shopCode: newShopCode.trim() || undefined,
-        ownerName: newOwnerName.trim(),
-        ownerEmail: newOwnerEmail.trim(),
-        planTier: newPlanTier,
-      });
-      if (typeof result.invitationToken !== 'string' || result.invitationToken.length < 40) {
-        throw new Error('The owner invitation was not returned. Refresh the merchant list and inspect the audit log before trying again.');
-      }
-      const inviteUrl = new URL('/accept-invitation', window.location.origin);
-      inviteUrl.hash = new URLSearchParams({ token: result.invitationToken }).toString();
-      setProvisionedInvitationLink(inviteUrl.toString());
-      const [updatedMerchants, updatedAuditLogs, updatedBillingOrganizations] = await Promise.all([
-        api.getPlatformMerchants(100, undefined, merchantSearchQuery, merchantStatusFilter),
-        api.getAuditLogs(),
-        api.getPlatformMerchants(100),
-      ]);
-      setMerchants(updatedMerchants.merchants);
-      setMerchantCursor(updatedMerchants.nextCursor);
-      setMerchantHasMore(updatedMerchants.hasMore);
-      setMerchantTotal(updatedMerchants.total);
-      setBillingOrganizations(updatedBillingOrganizations.merchants);
-      setBillingOrganizationsCursor(updatedBillingOrganizations.nextCursor);
-      setBillingOrganizationsHasMore(updatedBillingOrganizations.hasMore);
-      setAuditLogs(Array.isArray(updatedAuditLogs.events) ? updatedAuditLogs.events : []);
-      setAuditNextCursor(typeof updatedAuditLogs.nextCursor === 'string' ? updatedAuditLogs.nextCursor : null);
-      showToast(`Tenant created. Share the one-time owner setup link with ${result.merchant?.owner?.email || newOwnerEmail}.`);
-      setNewOrgName('');
-      setNewShopCode('');
-      setNewOwnerName('');
-      setNewOwnerEmail('');
-    } catch (err: any) {
-      showToast(`Could not onboard merchant: ${err.message}`);
-    } finally {
-      setIsOnboarding(false);
-    }
-  };
-
-  if (loading && !overview) {
-    return (
-      <div className="p-12 text-center text-slate-500 font-medium">
-        Loading Platform Owner Console...
-      </div>
-    );
+  if (!accessReady) {
+    return <div className="mx-auto max-w-7xl px-4 py-16 text-center text-sm text-ink-text-secondary">Checking your access…</div>;
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white border border-slate-700 px-5 py-2.5 rounded-2xl shadow-2xl text-xs font-semibold flex items-center gap-2 animate-fadeIn">
-          <span className="text-emerald-400">✓</span>
-          <span>{toastMessage}</span>
-        </div>
-      )}
-
-      {/* Top Console Bar */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs flex flex-col sm:flex-row justify-between sm:items-center gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-slate-900 text-white flex items-center justify-center shadow-xs">
-            <ShieldIcon size={22} />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-lg font-extrabold text-slate-900 dark:text-white">
-                Inklly Platform Owner Console
-              </h1>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
-                SUPERADMIN RBAC
-              </span>
-            </div>
-            <p className="text-xs text-slate-500">
-              Cross-tenant SaaS supervision, tamper-evident financial ledgers, and edge spooler fleet telemetry
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            Core API Online (Port 4000)
-          </span>
-          <button
-            type="button"
-            onClick={loadPlatformData}
-            className="px-3.5 py-1.5 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-bold rounded-xl cursor-pointer"
-          >
-            ↻ Refresh All
-          </button>
-        </div>
-      </div>
-
-      {/* Navigation Tabs */}
-      <div className="flex flex-wrap gap-1.5 bg-ink-surface-muted dark:bg-ink-dark-elevated p-1.5 rounded-2xl border border-ink-border dark:border-ink-dark-border text-xs font-semibold">
-        {[
-          ...(hasPlatformPermission('platform:view') ? [
-            { id: 'overview', label: '📊 Fleet Overview' },
-            { id: 'merchants', label: '🏪 Merchants Directory' },
-            { id: 'builds', label: '📦 Windows Agent Builds' },
-            { id: 'agents', label: '🖨️ Edge Agents Fleet' },
-            { id: 'retention', label: '🧹 Storage & Retention' },
-          ] : []),
-          ...(hasPlatformPermission('platform:view') && hasPlatformPermission('billing:view') ? [{ id: 'plans', label: '💎 Plans & Quotas' }] : []),
-          ...(hasPlatformPermission('support:view') ? [{ id: 'enquiries', label: '✉️ Website Enquiries' }] : []),
-          ...((hasPlatformPermission('support:view') || hasPlatformPermission('support:manage')) ? [{ id: 'incidents', label: '🚨 Incident Response' }] : []),
-          ...(hasPlatformPermission('finance:view') ? [{ id: 'ledger', label: '📒 Financial Ledger' }] : []),
-          ...(hasPlatformPermission('security:audit') ? [{ id: 'audit', label: '🛡️ Audit Logs' }] : []),
-          ...(isPlatformOwner ? [{ id: 'access', label: '🔐 Platform Access' }] : []),
-          ...(isPlatformOwner ? [{ id: 'config', label: '⚙️ Runtime Rules' }] : []),
-        ].map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => setActiveTab(tab.id as AdminTab)}
-            className={`px-3.5 py-2 rounded-xl transition-all cursor-pointer ${
-              activeTab === tab.id
-                ? 'bg-brand text-white shadow-brand font-bold'
-                : 'text-ink-text-secondary dark:text-ink-dark-text-secondary hover:text-ink-text dark:hover:text-ink-dark-text hover:bg-ink-surface dark:hover:bg-ink-dark-hover'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {platformAccessReady && !isPlatformOwner && !currentPermissions.length && (
-        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100" role="status">
-          Your platform account has no feature permissions yet. Ask a platform owner to assign the access needed for your work.
-        </section>
-      )}
-
-      {/* ═══════════════════════════════════════════════════════════════
-          TAB 1: OVERVIEW & FLEET METRICS
-      ═══════════════════════════════════════════════════════════════ */}
-      {activeTab === 'overview' && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs">
-              <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">TOTAL TENANT ORGS</span>
-              <div className="text-2xl font-extrabold text-slate-900 dark:text-white">
-                {overview?.metrics?.totalOrganizations ?? '—'}
-              </div>
-              <span className="text-[11px] text-slate-500 mt-1 block">Organizations in database</span>
-            </div>
-
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs">
-              <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">REGISTERED SHOPS</span>
-              <div className="text-2xl font-extrabold text-slate-900 dark:text-white">
-                {overview?.metrics?.totalShops ?? '—'}
-              </div>
-              <span className="text-[11px] text-slate-500 mt-1 block">Countertop QR shops</span>
-            </div>
-
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs">
-              <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">ACTIVE PRINT AGENTS</span>
-              <div className="text-2xl font-extrabold text-emerald-600">
-                {agentFleet.filter((a) => a.status === 'ONLINE').length} / {agentFleet.length} Online
-              </div>
-              <span className="text-[11px] text-slate-500 mt-1 block">Based on heartbeat in last 45 seconds</span>
-            </div>
-
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs">
-              <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">PLATFORM GMV (INR)</span>
-              <div className="text-2xl font-extrabold text-[#4D64E6]">
-                ₹{(Number(overview?.metrics?.platformGMVPaise ?? 0) / 100).toFixed(2)}
-              </div>
-              <span className="text-[11px] text-slate-500 mt-1 block">Customer-payment ledger total</span>
-            </div>
-
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs">
-              <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">MONTHLY SAAS MRR</span>
-              <div className="text-2xl font-extrabold text-slate-900 dark:text-white">
-                {overview?.metrics?.platformMRRPaise == null ? 'Not available' : `₹${(Number(overview.metrics.platformMRRPaise) / 100).toFixed(2)}`}
-              </div>
-              <span className="text-[11px] text-slate-500 mt-1 block">Subscription billing is not configured</span>
-            </div>
-          </div>
-
-          {/* Platform Health Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-4">
-              <div className="flex justify-between items-center border-b pb-3 border-slate-100 dark:border-slate-800">
-                <h3 className="font-extrabold text-sm text-slate-900 dark:text-white">
-                  Edge Spooler Fleet Health
-                </h3>
-                <span className="text-xs text-slate-500 font-semibold">{agentFleet.filter((a) => a.status === 'ONLINE').length} online · {agentFleet.length} registered</span>
-              </div>
-              <div className="space-y-3 text-xs">
-                {agentFleet.map((ag) => (
-                  <div key={ag.agentId} className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-xl flex justify-between items-center">
-                    <div>
-                      <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                        <span className={`w-2 h-2 rounded-full ${ag.status === 'ONLINE' ? 'bg-emerald-500' : ag.status === 'STALE' ? 'bg-amber-500' : 'bg-slate-400'}`} />
-                        {ag.shopName || 'Unknown shop'} ({ag.shopCode || ag.shopId}) · {ag.status}
-                      </div>
-                      <div className="text-[11px] text-slate-400 font-mono mt-0.5">{ag.hostname || 'Hostname unavailable'} · {ag.osPlatform || 'OS unavailable'} · last heartbeat {ag.lastHeartbeat ? new Date(ag.lastHeartbeat).toLocaleString() : 'never'}</div>
-                    </div>
-                  </div>
-                ))}
-                {agentFleet.length === 0 && <p className="p-3 text-slate-500">No desktop agents are registered.</p>}
-              </div>
-            </div>
-
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-4">
-              <div className="flex justify-between items-center border-b pb-3 border-slate-100 dark:border-slate-800">
-                <h3 className="font-extrabold text-sm text-slate-900 dark:text-white">
-                  Quick Platform Admin Actions
-                </h3>
-                <span className="text-xs text-slate-400">Privileged Session</span>
-              </div>
-              <div className="grid grid-cols-2 gap-3 text-xs">
-                <button
-                  type="button"
-                  onClick={handleExportLedgerCsv}
-                  className="p-3 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/60 text-indigo-700 dark:text-indigo-300 rounded-xl font-bold hover:bg-indigo-100/50 cursor-pointer text-left"
-                >
-                  📥 Export Financial Ledger
-                  <div className="text-[10px] font-normal opacity-80 mt-1">Full 6-domain CSV audit</div>
-                </button>
-                <button
-                  type="button"
-                  onClick={loadPlatformData}
-                  className="p-3 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 rounded-xl font-bold hover:bg-slate-100 cursor-pointer text-left"
-                >
-                  ↻ Refresh Agent Inventory
-                  <div className="text-[10px] font-normal opacity-70 mt-1">Reload persisted heartbeat data</div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('incidents')}
-                  className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800/60 text-red-700 dark:text-red-300 rounded-xl font-bold hover:bg-red-100/50 cursor-pointer text-left"
-                >
-                  🚨 Incident management unavailable
-                  <div className="text-[10px] font-normal opacity-80 mt-1">No persistent incident service is configured</div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('plans')}
-                  className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 text-emerald-700 dark:text-emerald-300 rounded-xl font-bold hover:bg-emerald-100/50 cursor-pointer text-left"
-                >
-                  💎 Review SaaS Plans
-                  <div className="text-[10px] font-normal opacity-80 mt-1">Code-managed pilot tiers; checkout is inactive</div>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ═══════════════════════════════════════════════════════════════
-          TAB 2: MERCHANTS DIRECTORY
-      ═══════════════════════════════════════════════════════════════ */}
-      {activeTab === 'merchants' && (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xs overflow-hidden">
-          <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+    <div className="min-h-full bg-ink-app dark:bg-ink-dark-app">
+      <div className="mx-auto max-w-7xl px-4 py-5 sm:px-6 lg:grid lg:grid-cols-[14.5rem_minmax(0,1fr)] lg:gap-8 lg:py-8">
+        {/* Navigation: sidebar on desktop, scrollable pills on phones */}
+        <aside className="lg:sticky lg:top-6 lg:self-start">
+          <div className="mb-4 hidden items-center gap-3 lg:flex">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-navy text-white"><ShieldIcon size={20} /></span>
             <div>
-              <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
-                Merchant Organizations Directory
-              </h2>
-              <p className="text-xs text-slate-400">
-                Multi-tenant print shops, active subscription tier, and operational status
-              </p>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <div className="relative">
-                <input
-                  type="text"
-                  placeholder="Search merchant, owner, email..."
-                  value={merchantSearchQuery}
-                  onChange={(e) => setMerchantSearchQuery(e.target.value)}
-                  className="pl-8 pr-3 py-1.5 border border-slate-200 dark:border-slate-700 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 w-56"
-                />
-                <span className="absolute left-2.5 top-2 text-slate-400">🔍</span>
-              </div>
-
-              <select
-                value={merchantStatusFilter}
-                onChange={(e) => setMerchantStatusFilter(e.target.value)}
-                className="px-3 py-1.5 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold bg-slate-50 dark:bg-slate-800"
-              >
-                <option value="ALL">All Statuses</option>
-                <option value="ACTIVE">Active Only</option>
-                <option value="TRIAL">Trial Only</option>
-                <option value="SUSPENDED">Suspended Only</option>
-                <option value="PAST_DUE">Past Due Only</option>
-              </select>
-
-              <button
-                type="button"
-                onClick={handleExportMerchantsCsv}
-                className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0"
-              >
-                <span>📥 Export CSV</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => { setProvisionedInvitationLink(''); setShowOnboardModal(true); }}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-[#4D64E6] hover:bg-indigo-600 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-[#4D64E6]/25 cursor-pointer shrink-0"
-              >
-                <span>+ Onboard Tenant</span>
-              </button>
+              <p className="text-sm font-extrabold text-ink-text dark:text-ink-dark-text">Inklly Control</p>
+              <p className="text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary">{isOwner ? 'Platform owner' : 'Platform admin'}</p>
             </div>
           </div>
+          <nav aria-label="Control centre sections" className="-mx-4 mb-5 overflow-x-auto px-4 lg:mx-0 lg:mb-0 lg:overflow-visible lg:px-0">
+            <ul className="flex gap-1.5 lg:flex-col lg:gap-0.5">
+              {(['Operate', 'Money', 'Platform'] as const).map((group) => {
+                const items = visibleNav.filter((item) => item.group === group);
+                if (!items.length) return null;
+                return (
+                  <React.Fragment key={group}>
+                    <li className="hidden px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wide text-ink-text-muted first:pt-0 lg:block dark:text-ink-dark-text-muted">{group}</li>
+                    {items.map((item) => (
+                      <li key={item.id}>
+                        <button
+                          type="button"
+                          aria-current={tab === item.id ? 'page' : undefined}
+                          onClick={() => selectTab(item.id)}
+                          className={cx(
+                            'flex w-full items-center gap-2.5 whitespace-nowrap rounded-xl px-3 py-2 text-sm font-medium transition',
+                            tab === item.id
+                              ? 'bg-brand text-white shadow-sm lg:bg-white lg:text-brand lg:shadow-sm lg:ring-1 lg:ring-ink-border dark:lg:bg-ink-dark-surface dark:lg:text-brand-dark dark:lg:ring-ink-dark-border'
+                              : 'bg-white text-ink-text-secondary ring-1 ring-ink-border hover:text-ink-text lg:bg-transparent lg:ring-0 lg:hover:bg-white dark:bg-ink-dark-surface dark:text-ink-dark-text-secondary dark:ring-ink-dark-border dark:hover:text-ink-dark-text lg:dark:bg-transparent lg:dark:hover:bg-ink-dark-surface',
+                          )}
+                        >
+                          <span className="shrink-0" aria-hidden>{item.icon}</span>{item.label}
+                        </button>
+                      </li>
+                    ))}
+                  </React.Fragment>
+                );
+              })}
+            </ul>
+          </nav>
+          <div className="mt-6 hidden lg:block">
+            <Button size="sm" variant="ghost" onClick={() => setRefreshKey((value) => value + 1)}><RotateCwIcon size={14} />Refresh data</Button>
+          </div>
+        </aside>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead className="bg-slate-50 dark:bg-slate-800/60 uppercase text-[10px] font-extrabold text-slate-400 border-b border-slate-100 dark:border-slate-800">
-                <tr>
-                  <th className="p-3.5 pl-5">Organization & Shop Code</th>
-                  <th className="p-3.5">Owner Contact</th>
-                  <th className="p-3.5">Subscription Plan</th>
-                  <th className="p-3.5">Shops</th>
-                  <th className="p-3.5">Tenant Status</th>
-                  <th className="p-3.5 pr-5 text-right">Administrative Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {merchants.map((m) => (
-                  <tr key={m.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
-                    <td className="p-3.5 pl-5 font-bold text-slate-900 dark:text-white">
-                      <div>{m.name}</div>
-                      <div className="text-[10px] font-mono text-slate-400">code: {m.shopCode || '—'}</div>
-                    </td>
-                    <td className="p-3.5">
-                      <div className="font-semibold text-slate-800 dark:text-slate-200">{m.owner?.name || 'Store Owner'}</div>
-                      <div className="text-[10px] text-slate-400">{m.owner?.email || 'owner@printshop.in'}</div>
-                    </td>
-                    <td className="p-3.5">
-                      <span className="px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-indigo-50 dark:bg-indigo-950/60 text-[#4D64E6]">
-                        {m.planTier || '—'}
-                      </span>
-                    </td>
-                    <td className="p-3.5 text-slate-600 dark:text-slate-300">
-                      {m.shopsCount ?? 0} {m.shopsCount === 1 ? 'shop' : 'shops'}
-                    </td>
-                    <td className="p-3.5">
-                      <span
-                        className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold ${
-                          m.planStatus === 'ACTIVE'
-                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                            : m.planStatus === 'TRIAL'
-                              ? 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
-                              : m.planStatus === 'PAST_DUE'
-                                ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                                : 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'
-                        }`}
-                      >
-                        {m.planStatus}
-                      </span>
-                    </td>
-                    <td className="p-3.5 pr-5 text-right space-x-2">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedMerchantDetail(m)}
-                        className="px-2.5 py-1 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-lg font-bold text-[11px] hover:bg-slate-100 cursor-pointer"
-                      >
-                        Inspect
-                      </button>
-                      {['ACTIVE', 'SUSPENDED'].includes(m.planStatus) && <button
-                        type="button"
-                        onClick={() => handleToggleMerchantStatus(m.id, m.planStatus)}
-                        className={`px-3 py-1 rounded-lg font-bold text-[11px] cursor-pointer ${
-                          m.planStatus === 'ACTIVE'
-                            ? 'border border-red-200 text-red-600 hover:bg-red-50'
-                            : 'bg-emerald-600 text-white hover:bg-emerald-700'
-                        }`}
-                      >
-                        {m.planStatus === 'ACTIVE' ? 'Suspend' : 'Reactivate'}
-                      </button>}
-                    </td>
-                  </tr>
-                ))}
-                {merchants.length === 0 && <tr><td colSpan={6} className="p-8 text-center text-slate-500">{merchantListLoading ? 'Loading organizations…' : 'No organizations match these filters.'}</td></tr>}
-              </tbody>
-            </table>
+        <main className="min-w-0">
+          <div className="mb-4 flex justify-end lg:hidden">
+            <Button size="sm" variant="ghost" onClick={() => setRefreshKey((value) => value + 1)}><RotateCwIcon size={14} />Refresh</Button>
           </div>
-          {merchantListError && <p role="alert" className="border-t border-rose-100 bg-rose-50 px-5 py-3 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950/20 dark:text-rose-200">{merchantListError}</p>}
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-5 py-3 text-xs text-slate-500 dark:border-slate-800">
-            <span>{merchantListLoading ? 'Refreshing organizations…' : `Showing ${merchants.length} of ${merchantTotal} matching organizations`}</span>
-            {merchantHasMore && <button type="button" onClick={() => void refreshMerchantPage(true)} disabled={merchantListLoading || !merchantCursor} className="rounded-lg border border-slate-200 px-4 py-2 font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200">{merchantListLoading ? 'Loading…' : 'Load more organizations'}</button>}
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'enquiries' && (
-        <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xs overflow-hidden">
-          <div className="p-5 border-b border-slate-100 dark:border-slate-800">
-            <h2 className="text-base font-extrabold text-slate-900 dark:text-white">Website enquiries</h2>
-            <p className="mt-1 text-xs text-slate-500">Public requests saved for platform follow-up. Access is limited to platform owners and admins.</p>
-          </div>
-          {enquiries.length === 0 ? (
-            <div className="p-10 text-center text-sm text-slate-500">No enquiries have been received yet.</div>
+          {accessError && <div className="mb-4"><ErrorNotice message={accessError} /></div>}
+          {visibleNav.length === 0 ? (
+            <section role="status" className="rounded-2xl border border-status-warning/30 bg-status-warning-bg p-6 text-sm text-status-warning dark:bg-status-dark-warning-bg dark:text-status-dark-warning">
+              Your platform account has no permissions yet. Ask the platform owner to give you access from the Team page.
+            </section>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead className="bg-slate-50 dark:bg-slate-800/60 uppercase text-[10px] font-extrabold text-slate-400">
-                  <tr><th className="p-3.5 pl-5">Received</th><th className="p-3.5">Contact</th><th className="p-3.5">Message</th><th className="p-3.5">Source</th><th className="p-3.5">Status</th></tr>
-                </thead>
-                <tbody>
-                  {enquiries.map((enquiry) => (
-                    <tr key={enquiry.id} className="border-t border-slate-100 dark:border-slate-800 align-top">
-                      <td className="p-3.5 pl-5 whitespace-nowrap">{new Date(enquiry.createdAt).toLocaleString()}</td>
-                      <td className="p-3.5 min-w-44"><div className="font-bold text-slate-900 dark:text-white">{enquiry.name}</div><div>{enquiry.phone}</div>{enquiry.email && <div>{enquiry.email}</div>}</td>
-                      <td className="p-3.5 min-w-64 max-w-xl whitespace-pre-wrap break-words">{enquiry.message}</td>
-                      <td className="p-3.5">{enquiry.source}{enquiry.city ? ` · ${enquiry.city}` : ''}{enquiry.state ? `, ${enquiry.state}` : ''}</td>
-                      <td className="p-3.5">{enquiry.status}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <>
+              {tab === 'overview' && <OverviewSection ctx={ctx} />}
+              {tab === 'shops' && <ShopsSection ctx={ctx} reloadKey={dataVersion} />}
+              {tab === 'orders' && <OrdersSection ctx={ctx} initialFilter={tabFilter} reloadKey={dataVersion} />}
+              {tab === 'customers' && <CustomersSection ctx={ctx} />}
+              {tab === 'agents' && <AgentsSection ctx={ctx} />}
+              {tab === 'support' && <SupportSection ctx={ctx} />}
+              {tab === 'payments' && <PaymentsSection ctx={ctx} />}
+              {tab === 'settings' && <SettingsSection ctx={ctx} />}
+              {tab === 'audit' && <AuditSection ctx={ctx} />}
+              {tab === 'team' && isOwner && <TeamSection ctx={ctx} />}
+            </>
           )}
-        </section>
+        </main>
+      </div>
+
+      {can('platform:view') && (
+        <>
+          <ShopDrawer shopId={shopId} ctx={ctx} onClose={() => setShopId(null)} onChanged={onDataChanged} />
+          <OrderDrawer orderId={orderId} ctx={ctx} onClose={() => setOrderId(null)} onChanged={onDataChanged} />
+        </>
       )}
-
-      {/* ═══════════════════════════════════════════════════════════════
-          TAB 3: WINDOWS AGENT BUILDS & DISTRIBUTION
-      ═══════════════════════════════════════════════════════════════ */}
-      {activeTab === 'builds' && (
-        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100" role="status">
-          <h2 className="text-base font-extrabold">Verified agent installer unavailable</h2>
-          <p className="mt-2 max-w-3xl text-sm leading-6">This deployment has no signed, verified installer configured. Download links are disabled until a real artifact, checksum, signature, and release record are available.</p>
-        </section>
-      )}
-
-      {/* ═══════════════════════════════════════════════════════════════
-          TAB 4: SAAS PLANS & ENTITLEMENTS
-      ═══════════════════════════════════════════════════════════════ */}
-      {activeTab === 'plans' && (
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
-          <h2 className="text-base font-extrabold text-slate-900 dark:text-white">Pilot plan tiers</h2>
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Tier features and quotas remain informational. Configure organization-specific monthly rates and issue manual invoices from confirmed print-side usage below; this does not collect payment.</p>
-          <div className="mt-5 grid gap-4 md:grid-cols-2">
-            {platformPlans.map((plan: any) => (
-              <article key={plan.id} className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
-                <div className="flex items-start justify-between gap-3">
-                  <div><h3 className="font-bold text-slate-900 dark:text-white">{plan.name}</h3><p className="text-xs text-slate-500">{plan.tier}</p></div>
-                  <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-300">{subscriptionSummary.filter((item) => item.planTier === plan.tier && ['ACTIVE', 'TRIALING', 'GRACE'].includes(item.status)).reduce((sum, item) => sum + item.count, 0)} active or trial</span>
-                </div>
-                <p className="mt-3 text-sm font-semibold text-slate-700 dark:text-slate-200">Pricing: configured per pilot</p>
-                <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">Listed quotas and features are catalog values; enforcement and entitlement editing are not active.</p>
-                <dl className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600 dark:text-slate-300">
-                  <div><dt className="text-slate-400">Monthly order limit</dt><dd className="font-bold">{plan.orderLimitMonthly.toLocaleString()}</dd></div>
-                  <div><dt className="text-slate-400">Printer limit</dt><dd className="font-bold">{plan.printerLimit}</dd></div>
-                  <div><dt className="text-slate-400">Max file size</dt><dd className="font-bold">{plan.fileSizeMaxMB} MB</dd></div>
-                  <div><dt className="text-slate-400">Included conversion credits</dt><dd className="font-bold">{plan.includedConversionCredits}</dd></div>
-                </dl>
-                <ul className="mt-3 space-y-1 text-xs text-slate-500">{plan.features.map((feature: string) => <li key={feature}>• {feature}</li>)}</ul>
-              </article>
-            ))}
-            {platformPlans.length === 0 && <p className="text-sm text-slate-500">The plan catalog could not be loaded.</p>}
-          </div>
-          <div className="mt-5 border-t border-slate-100 pt-4 text-xs text-amber-700 dark:border-slate-800 dark:text-amber-300">Plan catalog and quota enforcement remain code-managed. Pilot invoices are before tax, immutable after issue, and require separate manual collection.</div>
-          <section className="mt-6 rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 dark:border-indigo-900 dark:bg-indigo-950/20" aria-labelledby="pilot-billing-title">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-              <div><h3 id="pilot-billing-title" className="font-extrabold text-slate-900 dark:text-white">Hybrid pilot billing</h3><p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Rates are stored in integer paise. Printed-side quantity comes only from audited physical-output confirmation.</p></div>
-              <label className="w-full text-xs font-bold text-slate-600 dark:text-slate-300 sm:max-w-xs">Organization
-                <select value={billingOrganizationId} onChange={(event) => setBillingOrganizationId(event.target.value)} className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-900">
-                  <option value="">Choose organization</option>
-                  {billingOrganizations.map((merchant: any) => <option key={merchant.id} value={merchant.id}>{merchant.name} · {merchant.id}</option>)}
-                </select>
-                {billingOrganizationsHasMore && <button type="button" onClick={() => void loadMoreBillingOrganizations()} disabled={billingOrganizationsLoading} className="mt-2 text-[11px] font-semibold text-indigo-700 underline disabled:opacity-50 dark:text-indigo-300">{billingOrganizationsLoading ? 'Loading organizations…' : 'Load more organizations'}</button>}
-              </label>
-            </div>
-            {billingError && <p role="alert" className="mt-3 rounded-lg bg-rose-50 p-3 text-xs text-rose-800 dark:bg-rose-950/30 dark:text-rose-200">{billingError}</p>}
-            <div className="mt-4 grid gap-4 lg:grid-cols-2">
-              <form onSubmit={savePilotTariff} className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-                <h4 className="text-sm font-bold text-slate-900 dark:text-white">Add rate schedule</h4>
-                <p className="mt-1 text-[11px] text-slate-500">Schedules are append-only and begin on a calendar month boundary.</p>
-                <div className="mt-3 grid grid-cols-2 gap-3">
-                  <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Monthly base (₹)<input inputMode="decimal" value={billingBaseRupees} onChange={(event) => setBillingBaseRupees(event.target.value)} required pattern="(?:0|[1-9]\d*)(?:\.\d{1,2})?" placeholder="0.00" className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-900" /></label>
-                  <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Fee per printed side (₹)<input inputMode="decimal" value={billingSideRupees} onChange={(event) => setBillingSideRupees(event.target.value)} required pattern="(?:0|[1-9]\d*)(?:\.\d{1,2})?" placeholder="0.00" className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-900" /></label>
-                  <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Included sides<input type="number" min="0" step="1" value={billingIncludedSides} onChange={(event) => setBillingIncludedSides(event.target.value)} required className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-900" /></label>
-                  <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Effective month<input type="month" value={billingEffectiveMonth} onChange={(event) => setBillingEffectiveMonth(event.target.value)} required className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-900" /></label>
-                </div>
-                <button disabled={!billingOrganizationId || billingBusy} className="mt-3 min-h-10 rounded-lg bg-indigo-600 px-4 text-xs font-bold text-white disabled:opacity-50">{billingBusy ? 'Saving…' : 'Save rate schedule'}</button>
-                <ul className="mt-3 space-y-1 text-xs text-slate-600 dark:text-slate-300">
-                  {billingTariffs.map((tariff) => <li key={tariff.id}>{tariff.effectiveFrom.slice(0, 7)} · ₹{(tariff.monthlyBasePaise / 100).toFixed(2)}/month · ₹{(tariff.perSidePaise / 100).toFixed(2)}/side · {tariff.includedSides.toLocaleString()} included</li>)}
-                  {!billingError && billingOrganizationId && billingTariffs.length === 0 && <li>No billing rate schedule configured.</li>}
-                </ul>
-              </form>
-              <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-                <h4 className="text-sm font-bold text-slate-900 dark:text-white">Issue monthly invoice</h4>
-                <p className="mt-1 text-[11px] text-slate-500">Only completed months can be issued. Duplicate requests return the existing immutable invoice.</p>
-                <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
-                  <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Billing month<input type="month" value={billingInvoiceMonth} onChange={(event) => setBillingInvoiceMonth(event.target.value)} className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-900" /></label>
-                  <button type="button" disabled={!billingOrganizationId || !billingInvoiceMonth || billingBusy || billingTariffs.length === 0} onClick={issuePilotInvoice} className="min-h-10 rounded-lg bg-slate-900 px-4 text-xs font-bold text-white disabled:opacity-50 dark:bg-white dark:text-slate-900">{billingBusy ? 'Working…' : 'Issue invoice'}</button>
-                </div>
-                <p className="mt-3 rounded-lg bg-amber-50 p-3 text-xs leading-5 text-amber-900 dark:bg-amber-950/30 dark:text-amber-100">Manual collection only. No customer payment, platform payment, tax, or ledger entry is created by issuing a statement.</p>
-                <ul className="mt-3 divide-y divide-slate-100 text-xs dark:divide-slate-800">
-                  {pilotInvoices.map((invoice) => <li key={invoice.id} className="flex items-center justify-between gap-2 py-2"><span>{new Date(invoice.periodStart).toLocaleDateString('en-IN', { month: 'short', year: 'numeric', timeZone: 'UTC' })} · {invoice.confirmedSides.toLocaleString()} sides · {invoice.collectionStatus.replace(/_/g, ' ').toLowerCase()}</span><strong>₹{(invoice.totalPaise / 100).toFixed(2)}</strong></li>)}
-                  {billingOrganizationId && pilotInvoices.length === 0 && <li className="py-2 text-slate-500">No invoices issued.</li>}
-                </ul>
-              </div>
-            </div>
-          </section>
-        </section>
-      )}
-
-      {/* ═══════════════════════════════════════════════════════════════
-          TAB 4: IMMUTABLE FINANCIAL LEDGER
-      ═══════════════════════════════════════════════════════════════ */}
-      {activeTab === 'ledger' && (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xs overflow-hidden">
-          <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row justify-between sm:items-center gap-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
-                  Immutable Multi-Domain Financial Ledger
-                </h2>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800">
-                  ✓ SHA-256 Verified
-                </span>
-              </div>
-              <p className="text-xs text-slate-400">
-                Append-only financial entries partitioned across all 6 official money domains in integer minor units (Paise)
-              </p>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleExportLedgerCsv}
-                disabled={ledgerExporting}
-                className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold cursor-pointer flex items-center gap-1.5"
-              >
-                <span>{ledgerExporting ? 'Preparing full export…' : '📥 Export CSV'}</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Domain Filter Pills */}
-          <div className="p-3 bg-slate-50 dark:bg-slate-800/40 border-b border-slate-100 dark:border-slate-800 flex flex-wrap gap-1.5 text-xs">
-            {['ALL', 'CUSTOMER_PRINT_PAYMENT', 'SAAS_SUBSCRIPTION', 'CONVERSION_CREDIT', 'MERCHANT_PAYOUT', 'DISPUTE_RESERVE'].map((d) => (
-              <button
-                key={d}
-                type="button"
-                onClick={() => setSelectedDomain(d)}
-                className={`px-3 py-1 rounded-lg font-bold text-[11px] transition-all cursor-pointer ${
-                  selectedDomain === d
-                    ? 'bg-[#4D64E6] text-white shadow-xs'
-                    : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
-                }`}
-              >
-                {d.replace(/_/g, ' ')}
-              </button>
-            ))}
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead className="bg-slate-50 dark:bg-slate-800/60 uppercase text-[10px] font-extrabold text-slate-400 border-b border-slate-100 dark:border-slate-800">
-                <tr>
-                  <th className="p-3.5 pl-5">Ledger Transaction ID</th>
-                  <th className="p-3.5">Domain</th>
-                  <th className="p-3.5">Description</th>
-                  <th className="p-3.5">Provider</th>
-                  <th className="p-3.5">Amount (INR)</th>
-                  <th className="p-3.5 pr-5 text-right">Timestamp</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {ledgerEntries.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="p-8 text-center text-slate-400">
-                      No ledger transactions found in domain {selectedDomain}.
-                    </td>
-                  </tr>
-                ) : (
-                  ledgerEntries.map((le) => (
-                    <tr key={le.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
-                      <td className="p-3.5 pl-5 font-mono text-slate-500 text-[11px]">
-                        {le.id}
-                      </td>
-                      <td className="p-3.5">
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-                          {le.domain}
-                        </span>
-                      </td>
-                      <td className="p-3.5 font-medium text-slate-900 dark:text-white">
-                        {le.description}
-                      </td>
-                      <td className="p-3.5 font-mono text-[11px] text-slate-600 dark:text-slate-400">
-                        {le.provider}
-                      </td>
-                      <td className={`p-3.5 font-bold ${le.amount_paise >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                        {le.amount_paise >= 0 ? '+' : '-'}₹{(Math.abs(le.amount_paise) / 100).toFixed(2)}
-                      </td>
-                      <td className="p-3.5 pr-5 text-right text-slate-400 text-[11px]">
-                        {new Date(le.created_at).toLocaleString()}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-          {ledgerNextCursor && (
-            <div className="flex justify-center border-t border-slate-100 dark:border-slate-800 p-4">
-              <button
-                type="button"
-                onClick={loadMoreLedger}
-                disabled={ledgerLoadingMore}
-                className="rounded-lg border border-slate-200 dark:border-slate-700 px-4 py-2 text-xs font-bold text-slate-700 dark:text-slate-200 disabled:opacity-50"
-              >
-                {ledgerLoadingMore ? 'Loading…' : 'Load more ledger entries'}
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ═══════════════════════════════════════════════════════════════
-          TAB 5: EDGE AGENTS FLEET
-      ═══════════════════════════════════════════════════════════════ */}
-      {activeTab === 'agents' && (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xs overflow-hidden">
-          <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
-            <div>
-              <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
-                Edge Print Agent Fleet Telemetry
-              </h2>
-              <p className="text-xs text-slate-400">
-                Registered agent inventory from the server. Printer availability is based on fresh heartbeat evidence.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => void refreshAgentFleet()}
-              disabled={agentFleetRefreshing}
-              className="px-3.5 py-1.5 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold hover:bg-slate-50 cursor-pointer disabled:opacity-50"
-            >
-              {agentFleetRefreshing ? 'Refreshing…' : '↻ Refresh fleet data'}
-            </button>
-          </div>
-
-          <div className="px-5 py-2.5 border-b border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
-            <span>Reloads server-recorded heartbeats; it does not actively contact desktop agents.</span>
-            <span>{agentFleetUpdatedAt ? `Last refreshed ${new Date(agentFleetUpdatedAt).toLocaleTimeString()}` : 'Fleet data has not been refreshed yet'}</span>
-          </div>
-          {agentFleetError && <div role="alert" className="px-5 py-3 text-xs text-rose-700 bg-rose-50 dark:bg-rose-950/30 dark:text-rose-300">{agentFleetError} The previous fleet data is still shown.</div>}
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead className="bg-slate-50 dark:bg-slate-800/60 uppercase text-[10px] font-extrabold text-slate-400 border-b border-slate-100 dark:border-slate-800">
-                <tr>
-                  <th className="p-3.5 pl-5">Agent ID & Hostname</th>
-                  <th className="p-3.5">Store Assignment</th>
-                  <th className="p-3.5">Platform & Version</th>
-                  <th className="p-3.5">Heartbeat Status</th>
-                  <th className="p-3.5">Assigned Printers</th>
-                  <th className="p-3.5 pr-5">Pending Commands</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {agentFleet.map((ag) => (
-                  <tr key={ag.agentId} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
-                    <td className="p-3.5 pl-5">
-                      <div className="font-bold text-slate-900 dark:text-white">{ag.agentId}</div>
-                      <div className="text-[10px] text-slate-400 font-mono">{ag.hostname || 'Hostname unavailable'}</div>
-                    </td>
-                    <td className="p-3.5 font-medium text-slate-800 dark:text-slate-200">
-                      {ag.shopName || 'Unknown shop'} ({ag.shopCode || ag.shopId})
-                    </td>
-                    <td className="p-3.5">
-                      <span className="font-semibold text-slate-700 dark:text-slate-300">{ag.osPlatform || 'OS unavailable'}</span>
-                      <div className="text-[10px] text-slate-400">{ag.osVersion || 'OS version unavailable'} · Agent {ag.agentVersion || 'unknown'}</div>
-                    </td>
-                    <td className="p-3.5">
-                      <span className={`font-bold ${ag.status === 'ONLINE' ? 'text-emerald-600' : ag.status === 'STALE' ? 'text-amber-600' : 'text-slate-500'}`}>{ag.status}</span>
-                      <div className="text-[10px] text-slate-400">{ag.lastHeartbeat ? new Date(ag.lastHeartbeat).toLocaleString() : 'No heartbeat recorded'}</div>
-                    </td>
-                    <td className="p-3.5 text-slate-600 dark:text-slate-300">
-                      <span className="font-bold text-slate-900 dark:text-white">{ag.onlinePrinters}</span> currently online
-                      {ag.status !== 'ONLINE' && Number(ag.reportedOnlinePrinters) > 0 && <div className="text-[10px] text-amber-600">{ag.reportedOnlinePrinters} last reported; agent is {ag.status.toLowerCase()}</div>}
-                    </td>
-                    <td className="p-3.5 pr-5 font-bold text-slate-700 dark:text-slate-300">{ag.pendingCommands}</td>
-                  </tr>
-                ))}
-                {agentFleet.length === 0 && <tr><td colSpan={6} className="p-8 text-center text-slate-500">No agents have paired with a shop yet.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-          {agentFleetHasMore && <div className="border-t border-slate-100 p-4 text-center dark:border-slate-800"><button type="button" onClick={() => void loadMoreAgentFleet()} disabled={agentFleetRefreshing || !agentFleetCursor} className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">{agentFleetRefreshing ? 'Loading…' : 'Load older agents'}</button></div>}
-        </div>
-      )}
-
-      {/* ═══════════════════════════════════════════════════════════════
-          TAB 6: INCIDENTS
-      ═══════════════════════════════════════════════════════════════ */}
-      {activeTab === 'incidents' && (
-        <section className="space-y-5">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">Operational incidents</h2>
-              <p className="mt-1 max-w-3xl text-sm text-slate-500 dark:text-slate-400">Track customer-impacting and platform issues, assign an owner, and keep status changes in the privileged audit log. Fleet heartbeat data remains separate from incident records.</p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <select aria-label="Filter incidents by status" value={incidentStatusFilter} onChange={(event) => setIncidentStatusFilter(event.target.value)} className="min-h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="ALL">All statuses</option>{INCIDENT_STATUSES.map((status) => <option key={status}>{status}</option>)}</select>
-              <select aria-label="Filter incidents by severity" value={incidentSeverityFilter} onChange={(event) => setIncidentSeverityFilter(event.target.value)} className="min-h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="ALL">All severities</option>{INCIDENT_SEVERITIES.map((severity) => <option key={severity}>{severity}</option>)}</select>
-              <button type="button" onClick={() => void refreshIncidents()} disabled={incidentLoading} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">{incidentLoading ? 'Refreshing…' : 'Refresh incidents'}</button>
-            </div>
-          </div>
-
-          {incidentError && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200" role="alert">{incidentError}</div>}
-
-          {canManageIncidents && (
-            <form onSubmit={(event) => void createIncident(event)} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-              <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">Create incident</h3>
-              <div className="mt-4 grid gap-3 md:grid-cols-2">
-                <label className="text-xs font-bold text-slate-600 dark:text-slate-300">Title
-                  <input required maxLength={180} value={incidentForm.title} onChange={(event) => setIncidentForm((current) => ({ ...current, title: event.target.value }))} className="mt-1.5 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-normal text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white" placeholder="Short, actionable summary" />
-                </label>
-                <label className="text-xs font-bold text-slate-600 dark:text-slate-300">Severity
-                  <select value={incidentForm.severity} onChange={(event) => setIncidentForm((current) => ({ ...current, severity: event.target.value }))} className="mt-1.5 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-white">{INCIDENT_SEVERITIES.map((severity) => <option key={severity}>{severity}</option>)}</select>
-                </label>
-                <label className="text-xs font-bold text-slate-600 dark:text-slate-300 md:col-span-2">Details
-                  <textarea required minLength={10} maxLength={4000} rows={3} value={incidentForm.description} onChange={(event) => setIncidentForm((current) => ({ ...current, description: event.target.value }))} className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-normal text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white" placeholder="Describe impact, observed behavior, and steps already taken." />
-                </label>
-                <label className="text-xs font-bold text-slate-600 dark:text-slate-300">Organization ID (optional)
-                  <input maxLength={120} value={incidentForm.organizationId} onChange={(event) => setIncidentForm((current) => ({ ...current, organizationId: event.target.value }))} className="mt-1.5 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-normal text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
-                </label>
-                <label className="text-xs font-bold text-slate-600 dark:text-slate-300">Shop ID (optional)
-                  <input maxLength={120} value={incidentForm.shopId} onChange={(event) => setIncidentForm((current) => ({ ...current, shopId: event.target.value }))} className="mt-1.5 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-normal text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
-                </label>
-                <label className="text-xs font-bold text-slate-600 dark:text-slate-300">Order ID (optional)
-                  <input maxLength={160} value={incidentForm.orderId} onChange={(event) => setIncidentForm((current) => ({ ...current, orderId: event.target.value }))} className="mt-1.5 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-normal text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
-                </label>
-                <label className="text-xs font-bold text-slate-600 dark:text-slate-300">Agent ID (optional)
-                  <input maxLength={160} value={incidentForm.agentId} onChange={(event) => setIncidentForm((current) => ({ ...current, agentId: event.target.value }))} className="mt-1.5 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-normal text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
-                </label>
-                <label className="text-xs font-bold text-slate-600 dark:text-slate-300">Assign to (optional)
-                  <select value={incidentForm.assignedToUserId} onChange={(event) => setIncidentForm((current) => ({ ...current, assignedToUserId: event.target.value }))} className="mt-1.5 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="">Unassigned</option>{incidentAssignees.map((assignee) => <option key={assignee.id} value={assignee.id}>{assignee.fullName} · {assignee.email}</option>)}</select>
-                </label>
-              </div>
-              <button type="submit" disabled={incidentCreateBusy} className="mt-4 min-h-10 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-extrabold text-white hover:bg-indigo-700 disabled:opacity-50">{incidentCreateBusy ? 'Creating…' : 'Create incident'}</button>
-            </form>
-          )}
-
-          <div className="space-y-3">
-            {incidentLoading && incidents.length === 0 ? <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900">Loading incident history…</div>
-              : incidents.length === 0 ? <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900">No incidents have been recorded.</div>
-                : incidents.map((incident) => {
-                  const draft = incidentDrafts[incident.id] || { status: incident.status, severity: incident.severity, assignedToUserId: incident.assignedToUserId || '', resolutionNotes: incident.resolutionNotes || '' };
-                  return <article key={incident.id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-extrabold text-slate-900 dark:text-white">{incident.title}</h3><span className="rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700 dark:bg-rose-950/40 dark:text-rose-200">{incident.severity}</span><span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-200">{incident.status}</span></div>
-                        <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-600 dark:text-slate-300">{incident.description}</p>
-                        {incident.resolutionNotes && <p className="mt-2 whitespace-pre-wrap rounded-lg bg-emerald-50 p-3 text-xs leading-5 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100"><strong>Resolution:</strong> {incident.resolutionNotes}</p>}
-                        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500 dark:text-slate-400">
-                          <span>Created {new Date(incident.createdAt).toLocaleString()}</span>
-                          <span>Updated {new Date(incident.updatedAt).toLocaleString()}</span>
-                          {incident.organizationName && <span>Organization: {incident.organizationName}</span>}
-                          {incident.shopName && <span>Shop: {incident.shopName}</span>}
-                          {incident.orderId && <span>Order: {incident.orderNumber || incident.orderId}</span>}
-                          {incident.agentId && <span>Agent: {incident.agentHostname || incident.agentId}</span>}
-                          {incident.assigneeEmail && <span>Assigned to: {incident.assigneeName} · {incident.assigneeEmail}</span>}
-                        </div>
-                      </div>
-                      {canManageIncidents && <div className="grid min-w-48 gap-2 sm:grid-cols-3">
-                        <select aria-label={`Severity for ${incident.title}`} value={draft.severity} onChange={(event) => setIncidentDrafts((current) => ({ ...current, [incident.id]: { ...draft, severity: event.target.value } }))} className="min-h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white">{INCIDENT_SEVERITIES.map((severity) => <option key={severity}>{severity}</option>)}</select>
-                        <select aria-label={`Status for ${incident.title}`} value={draft.status} onChange={(event) => setIncidentDrafts((current) => ({ ...current, [incident.id]: { ...draft, status: event.target.value } }))} className="min-h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white">{INCIDENT_STATUSES.map((status) => <option key={status}>{status}</option>)}</select>
-                        <select aria-label={`Assignee for ${incident.title}`} value={draft.assignedToUserId} onChange={(event) => setIncidentDrafts((current) => ({ ...current, [incident.id]: { ...draft, assignedToUserId: event.target.value } }))} className="min-h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="">Unassigned</option>{incidentAssignees.map((assignee) => <option key={assignee.id} value={assignee.id}>{assignee.fullName}</option>)}</select>
-                        <textarea aria-label={`Resolution notes for ${incident.title}`} maxLength={4000} rows={2} value={draft.resolutionNotes} onChange={(event) => setIncidentDrafts((current) => ({ ...current, [incident.id]: { ...draft, resolutionNotes: event.target.value } }))} placeholder="Resolution notes (required to resolve/close)" className="min-h-16 rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white sm:col-span-3" />
-                        <button type="button" disabled={incidentSavingId === incident.id} onClick={() => void saveIncident(incident.id)} className="min-h-9 rounded-lg bg-indigo-600 px-3 text-xs font-bold text-white disabled:opacity-50 sm:col-span-3">{incidentSavingId === incident.id ? 'Saving…' : 'Save changes'}</button>
-                      </div>}
-                    </div>
-                  </article>;
-                })}
-          </div>
-          {incidentNextCursor && <div className="text-center"><button type="button" disabled={incidentLoadingMore} onClick={() => void loadMoreIncidents()} className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">{incidentLoadingMore ? 'Loading…' : 'Load older incidents'}</button></div>}
-        </section>
-      )}
-
-      {/* ═══════════════════════════════════════════════════════════════
-          TAB 8: AUDIT LOGS
-      ═══════════════════════════════════════════════════════════════ */}
-      {activeTab === 'audit' && (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xs overflow-hidden">
-          <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row justify-between sm:items-center gap-4">
-            <div>
-              <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
-                Privileged Security & Operational Audit Log
-              </h2>
-              <p className="text-xs text-slate-400">
-                Immutable trail of operator actions, tenant suspensions, secret rotations, and financial approvals
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => { void handleExportAuditCsv(); }}
-              disabled={auditExporting}
-              className="flex items-center gap-2 px-3.5 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs shrink-0"
-            >
-              <DownloadIcon size={14} />
-              <span>{auditExporting ? 'Exporting full audit log…' : 'Export full audit log (CSV)'}</span>
-            </button>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead className="bg-slate-50 dark:bg-slate-800/60 uppercase text-[10px] font-extrabold text-slate-400 border-b border-slate-100 dark:border-slate-800">
-                <tr>
-                  <th className="p-3.5 pl-5">Event ID</th>
-                  <th className="p-3.5">Actor & Role</th>
-                  <th className="p-3.5">Action Executed</th>
-                  <th className="p-3.5">Target Tenant</th>
-                  <th className="p-3.5">IP Address</th>
-                  <th className="p-3.5 pr-5 text-right">Timestamp</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-mono text-[11px]">
-                {auditLogs.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="p-6 text-center text-slate-400 font-sans">
-                      No security audit events recorded.
-                    </td>
-                  </tr>
-                ) : (
-                  auditLogs.map((log) => (
-                    <tr key={log.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
-                      <td className="p-3.5 pl-5 text-slate-500">{String(log.id || '').slice(0, 12)}...</td>
-                      <td className="p-3.5 font-sans">
-                        <span className="font-bold text-slate-800 dark:text-slate-200">{log.actorUserId || 'System'}</span>
-                        <div className="text-[10px] text-slate-400">{log.actorRole || 'Unknown role'}</div>
-                      </td>
-                      <td className="p-3.5 font-sans font-bold text-slate-900 dark:text-white">
-                        {log.action}
-                      </td>
-                      <td className="p-3.5 text-slate-500 font-sans">{[log.targetType, log.targetId].filter(Boolean).join(': ') || '—'}<div className="text-[10px] text-slate-400">{log.outcome || '—'}</div></td>
-                      <td className="p-3.5 text-slate-500">{log.ipAddress || '—'}</td>
-                      <td className="p-3.5 pr-5 text-right text-slate-400 font-sans">
-                        {log.createdAt ? new Date(log.createdAt).toLocaleString() : '—'}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-          <div className="flex items-center justify-between gap-3 border-t border-slate-100 p-4 dark:border-slate-800">
-            <span className="text-xs text-slate-500">Showing {auditLogs.length} loaded audit events.</span>
-            {auditNextCursor && (
-              <button type="button" onClick={() => { void loadMoreAudit(); }} disabled={auditLoadingMore}
-                className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200">
-                {auditLoadingMore ? 'Loading…' : 'Load older events'}
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'access' && isPlatformOwner && (
-        <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-          <div>
-            <h2 className="text-base font-extrabold text-slate-900 dark:text-white">Platform administrator access</h2>
-            <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-500 dark:text-slate-400">Platform permissions are separate from merchant roles. Changes are audited and take effect on the administrator’s next request.</p>
-          </div>
-          {platformAdminError && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-200">{platformAdminError}</p>}
-          {platformAdminLoading ? <p className="py-8 text-center text-sm text-slate-500">Loading platform administrators…</p>
-            : platformAdmins.length === 0 ? <p className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500 dark:border-slate-700">No platform administrator accounts are provisioned. Ask a platform owner to provision an account before assigning access.</p>
-              : <div className="space-y-4">{platformAdmins.map((admin) => {
-                const draft = platformAdminDrafts[admin.id] || [];
-                const unchanged = JSON.stringify([...draft].sort()) === JSON.stringify([...(admin.permissions || [])].sort());
-                return <article key={admin.id} className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div><h3 className="text-sm font-bold text-slate-900 dark:text-white">{admin.fullName}</h3><p className="text-xs text-slate-500">{admin.email} · {admin.isActive ? 'Active' : 'Inactive'}</p></div>
-                    <button type="button" disabled={unchanged || platformAdminSaving === admin.id || !admin.isActive} onClick={() => void savePlatformAdminPermissions(admin.id)} className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">{platformAdminSaving === admin.id ? 'Saving…' : 'Save access'}</button>
-                  </div>
-                  <fieldset disabled={!admin.isActive || platformAdminSaving === admin.id} className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                    <legend className="sr-only">Permissions for {admin.email}</legend>
-                    {PLATFORM_PERMISSION_OPTIONS.map((permission) => <label key={permission} className="flex min-h-10 items-center gap-2 rounded-lg bg-slate-50 px-3 text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                      <input type="checkbox" checked={draft.includes(permission)} onChange={(event) => setPlatformAdminDrafts((current) => ({ ...current, [admin.id]: event.target.checked ? [...draft, permission] : draft.filter((item) => item !== permission) }))} />
-                      <span>{permission}</span>
-                    </label>)}
-                  </fieldset>
-                </article>;
-              })}</div>}
-        </section>
-      )}
-
-      {/* ═══════════════════════════════════════════════════════════════
-          TAB 8: SYSTEM CONFIG & RUNTIME RULES
-      ═══════════════════════════════════════════════════════════════ */}
-      {activeTab === 'config' && (
-        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100" role="status">
-          <h2 className="text-base font-extrabold">Runtime configuration is deployment-managed</h2>
-          <p className="mt-2 max-w-3xl text-sm leading-6">This console cannot persist global runtime settings or feature flags. The previous form only changed browser state. Configure supported environment variables in the deployment provider; audited runtime configuration remains a product requirement.</p>
-        </section>
-      )}
-
-      {/* Inspect Tenant Modal */}
-      {selectedMerchantDetail && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4" role="presentation">
-          <section role="dialog" aria-modal="true" aria-labelledby="tenant-detail-title" className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-lg w-full space-y-4 shadow-2xl">
-            <div className="flex justify-between items-center border-b pb-3 border-slate-100 dark:border-slate-800">
-              <h3 id="tenant-detail-title" className="font-extrabold text-base text-slate-900 dark:text-white">Tenant details: {selectedMerchantDetail.name}</h3>
-              <button type="button" aria-label="Close tenant details" onClick={() => setSelectedMerchantDetail(null)} className="text-slate-400 hover:text-slate-700 font-bold">✕</button>
-            </div>
-            <dl className="space-y-3 text-xs text-slate-600 dark:text-slate-300">
-              <div className="flex justify-between gap-4"><dt>Organization ID</dt><dd className="font-mono break-all text-right">{selectedMerchantDetail.id}</dd></div>
-              <div className="flex justify-between gap-4"><dt>Owner</dt><dd className="font-bold text-right">{selectedMerchantDetail.owner?.name || '—'} ({selectedMerchantDetail.owner?.email || '—'})</dd></div>
-              <div className="flex justify-between"><dt>Plan tier</dt><dd className="font-bold">{selectedMerchantDetail.planTier}</dd></div>
-              <div className="flex justify-between"><dt>Access status</dt><dd className="font-bold">{selectedMerchantDetail.planStatus}</dd></div>
-              <div className="flex justify-between"><dt>Registered shops</dt><dd className="font-bold">{selectedMerchantDetail.shopsCount}</dd></div>
-              <div className="flex justify-between"><dt>Orders recorded</dt><dd className="font-bold">{selectedMerchantDetail.ordersCount}</dd></div>
-              <div className="flex justify-between"><dt>Created</dt><dd className="font-bold">{new Date(selectedMerchantDetail.createdAt).toLocaleString()}</dd></div>
-            </dl>
-            <p className="rounded-xl bg-slate-50 p-3 text-xs text-slate-500 dark:bg-slate-800">This view shows persistent organization data only. Printer health is available in Fleet; payment settlement and hardware details are not inferred here.</p>
-            {['ACTIVE', 'SUSPENDED'].includes(selectedMerchantDetail.planStatus) && (
-              <button type="button" onClick={() => handleToggleMerchantStatus(selectedMerchantDetail.id, selectedMerchantDetail.planStatus)} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold dark:border-slate-700">
-                {selectedMerchantDetail.planStatus === 'ACTIVE' ? 'Suspend tenant access' : 'Reactivate tenant access'}
-              </button>
-            )}
-            <button type="button" onClick={() => setSelectedMerchantDetail(null)} className="w-full py-2.5 bg-slate-100 dark:bg-slate-800 font-bold text-xs rounded-xl">Close tenant details</button>
-          </section>
-        </div>
-      )}
-
-      {merchantStatusAction && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" role="presentation">
-          <form onSubmit={(event) => void confirmMerchantStatusChange(event)} className="w-full max-w-lg space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900" role="dialog" aria-modal="true" aria-labelledby="tenant-status-dialog-title" aria-describedby="tenant-status-dialog-description">
-            <div>
-              <h3 id="tenant-status-dialog-title" className="text-base font-extrabold text-slate-900 dark:text-white">{merchantStatusAction.nextStatus === 'SUSPENDED' ? 'Suspend tenant access?' : 'Reactivate tenant access?'}</h3>
-              <p id="tenant-status-dialog-description" className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">{merchantStatusAction.name} will change from {merchantStatusAction.currentStatus} to {merchantStatusAction.nextStatus}. Enter the operational reason; it will be stored in the immutable audit event.</p>
-            </div>
-            <label htmlFor="tenant-status-reason" className="block text-xs font-bold text-slate-700 dark:text-slate-200">Reason for this change</label>
-            <textarea id="tenant-status-reason" autoFocus required minLength={10} maxLength={500} rows={4} value={merchantStatusReason} onChange={(event) => setMerchantStatusReason(event.target.value)} placeholder="For example: Temporary suspension requested by the organization owner." className="-mt-3 w-full rounded-lg border border-slate-300 bg-white p-3 text-sm leading-5 text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
-            <p className="-mt-3 text-right text-[11px] text-slate-500">{merchantStatusReason.trim().length}/500 · at least 10 characters</p>
-            <div className="flex justify-end gap-2">
-              <button type="button" disabled={merchantStatusBusy} onClick={() => setMerchantStatusAction(null)} className="min-h-10 rounded-lg border border-slate-300 px-4 text-xs font-bold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200">Cancel</button>
-              <button type="submit" disabled={merchantStatusBusy || merchantStatusReason.trim().length < 10} className="min-h-10 rounded-lg bg-indigo-600 px-4 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">{merchantStatusBusy ? 'Saving…' : `Confirm ${merchantStatusAction.nextStatus === 'SUSPENDED' ? 'suspension' : 'reactivation'}`}</button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* Onboard New Tenant Merchant Modal */}
-      {showOnboardModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl">
-            <div className="flex justify-between items-center border-b pb-3 border-slate-100 dark:border-slate-800">
-              <h3 className="font-extrabold text-base text-slate-900 dark:text-white">
-                Onboard New Tenant Merchant
-              </h3>
-              <button
-                type="button"
-                onClick={() => { setShowOnboardModal(false); setProvisionedInvitationLink(''); }}
-                className="text-slate-400 hover:text-slate-700 font-bold cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            {provisionedInvitationLink ? (
-              <div className="space-y-3" role="status" aria-live="polite">
-                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900">
-                  <strong>Tenant created in the database.</strong> Billing is not configured, so this organization is on a seven-day trial. Share this one-time setup link with the owner using an approved private channel. It expires after 48 hours and is shown only here.
-                </div>
-                <input readOnly value={provisionedInvitationLink} aria-label="One-time owner setup link" className="w-full text-xs p-2.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 font-mono" />
-                <button type="button" onClick={() => navigator.clipboard.writeText(provisionedInvitationLink).then(() => showToast('Owner setup link copied.')).catch(() => showToast('Copy failed; select and copy the link manually.'))} className="w-full py-2.5 bg-[#4D64E6] text-white font-bold text-xs rounded-xl">Copy one-time setup link</button>
-                <button type="button" onClick={() => { setShowOnboardModal(false); setProvisionedInvitationLink(''); }} className="w-full py-2.5 bg-slate-100 dark:bg-slate-800 font-bold text-xs rounded-xl">Done</button>
-              </div>
-            ) : <form onSubmit={handleOnboardMerchant} className="space-y-3">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Organization / Store Name
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Symbiosis Campus Xerox"
-                  value={newOrgName}
-                  onChange={(e) => setNewOrgName(e.target.value)}
-                  className="w-full text-xs p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Unique Shop Code (QR Slug)
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. symbiosis-viman (auto-generated if blank)"
-                  value={newShopCode}
-                  onChange={(e) => setNewShopCode(e.target.value)}
-                  className="w-full text-xs p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100 font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Owner Full Name
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Rajesh Patil"
-                  value={newOwnerName}
-                  onChange={(e) => setNewOwnerName(e.target.value)}
-                  className="w-full text-xs p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Owner Email Address
-                </label>
-                <input
-                  type="email"
-                  required
-                  placeholder="e.g. rajesh@campusprint.in"
-                  value={newOwnerEmail}
-                  onChange={(e) => setNewOwnerEmail(e.target.value)}
-                  className="w-full text-xs p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Subscription Plan Tier
-                </label>
-                <select
-                  value={newPlanTier}
-                  onChange={(e) => setNewPlanTier(e.target.value)}
-                  className="w-full text-xs p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100 font-bold"
-                >
-                  <option value="STARTER">Starter (₹499/mo)</option>
-                  <option value="GROWTH">Growth (₹1,199/mo)</option>
-                  <option value="PRO">Pro (₹2,499/mo)</option>
-                  <option value="SCALE">Scale (₹6,999/mo)</option>
-                </select>
-              </div>
-
-              <div className="pt-2 flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => { setShowOnboardModal(false); setProvisionedInvitationLink(''); }}
-                  className="w-1/2 py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs rounded-xl cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isOnboarding}
-                  className="w-1/2 py-2.5 bg-[#4D64E6] hover:bg-indigo-600 text-white font-bold text-xs rounded-xl cursor-pointer shadow-md shadow-[#4D64E6]/25"
-                >
-                  {isOnboarding ? 'Creating tenant…' : 'Provision Tenant'}
-                </button>
-              </div>
-            </form>}
-          </div>
-        </div>
-      )}
+      <Toast message={toast?.message || null} tone={toast?.tone} />
     </div>
   );
 };

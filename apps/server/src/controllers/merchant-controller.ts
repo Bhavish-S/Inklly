@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { getUpiClaim } from '../services/upi-direct';
 import * as crypto from 'node:crypto';
 import * as path from 'node:path';
 import { DatabaseService, hashPassword } from '@inklly/db';
@@ -41,7 +42,8 @@ export class MerchantController {
     const jobs = printJobs || this.db.query<any>(
       `SELECT id, order_file_id, status, printer_id AS assigned_printer_id FROM print_jobs WHERE order_id = ? ORDER BY id`, [order.id]
     ).map((job) => ({ id: job.id, orderFileId: job.order_file_id, status: job.status, printerId: job.assigned_printer_id || null }));
-    return { ...order, printJobs: jobs, files: (order.files || []).map((file: any) => {
+    const upiClaim = order.paymentMethod === 'UPI_DIRECT' ? getUpiClaim(this.db, order.id) : null;
+    return { ...order, upiClaim, printJobs: jobs, files: (order.files || []).map((file: any) => {
       const { storageKey: _storageKey, ...safeFile } = file;
       return { ...safeFile, fileUrl: `/api/v1/merchant/orders/${encodeURIComponent(order.id)}/files/${encodeURIComponent(file.id)}` };
     }) };

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { UpiPaySheet } from '../components/UpiPaySheet';
 import { api } from '../api/client';
 import { CheckCircleIcon, ClockIcon, PrinterIcon, FileTextIcon, ArrowRightIcon } from '../components/icons';
 import { stopCustomerOrderPollingIfFinal } from '../order-tracker-polling.mjs';
@@ -12,7 +13,7 @@ interface OrderTrackerViewProps {
 
 const ORDER_STEPS = [
   { key: 'SUBMITTED', label: 'Sent', description: 'Your files reached the shop', icon: FileTextIcon },
-  { key: 'AWAITING_PAYMENT', label: 'Payment', description: 'Pay online or at the counter', icon: ClockIcon },
+  { key: 'AWAITING_PAYMENT', label: 'Payment', description: 'Pay by UPI or at the counter', icon: ClockIcon },
   { key: 'AWAITING_REVIEW', label: 'Checking', description: 'The shop is checking your files', icon: ClockIcon },
   { key: 'READY_FOR_PRINT', label: 'In queue', description: 'Waiting for the printer', icon: PrinterIcon },
   { key: 'IN_PROGRESS', label: 'Printing', description: 'Your pages are printing', icon: PrinterIcon },
@@ -246,6 +247,21 @@ export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onB
           {statusDescription}
         </p>
 
+        {order.upiPayment && !terminalIssue && order.paymentStatus !== 'VERIFIED' && (
+          <div className="mb-6 text-left">
+            <UpiPaySheet
+              payment={order.upiPayment}
+              shopName={order.shopName || 'the shop'}
+              token={order.tokenNumber ? String(order.tokenNumber).replace(/^T-/, '') : null}
+              claimed={Boolean(order.upiClaim)}
+              onClaim={async (details) => {
+                await api.claimUpiPayment(order.orderId, details);
+                setOrder((current: any) => current ? { ...current, upiClaim: { ...details, claimedAt: new Date().toISOString() } } : current);
+              }}
+            />
+          </div>
+        )}
+
         {/* Counter Pickup Token Card */}
         {order.tokenNumber && !terminalIssue && (
           <div className="inline-block bg-ink-surface-subtle dark:bg-ink-dark-elevated border-2 border-dashed border-brand/50 rounded-3xl px-8 py-5 mb-8 shadow-xs">
@@ -374,7 +390,7 @@ export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onB
       {/* Order Details & Summary Card */}
       <div className="rounded-2xl border border-ink-border dark:border-ink-dark-border bg-ink-surface dark:bg-ink-dark-surface p-6 sm:p-7 shadow-xs">
         <h3 className="text-sm font-bold uppercase tracking-wider text-ink-text-muted dark:text-ink-dark-text-muted mb-4 pb-3 border-b border-ink-border dark:border-ink-dark-border">
-          Order Summary & Payment
+          Order summary
         </h3>
 
         <div className="grid grid-cols-2 gap-4 text-sm mb-6">
@@ -389,7 +405,7 @@ export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onB
 
           <div className="p-3 rounded-xl bg-ink-surface-subtle dark:bg-ink-dark-elevated">
             <span className="text-[11px] font-medium text-ink-text-muted dark:text-ink-dark-text-muted block mb-1">
-              Payment State
+              Payment
             </span>
             <span
               className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
@@ -398,7 +414,13 @@ export const OrderTrackerView: React.FC<OrderTrackerViewProps> = ({ orderId, onB
                   : 'bg-status-warning-bg text-status-warning'
               }`}
             >
-              {order.paymentStatus}
+              {order.paymentStatus === 'VERIFIED'
+                ? 'Paid'
+                : order.paymentMethod === 'UPI_DIRECT'
+                  ? (order.upiClaim ? 'UPI sent · shop confirming' : 'Pay by UPI')
+                  : order.paymentMethod === 'ONLINE_RAZORPAY'
+                    ? 'Waiting for payment'
+                    : 'Pay at the counter'}
             </span>
           </div>
 

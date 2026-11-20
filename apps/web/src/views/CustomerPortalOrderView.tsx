@@ -189,6 +189,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
           counter: data.address || '',
           rates: data.rates,
           onlinePaymentAvailable: Boolean(data.onlinePaymentAvailable),
+          upiDirectAvailable: Boolean(data.upiDirectAvailable),
           acceptCashOnCollection: data.acceptCashOnCollection !== false,
           acceptingOrders: data.acceptingOrders !== false,
           pauseMessage: data.pauseMessage || null,
@@ -218,7 +219,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [showOptionsAccordion, setShowOptionsAccordion] = useState<boolean>(true);
-  const [globalCopies, setGlobalCopies] = useState<number>(1);
+  const [globalCopies] = useState<number>(1);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   // Repeat customers: remember the name and number on this phone only.
@@ -227,7 +228,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
   })();
   const [customerName, setCustomerName] = useState<string>(typeof savedCustomer.name === 'string' ? savedCustomer.name : '');
   const [customerPhone, setCustomerPhone] = useState<string>(typeof savedCustomer.phone === 'string' ? savedCustomer.phone : '');
-  const [paymentMethod, setPaymentMethod] = useState<'CASH_ON_COLLECTION' | 'ONLINE_RAZORPAY'>('CASH_ON_COLLECTION');
+  const [paymentMethod, setPaymentMethod] = useState<'CASH_ON_COLLECTION' | 'ONLINE_RAZORPAY' | 'UPI_DIRECT'>('CASH_ON_COLLECTION');
   const [pendingOnlineOrder, setPendingOnlineOrder] = useState<{ orderId: string; orderNumber: string; totalAmountPaise: number; tokenNumber?: string } | null>(null);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [isSavingEdits, setIsSavingEdits] = useState<boolean>(false);
@@ -931,7 +932,9 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
               } catch (error) { reject(error); }
             },
             modal: { ondismiss: () => reject(new Error('Checkout was closed. Your order is saved; retry payment to continue.')) },
-            theme: { color: '#4D64E6' },
+            theme: { color: '#4F46E5' },
+            // UPI only: no cards, net banking or wallets.
+            config: { display: { hide: [{ method: 'card' }, { method: 'netbanking' }, { method: 'wallet' }, { method: 'paylater' }, { method: 'emi' }, { method: 'cardless_emi' }], preferences: { show_default_blocks: true } } },
           });
           checkout.on('payment.failed', () => reject(new Error('Payment did not complete. Your order is saved; retry payment to continue.')));
           checkout.open();
@@ -1274,6 +1277,21 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
             </div>
             <p className="hidden sm:block text-center text-[11px] text-slate-400 mt-2">or drag files here</p>
             {!documents.length && <p className="text-[11px] text-slate-400 mt-2">Word or Excel? Save it as PDF first. Photos can be cropped and enhanced after upload.</p>}
+            {!documents.length && (
+              <ol className="mt-5 grid grid-cols-3 gap-2 border-t border-slate-100 pt-4 text-center" aria-label="How it works">
+                {[
+                  { icon: '📄', title: 'Upload', hint: 'Choose colour, sides, copies' },
+                  { icon: shop.upiDirectAvailable ? '⚡' : '🏪', title: shop.upiDirectAvailable ? 'Pay by UPI' : 'Place order', hint: shop.upiDirectAvailable ? 'Or cash when you collect' : 'Pay when you collect' },
+                  { icon: '🎟️', title: 'Collect', hint: 'Show your token at the counter' },
+                ].map((step, index) => (
+                  <li key={step.title} className="rounded-2xl bg-slate-50 px-2 py-3">
+                    <span className="mx-auto mb-1 grid h-9 w-9 place-items-center rounded-xl bg-white text-lg shadow-sm" aria-hidden>{step.icon}</span>
+                    <span className="block text-[11px] font-extrabold text-slate-800">{index + 1}. {step.title}</span>
+                    <span className="block text-[10px] leading-tight text-slate-500">{step.hint}</span>
+                  </li>
+                ))}
+              </ol>
+            )}
 
             {/* Upload Error Banner */}
             {uploadError && (
@@ -1614,26 +1632,9 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
         {/* STEP 2: DOCUMENTS LIST & PREVIEW (When files exist) */}
         {documents.length > 0 && (
           <div className="bg-white rounded-2xl p-4 sm:p-5 shadow-sm border border-slate-100 space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <span className="w-5 h-5 rounded-full bg-indigo-50 text-indigo-600 font-bold text-xs flex items-center justify-center">
-                    2
-                  </span>
-                  Documents ({documents.length})
-                </h2>
-              </div>
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="text-xs font-bold text-indigo-600 hover:text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg"
-              >
-                + Add Doc
-              </button>
-            </div>
-
             {/* Document Chips / Tabs */}
-            <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+            {documents.length > 1 && (
+            <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none" role="tablist" aria-label="Your files">
               {documents.map((doc, idx) => (
                 <div
                   key={doc.id}
@@ -1645,7 +1646,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                   }`}
                 >
                   <FileTextIcon size={14} />
-                  <span>Doc {idx + 1}</span>
+                  <span className="max-w-[120px] truncate">{doc.fileName}</span>
                   <span className="text-[10px] bg-white/80 px-1 rounded text-slate-500">
                     {doc.pageCount}p
                   </span>
@@ -1662,6 +1663,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                 </div>
               ))}
             </div>
+            )}
 
             {/* Real Interactive Document & PDF Preview with Actual Pages and Content */}
             {activeDoc && (
@@ -1690,7 +1692,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                 onClick={() => setShowOptionsAccordion(!showOptionsAccordion)}
                 className="w-full flex items-center justify-between p-3.5 bg-slate-50 text-xs font-bold text-slate-800 hover:bg-slate-100 transition-colors"
               >
-                <span>Print Settings for Doc {activeDocIndex + 1}</span>
+                <span className="truncate">Print settings{documents.length > 1 ? ` · ${activeDoc.fileName}` : ''}</span>
                 {showOptionsAccordion ? <ChevronUpIcon size={16} /> : <ChevronDownIcon size={16} />}
               </button>
 
@@ -1791,7 +1793,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                   {/* Document Copies */}
                   <div>
                     <label className="block text-slate-700 font-bold mb-1.5 flex items-center justify-between">
-                      <span>Copies of this Document</span>
+                      <span>Copies</span>
                       <span className="text-[10px] text-slate-400 font-normal">Sets to print</span>
                     </label>
                     <div className="flex items-center gap-3">
@@ -1825,7 +1827,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                   {/* Special Instructions / Note for Shopkeeper */}
                   <div>
                     <label className="block text-slate-700 font-bold mb-1.5 flex items-center justify-between">
-                      <span>Special Instructions for Shopkeeper</span>
+                      <span>Note for the shop</span>
                       <span className="text-[10px] text-slate-400 font-normal">Optional</span>
                     </label>
                     <input
@@ -1866,7 +1868,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                           <div className="w-3 h-3 rounded-full bg-slate-800 border border-slate-600 shrink-0" />
                           <div className="font-bold text-[11px] truncate">B&W</div>
                         </div>
-                        <div className="text-[9px] text-slate-500 font-medium">Exact quote below</div>
+                        <div className="text-[10px] text-slate-500 font-medium">{shop.rates?.bw_simplex != null ? `₹${shop.rates.bw_simplex}/page` : 'Black & white'}</div>
                       </button>
 
                       <button
@@ -1883,7 +1885,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                           <div className="w-3 h-3 rounded-full bg-gradient-to-tr from-rose-500 via-amber-400 to-indigo-500 shrink-0" />
                           <div className="font-bold text-[11px] truncate">Colour</div>
                         </div>
-                        <div className="text-[9px] text-slate-500 font-medium">Exact quote below</div>
+                        <div className="text-[10px] text-slate-500 font-medium">{shop.rates?.color_simplex != null ? `₹${shop.rates.color_simplex}/page` : 'Full colour'}</div>
                       </button>
 
                       <button
@@ -1903,7 +1905,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                           <div className="w-3 h-3 rounded-full bg-gradient-to-r from-slate-700 to-purple-500 shrink-0" />
                           <div className="font-bold text-[11px] truncate">Mixed</div>
                         </div>
-                        <div className="text-[9px] text-purple-700 font-medium">Custom color</div>
+                        <div className="text-[10px] text-purple-700 font-medium">Pick colour pages</div>
                       </button>
                     </div>
 
@@ -2041,13 +2043,6 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                     </div>
                   </div>
 
-                  <p className="text-[10px] text-slate-500">The quote uses this shop’s saved rates for the selected paper size, colour mode and sides.</p>
-
-                  {/* Tray Status Banner */}
-                  <div className="p-2.5 bg-blue-50/70 border border-blue-100 rounded-lg text-[11px] text-blue-700 flex items-center gap-1.5">
-                    <span>ℹ️</span>
-                    <span>Printer Tray 1 is loaded with high quality 75 GSM paper.</span>
-                  </div>
                 </div>
               )}
             </div>
@@ -2064,50 +2059,26 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
         )}
         <div className="max-w-md mx-auto flex items-center justify-between gap-2">
           {/* Left: Total Calculation */}
-          <div className="flex-shrink-0 min-w-[70px]">
+          {documents.length > 0 && (
+          <div className="flex-shrink-0 min-w-[96px]">
             <div className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">
-              Total Quote
+              Total
             </div>
               <div className="text-xl font-extrabold text-slate-900 leading-tight">
               {pendingOnlineOrder ? formatPaise(pendingOnlineOrder.totalAmountPaise) : quoteLoading ? 'Calculating…' : grandTotalPaise !== null ? formatPaise(grandTotalPaise) : '—'}
             </div>
             <div className="text-[10px] text-slate-500 truncate">
-              {totalPagesCount}p • {documents.length} doc{documents.length > 1 ? 's' : ''}
+              {totalPagesCount} page{totalPagesCount === 1 ? '' : 's'} · {documents.length} file{documents.length > 1 ? 's' : ''}
             </div>
           </div>
-
-          {/* Center: Copies Stepper with 44px Touch Targets */}
-          <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-1 border border-slate-200">
-            <button
-              type="button"
-              onClick={() => setGlobalCopies(Math.max(1, globalCopies - 1))}
-              className="w-10 h-10 min-w-[40px] min-h-[40px] sm:w-11 sm:h-11 sm:min-w-[44px] sm:min-h-[44px] rounded-lg bg-white text-slate-800 font-bold hover:bg-slate-50 flex items-center justify-center shadow-xs text-base active:bg-slate-200 transition-colors cursor-pointer"
-              title="Decrease copies"
-              aria-label="Decrease number of copies"
-            >
-              −
-            </button>
-            <span className="w-6 text-center font-bold text-sm text-slate-900" aria-label={`${globalCopies} copies`}>
-              {globalCopies}
-            </span>
-            <button
-              type="button"
-              onClick={() => setGlobalCopies(Math.min(globalCopies + 1, ...documents.map((doc) => Math.floor(MAX_COPIES_PER_FILE / Math.max(1, doc.options.copies || 1)))))}
-              disabled={documents.length === 0 || globalCopies >= Math.min(...documents.map((doc) => Math.floor(MAX_COPIES_PER_FILE / Math.max(1, doc.options.copies || 1))))}
-              className="w-10 h-10 min-w-[40px] min-h-[40px] sm:w-11 sm:h-11 sm:min-w-[44px] sm:min-h-[44px] rounded-lg bg-white text-slate-800 font-bold hover:bg-slate-50 flex items-center justify-center shadow-xs text-base active:bg-slate-200 transition-colors cursor-pointer"
-              title="Increase copies"
-              aria-label="Increase number of copies"
-            >
-              +
-            </button>
-          </div>
+          )}
 
           {/* One clear next step; payment is chosen on the review sheet. */}
           <button
             type="button"
             disabled={documents.length === 0 || isSubmitting || quoteLoading || grandTotalPaise === null || shop.acceptingOrders === false}
             onClick={() => {
-              setPaymentMethod(shop.onlinePaymentAvailable && !onlinePaymentBelowMinimum ? 'ONLINE_RAZORPAY' : 'CASH_ON_COLLECTION');
+              setPaymentMethod(shop.upiDirectAvailable ? 'UPI_DIRECT' : shop.onlinePaymentAvailable && !onlinePaymentBelowMinimum ? 'ONLINE_RAZORPAY' : 'CASH_ON_COLLECTION');
               setSubmitError(null);
               setReviewModalOpen(true);
             }}
@@ -2116,7 +2087,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
             {documents.length === 0 ? 'Add a file to start' : 'Review & order'}
           </button>
         </div>
-        {shop.onlinePaymentAvailable && onlinePaymentBelowMinimum && (
+        {shop.onlinePaymentAvailable && !shop.upiDirectAvailable && onlinePaymentBelowMinimum && (
           <p className="mt-2 text-right text-xs text-amber-700" role="status">
             Razorpay requires at least ₹1.00. Choose cash at collection if available, or adjust the order.
           </p>
@@ -2180,21 +2151,27 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
             {!pendingOnlineOrder && (
               <fieldset>
                 <legend className="block text-xs font-semibold text-slate-700 mb-1.5">How will you pay?</legend>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 gap-2">
                   {[
-                    { value: 'CASH_ON_COLLECTION' as const, title: 'At the counter', hint: 'Cash or UPI at pickup', enabled: shop.acceptCashOnCollection !== false },
-                    { value: 'ONLINE_RAZORPAY' as const, title: 'Pay now', hint: shop.onlinePaymentAvailable ? (onlinePaymentBelowMinimum ? 'Minimum ₹1' : 'UPI, card, netbanking') : 'Not offered here', enabled: Boolean(shop.onlinePaymentAvailable) && !onlinePaymentBelowMinimum },
-                  ].map((option) => (
+                    shop.upiDirectAvailable
+                      ? { value: 'UPI_DIRECT' as const, title: 'Pay by UPI now', hint: 'PhonePe, Google Pay, Paytm, CRED, BHIM… amount filled in for you', enabled: true, icon: '⚡' }
+                      : { value: 'ONLINE_RAZORPAY' as const, title: 'Pay by UPI now', hint: shop.onlinePaymentAvailable ? (onlinePaymentBelowMinimum ? 'Minimum ₹1' : 'Opens your UPI app with the amount filled in') : 'This shop takes UPI at the counter', enabled: Boolean(shop.onlinePaymentAvailable) && !onlinePaymentBelowMinimum, icon: '⚡' },
+                    { value: 'CASH_ON_COLLECTION' as const, title: 'Pay when I collect', hint: 'Cash or UPI at the counter', enabled: shop.acceptCashOnCollection !== false, icon: '🏪' },
+                  ].filter((option) => option.enabled || option.value !== 'ONLINE_RAZORPAY').map((option) => (
                     <button
                       key={option.value}
                       type="button"
                       disabled={!option.enabled}
                       onClick={() => setPaymentMethod(option.value)}
                       aria-pressed={paymentMethod === option.value}
-                      className={`min-h-[56px] rounded-xl border px-3 py-2 text-left transition-all disabled:opacity-40 ${paymentMethod === option.value ? 'border-indigo-600 bg-indigo-50 ring-1 ring-indigo-600' : 'border-slate-200 bg-white'}`}
+                      className={`flex min-h-[60px] items-center gap-3 rounded-2xl border px-3 py-2.5 text-left transition-all disabled:opacity-40 ${paymentMethod === option.value ? 'border-indigo-600 bg-indigo-50 ring-1 ring-indigo-600' : 'border-slate-200 bg-white'}`}
                     >
-                      <span className="block text-sm font-bold text-slate-900">{option.title}</span>
-                      <span className="block text-[11px] text-slate-500">{option.hint}</span>
+                      <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl text-lg ${paymentMethod === option.value ? 'bg-indigo-600 text-white' : 'bg-slate-100'}`} aria-hidden>{option.icon}</span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-bold text-slate-900">{option.title}</span>
+                        <span className="block text-[11px] text-slate-500">{option.hint}</span>
+                      </span>
+                      <span className={`h-5 w-5 shrink-0 rounded-full border-2 ${paymentMethod === option.value ? 'border-indigo-600 bg-indigo-600 shadow-[inset_0_0_0_3px_white]' : 'border-slate-300'}`} aria-hidden />
                     </button>
                   ))}
                 </div>
@@ -2209,10 +2186,6 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
               <div className="flex justify-between">
                 <span className="text-slate-500">Documents:</span>
                 <span className="font-bold text-slate-900">{documents.length} file{documents.length > 1 ? 's' : ''} ({totalPagesCount} pages)</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Sets:</span>
-                <span className="font-bold text-slate-900">{globalCopies} set{globalCopies > 1 ? 's' : ''}</span>
               </div>
               {serverQuote?.lineItems?.map((line: any, index: number) => (
                 <div key={`${line.fileName}-${index}`} className="border-t border-slate-200 pt-2 flex items-start justify-between gap-3">
@@ -2254,7 +2227,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
                 onClick={handlePlaceOrder}
                 className="w-full min-h-[48px] bg-[#4D64E6] hover:bg-[#3B50D4] active:bg-[#2C3FA8] text-white font-bold rounded-xl text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
-                {isSubmitting ? 'Placing order…' : pendingOnlineOrder ? 'Retry payment' : paymentMethod === 'ONLINE_RAZORPAY' ? `Pay ${grandTotalPaise !== null ? formatPaise(grandTotalPaise) : ''} & place order` : 'Place order'}
+                {isSubmitting ? 'Placing order…' : pendingOnlineOrder ? 'Retry payment' : paymentMethod === 'ONLINE_RAZORPAY' || paymentMethod === 'UPI_DIRECT' ? `Place order & pay ${grandTotalPaise !== null ? formatPaise(grandTotalPaise) : ''}` : 'Place order'}
               </button>
               {pendingOnlineOrder ? (
                 <button

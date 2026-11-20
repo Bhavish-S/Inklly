@@ -13,6 +13,7 @@ import {
 import { authenticate, requireRole, requirePermission, enforceTenantIsolation, requireActiveSubscription, requireShopOrganizationOwner } from '../middleware/auth';
 import { ShopPaymentCredentialsService } from '../services/shop-payment-credentials';
 import { PrivateFileStorage } from '../services/private-file-storage';
+import { createShopProfileHandlers } from '../services/shop-profiles';
 
 export function createMerchantRoutes(db: DatabaseService, fileStorage: PrivateFileStorage): Router {
   const router = Router();
@@ -75,6 +76,10 @@ export function createMerchantRoutes(db: DatabaseService, fileStorage: PrivateFi
   router.post('/printers', requirePermission('printers:manage'), controller.addPrinter);
   router.put('/printers/:id/default', requirePermission('printers:manage'), controller.setDefaultPrinter);
   router.put('/printers/:id', requirePermission('printers:manage'), controller.updatePrinter);
+
+  const shopProfile = createShopProfileHandlers(db);
+  router.get('/shop-profile', requirePermission('settings:view'), shopProfile.get);
+  router.put('/shop-profile', requirePermission('settings:manage'), shopProfile.update);
 
   router.get('/settings', requirePermission('settings:view'), controller.getSettings);
   router.put('/settings', requirePermission('settings:manage'), controller.updateSettings);

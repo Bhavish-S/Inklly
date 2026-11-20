@@ -24,6 +24,7 @@ const MerchantAppView = lazy(() => import('./views/MerchantAppView').then((modul
 const PlatformAdminView = lazy(() => import('./views/PlatformAdminView').then((module) => ({ default: module.PlatformAdminView })));
 const NowServingBoard = lazy(() => import('./components/NowServingBoard').then((module) => ({ default: module.NowServingBoard })));
 const DeveloperPortalView = lazy(() => import('./views/DeveloperPortalView').then((module) => ({ default: module.DeveloperPortalView })));
+const FindShopsPage = lazy(() => import('./pages/FindShopsPage').then((module) => ({ default: module.FindShopsPage })));
 
 // A showcase shop for marketing demo links. Production builds set
 // VITE_DEFAULT_SHOP_CODE to a real demo shop; customers never fall back to it.
@@ -115,6 +116,7 @@ export const App: React.FC = () => {
     '/franchise',
     '/how-it-works',
     '/pricing',
+    '/shops',
     '/contact',
     '/login',
     '/register',
@@ -177,6 +179,9 @@ export const App: React.FC = () => {
         {currentPath === '/pricing' && (
           <PricingPage onNavigate={navigate} />
         )}
+
+        {/* Find a print shop near you (map) */}
+        {currentPath === '/shops' && <FindShopsPage onNavigate={navigate} />}
 
         {/* Route 7: Contact */}
         {currentPath === '/contact' && (

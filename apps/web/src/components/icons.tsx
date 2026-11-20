@@ -11,78 +11,22 @@ export interface LogoProps {
   onClick?: () => void;
 }
 
-export const InkllyMark: React.FC<{ size?: number; className?: string }> = ({ size = 32, className = '' }) => (
-  <svg
-    width={size}
-    height={size}
-    viewBox="0 0 36 36"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-    className={className}
-    style={{ filter: 'drop-shadow(0 4px 10px rgba(67, 97, 238, 0.32))' }}
-  >
-    <defs>
-      <linearGradient id="inkShieldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stopColor="#4361EE" />
-        <stop offset="50%" stopColor="#4F46E5" />
-        <stop offset="100%" stopColor="#7928CA" />
-      </linearGradient>
-      <linearGradient id="sheetFrontGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stopColor="#FFFFFF" />
-        <stop offset="100%" stopColor="#F1F5F9" />
-      </linearGradient>
-      <linearGradient id="inkDropGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stopColor="#00DFD8" />
-        <stop offset="50%" stopColor="#38BDF8" />
-        <stop offset="100%" stopColor="#3B82F6" />
-      </linearGradient>
-      <linearGradient id="laserBeamGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-        <stop offset="0%" stopColor="#00DFD8" stopOpacity="0.8" />
-        <stop offset="100%" stopColor="#4361EE" stopOpacity="0.2" />
-      </linearGradient>
-    </defs>
-
-    {/* Modern Squircle Badge with Ambient Glow */}
-    <rect x="2" y="2" width="32" height="32" rx="9" fill="url(#inkShieldGrad)" />
-
-    {/* Specular Highlight along top edge */}
-    <path
-      d="M7 3.5C4.5 3.5 3.5 4.5 3.5 7v1c0-2.5 1-3.5 3.5-3.5h22c2.5 0 3.5 1 3.5 3.5V7c0-2.5-1-3.5-3.5-3.5H7z"
-      fill="white"
-      fillOpacity="0.32"
-    />
-
-    {/* Precision Print Laser Scanning Line */}
-    <rect x="7" y="16" width="22" height="1.2" rx="0.6" fill="url(#laserBeamGrad)" />
-
-    {/* Back Angled Document Sheet */}
-    <rect
-      x="13.5"
-      y="7"
-      width="12"
-      height="16"
-      rx="2"
-      fill="white"
-      fillOpacity="0.38"
-      transform="rotate(9 19.5 15)"
-    />
-
-    {/* Front Crisp Document Sheet */}
-    <rect x="8.5" y="8.5" width="14.5" height="18" rx="2.5" fill="url(#sheetFrontGrad)" />
-
-    {/* Document Content Lines */}
-    <rect x="11.5" y="12.5" width="8.5" height="1.6" rx="0.8" fill="#4361EE" />
-    <rect x="11.5" y="16" width="6" height="1.6" rx="0.8" fill="#6366F1" />
-    <rect x="11.5" y="19.5" width="7" height="1.6" rx="0.8" fill="#93C5FD" />
-
-    {/* Micro High-Precision Ink Jet Droplet with Dynamic 3D Highlight */}
-    <path
-      d="M23.5 17C23.5 17 28.5 21.8 28.5 24.5C28.5 27.2 26.3 29.2 23.5 29.2C20.7 29.2 18.5 27.2 18.5 24.5C18.5 21.8 23.5 17 23.5 17Z"
-      fill="url(#inkDropGrad)"
-    />
-    <circle cx="22.5" cy="23.8" r="1.1" fill="white" fillOpacity="0.9" />
-  </svg>
-);
+export const InkllyMark: React.FC<{ size?: number; className?: string }> = ({ size = 32, className = '' }) => {
+  const id = React.useId().replace(/:/g, '');
+  return (
+    <svg width={size} height={size} viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" className={className} role="img" aria-label="Inklly">
+      <defs>
+        <linearGradient id={`${id}bg`} x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse"><stop offset="0" stopColor="#5B5BF6" /><stop offset="1" stopColor="#7C3AED" /></linearGradient>
+        <linearGradient id={`${id}ink`} x1="20" y1="10" x2="28" y2="21" gradientUnits="userSpaceOnUse"><stop offset="0" stopColor="#22D3EE" /><stop offset="1" stopColor="#0EA5E9" /></linearGradient>
+      </defs>
+      <rect width="48" height="48" rx="13" fill={`url(#${id}bg)`} />
+      <path d="M15 8.5h13.2l7.3 7.3V35a4.5 4.5 0 0 1-4.5 4.5H15A4.5 4.5 0 0 1 10.5 35V13A4.5 4.5 0 0 1 15 8.5Z" fill="#fff" />
+      <path d="M28.2 8.5v4.8a2.5 2.5 0 0 0 2.5 2.5h4.8Z" fill="#C7D2FE" />
+      <rect x="20.4" y="24.2" width="6.8" height="10.6" rx="3.4" fill="#4F46E5" />
+      <path d="M23.8 10s4.2 4.4 4.2 7a4.2 4.2 0 0 1-8.4 0c0-2.6 4.2-7 4.2-7Z" fill={`url(#${id}ink)`} />
+    </svg>
+  );
+};
 
 export const Logo: React.FC<LogoProps> = ({
   size = 28,

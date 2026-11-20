@@ -14,6 +14,7 @@ import {
   ArrowRightIcon,
   CheckIcon,
 } from '../components/icons';
+import { Badge, Button, PageHeader, Toast, cx } from '../components/console-ui';
 
 type DevTab = 'explorer' | 'keys' | 'webhooks' | 'snippets' | 'edge_diagnostics' | 'openapi';
 
@@ -38,10 +39,10 @@ const API_ENDPOINTS: ApiEndpointDef[] = [
     description: 'POST /portal/quote accepts shopId and files with fileName, pageCount, and print options. It does not upload or store a file. For an order, first upload the file, then quote it, and submit using the returned storageKey and exact quote response.',
     headers: { 'Content-Type': 'application/json' },
     defaultBody: {
-      shopId: 'shop-campus-1',
+      shopId: '<your shop id>',
       files: [
         {
-          fileName: 'Final_Year_Project_Report.pdf',
+          fileName: 'document.pdf',
           pageCount: 18,
           options: {
             colorMode: 'bw',
@@ -67,8 +68,8 @@ const API_ENDPOINTS: ApiEndpointDef[] = [
     description: 'Upload accepts shopId, fileName, and Base64 fileData for a valid PDF, JPEG, or PNG. Replace the sample fileData with the actual document bytes encoded as Base64; use the returned storageKey and pageCount in the quote/order flow. This endpoint is documentation-only in this explorer.',
     headers: { 'Content-Type': 'application/json' },
     defaultBody: {
-      shopId: 'shop-campus-1',
-      fileName: 'Project_Report_v2.pdf',
+      shopId: '<your shop id>',
+      fileName: 'document.pdf',
       fileData: '<base64-encoded PDF bytes>',
     },
   },
@@ -81,13 +82,13 @@ const API_ENDPOINTS: ApiEndpointDef[] = [
     description: 'Submit only after POST /portal/upload returns a storageKey and POST /portal/quote returns the current exact quote. Use the same shopId, file options, and storageKey. Replace the quote sample with the exact quote response so the server can reject stale pricing; paymentMethod must be CASH_ON_COLLECTION or ONLINE_RAZORPAY.',
     headers: { 'Content-Type': 'application/json' },
     defaultBody: {
-      shopId: 'shop-campus-1',
-      customerName: 'Aarav Sharma',
-      customerPhone: '+91 98765 43210',
+      shopId: '<your shop id>',
+      customerName: '<customer name>',
+      customerPhone: '<customer phone>',
       paymentMethod: 'CASH_ON_COLLECTION',
       quote: {
         quoteId: '<quote.quoteId>',
-        shopId: 'shop-campus-1',
+        shopId: '<your shop id>',
         currency: 'INR',
         quoteVersion: '<quote.quoteVersion>',
         totalPaise: 1200,
@@ -95,7 +96,7 @@ const API_ENDPOINTS: ApiEndpointDef[] = [
       },
       files: [
         {
-          fileName: 'Project_Report_v2.pdf',
+          fileName: 'document.pdf',
           pageCount: 12,
           storageKey: '<storageKey returned by POST /portal/upload>',
           options: {
@@ -117,10 +118,11 @@ const API_ENDPOINTS: ApiEndpointDef[] = [
     id: 'get_shop',
     domain: 'Customer Portal',
     method: 'GET',
-    path: '/portal/shop/campus1',
+    path: '/portal/shop/{shopCode}',
     summary: 'Fetch Shop Metadata & Online Capabilities',
-    description: 'Retrieves the public shop profile, configured rates, portal options, and whether online payment is configured for customer QR intake.',
+    description: 'Retrieves the public shop profile, configured rates, portal options, and whether online payment is configured for customer QR intake. Put the shop code from the shop QR link in the body below; it is sent as the path parameter.',
     headers: {},
+    defaultBody: { shopCode: '<shop code from the QR link>' },
   },
   {
     id: 'merchant_orders',
@@ -216,13 +218,13 @@ export const DeveloperPortalView: React.FC<DeveloperPortalProps> = ({ onNavigate
   const [webhookPayloadJson, setWebhookPayloadJson] = useState(
     JSON.stringify(
       {
-        eventId: 'evt_20261025_00918',
+        eventId: '<eventId>',
         eventType: 'order.created',
         timestamp: new Date().toISOString(),
         data: {
-          orderId: 'ord_example',
-          orderNumber: 'INK-20261029-EXAMPLE',
-          shopId: 'shop-campus-1',
+          orderId: '<orderId>',
+          orderNumber: '<orderNumber>',
+          shopId: '<your shop id>',
           status: 'AWAITING_REVIEW',
           totalAmountPaise: 1200,
           currency: 'INR',
@@ -276,8 +278,8 @@ export const DeveloperPortalView: React.FC<DeveloperPortalProps> = ({ onNavigate
       setLoading(true);
       const [spec, kList, wList] = await Promise.all([
         api.getOpenApiSpec().catch(() => null),
-        api.getApiKeys().catch(() => []),
-        api.getWebhooks().catch(() => []),
+        externalApiAccessEnabled ? api.getApiKeys().catch(() => []) : Promise.resolve([]),
+        externalApiAccessEnabled ? api.getWebhooks().catch(() => []) : Promise.resolve([]),
       ]);
       setOpenApiSpec(spec);
       setKeys(Array.isArray(kList) ? kList : []);
@@ -321,7 +323,7 @@ export const DeveloperPortalView: React.FC<DeveloperPortalProps> = ({ onNavigate
           status: 200,
           statusText: 'OK',
           timeMs,
-          headers: { 'Content-Type': 'application/json', 'X-Inklly-Engine': 'IntegerPaise-v1' },
+          headers: { 'Content-Type': 'application/json' },
           body: res,
         });
       } else if (selectedEndpoint.id === 'submit_order') {
@@ -331,11 +333,13 @@ export const DeveloperPortalView: React.FC<DeveloperPortalProps> = ({ onNavigate
           status: 201,
           statusText: 'Created',
           timeMs,
-          headers: { 'Content-Type': 'application/json', 'X-Inklly-Order-Id': res.order?.id || 'ord-new' },
+          headers: { 'Content-Type': 'application/json' },
           body: res,
         });
       } else if (selectedEndpoint.id === 'get_shop') {
-        const res = await api.getShop('campus1');
+        const shopCode = typeof parsedBody?.shopCode === 'string' ? parsedBody.shopCode.trim() : '';
+        if (!shopCode || shopCode.startsWith('<')) throw new Error('Enter a real shop code in the request body first.');
+        const res = await api.getShop(encodeURIComponent(shopCode));
         const timeMs = Math.round(performance.now() - start);
         setExecutionResult({
           status: 200,
@@ -367,12 +371,12 @@ export const DeveloperPortalView: React.FC<DeveloperPortalProps> = ({ onNavigate
       } else {
         throw new Error('This endpoint is documented but is not executable from this explorer.');
       }
-      triggerToast(`Request completed in ${Math.round(performance.now() - start)}ms (HTTP 200)`);
+      triggerToast(`Request completed in ${Math.round(performance.now() - start)} ms`);
     } catch (err: any) {
       const timeMs = Math.round(performance.now() - start);
       setExecutionResult({
-        status: 500,
-        statusText: 'Internal Error',
+        status: 0,
+        statusText: 'Request failed',
         timeMs,
         headers: { 'Content-Type': 'application/json' },
         body: { error: err.message || 'Execution error' },
@@ -646,99 +650,76 @@ class Program
     triggerToast(`${label} copied to clipboard!`);
   };
 
+  const navItems: Array<{ id: DevTab; label: string; hint: string; icon: React.ReactNode; locked: boolean }> = [
+    { id: 'explorer', label: 'API explorer', hint: 'Try requests', icon: <CodeIcon size={18} />, locked: false },
+    { id: 'keys', label: 'API keys', hint: externalApiAccessEnabled ? 'Scoped access' : 'Needs approval', icon: <LockIcon size={18} />, locked: !externalApiAccessEnabled },
+    { id: 'webhooks', label: 'Webhooks', hint: externalApiAccessEnabled ? 'Event delivery' : 'Needs approval', icon: <SlidersIcon size={18} />, locked: !externalApiAccessEnabled },
+    { id: 'snippets', label: 'Code samples', hint: 'cURL, Node, Python, .NET', icon: <CopyIcon size={18} />, locked: false },
+    { id: 'edge_diagnostics', label: 'Print agent', hint: 'Local check on :8765', icon: <PrinterIcon size={18} />, locked: false },
+    { id: 'openapi', label: 'OpenAPI', hint: 'Download the contract', icon: <ShieldIcon size={18} />, locked: false },
+  ];
+
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white px-5 py-2.5 rounded-full shadow-2xl flex items-center gap-3 border border-slate-700 animate-in fade-in slide-in-from-top-4 duration-200">
-          <CheckCircleIcon size={16} className="text-emerald-400 shrink-0" />
-          <span className="text-xs font-semibold">{toastMessage}</span>
-        </div>
-      )}
-
-      {/* Header Banner */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#4D64E6] to-indigo-600 flex items-center justify-center text-white shadow-md shadow-[#4D64E6]/25 shrink-0">
-            <CodeIcon size={26} />
-          </div>
-          <div>
-            <div className="flex items-center gap-2.5">
-              <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-                Developer & Integration Hub
-              </h1>
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-50 dark:bg-indigo-950/60 text-[#4D64E6] border border-indigo-200 dark:border-indigo-800">
-                OpenAPI 3.0.3 · {API_BASE}
-              </span>
+    <div className="min-h-full bg-ink-app dark:bg-ink-dark-app">
+      <Toast message={toastMessage} />
+      <div className="mx-auto max-w-7xl px-4 py-5 sm:px-6 lg:grid lg:grid-cols-[14.5rem_minmax(0,1fr)] lg:gap-8 lg:py-8">
+        <aside className="lg:sticky lg:top-6 lg:self-start">
+          <div className="mb-4 hidden items-center gap-3 lg:flex">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand text-white"><CodeIcon size={20} /></span>
+            <div>
+              <p className="text-sm font-bold text-ink-text dark:text-ink-dark-text">Developers</p>
+              <p className="text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary">Inklly API v1</p>
             </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              Internal API catalogue, read-only local-agent diagnostics, and gated external integration tools.
+          </div>
+          <nav aria-label="Developer portal sections" className="-mx-4 mb-5 overflow-x-auto px-4 lg:mx-0 lg:mb-0 lg:overflow-visible lg:px-0">
+            <ul className="flex gap-1.5 lg:flex-col lg:gap-0.5">
+              {navItems.map((tab) => (
+                <li key={tab.id}>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab(tab.id)}
+                    disabled={tab.locked}
+                    aria-current={activeTab === tab.id ? 'page' : undefined}
+                    title={tab.locked ? 'External API access needs platform approval' : undefined}
+                    className={cx(
+                      'flex w-full items-center gap-2.5 whitespace-nowrap rounded-xl px-3 py-2 text-left text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50',
+                      activeTab === tab.id
+                        ? 'bg-brand text-white shadow-sm lg:bg-white lg:text-brand lg:ring-1 lg:ring-ink-border dark:lg:bg-ink-dark-surface dark:lg:text-brand-dark dark:lg:ring-ink-dark-border'
+                        : 'bg-white text-ink-text-secondary ring-1 ring-ink-border hover:text-ink-text lg:bg-transparent lg:ring-0 lg:hover:bg-white dark:bg-ink-dark-surface dark:text-ink-dark-text-secondary dark:ring-ink-dark-border dark:hover:text-ink-dark-text lg:dark:bg-transparent lg:dark:hover:bg-ink-dark-surface',
+                    )}
+                  >
+                    <span className="shrink-0" aria-hidden>{tab.icon}</span>
+                    <span className="min-w-0">
+                      <span className="block">{tab.label}</span>
+                      <span className={cx('hidden text-[11px] font-normal lg:block', activeTab === tab.id ? 'text-brand/70 dark:text-brand-dark/70' : 'text-ink-text-muted dark:text-ink-dark-text-muted')}>{tab.hint}</span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        </aside>
+
+        <main className="min-w-0 space-y-5">
+          <PageHeader
+            title={navItems.find((item) => item.id === activeTab)?.label || 'Developers'}
+            description="Build on the Inklly API: explore endpoints, manage keys and webhooks, and check the local print agent."
+            actions={<>
+              <Badge tone={openApiSpec ? 'success' : loading ? 'neutral' : 'warning'} dot>{loading ? 'Checking API…' : openApiSpec ? 'API contract loaded' : 'API contract unavailable'}</Badge>
+              <Button size="sm" onClick={handlePingAllIntegrations} busy={isPingingIntegrations}><RotateCwIcon size={14} />Check API</Button>
+              <Button size="sm" onClick={handleDownloadOpenApi}><DownloadIcon size={14} />OpenAPI JSON</Button>
+            </>}
+          />
+          <p className="flex flex-wrap items-center gap-2 text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary">
+            <span>API base URL</span>
+            <code className="rounded-lg bg-white px-2 py-1 font-mono text-ink-text ring-1 ring-ink-border dark:bg-ink-dark-surface dark:text-ink-dark-text dark:ring-ink-dark-border">{API_BASE}</code>
+            <button type="button" className="font-semibold text-brand hover:underline dark:text-brand-dark" onClick={() => copyToClipboard(API_BASE, 'API base URL')}>Copy</button>
+          </p>
+          {!externalApiAccessEnabled && (
+            <p className="rounded-xl bg-status-info-bg px-4 py-3 text-sm text-status-info dark:bg-status-dark-info-bg dark:text-status-dark-info">
+              API keys and webhooks are switched off until external API access is approved for this deployment. The explorer, code samples and OpenAPI contract still work.
             </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={handleDownloadOpenApi}
-            className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs"
-          >
-            <DownloadIcon size={15} />
-            <span>OpenAPI Spec (JSON)</span>
-          </button>
-          <div className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold ${openApiSpec ? 'bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400' : 'bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600'}`}>
-            <span className={`w-2 h-2 rounded-full ${openApiSpec ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-            <span>{loading ? 'Checking API contract…' : openApiSpec ? 'API contract loaded' : 'API contract unavailable'}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Environment & Gateway Selector Controls */}
-      <div className="bg-slate-100 dark:bg-slate-800/60 p-3 rounded-2xl border border-slate-200/80 dark:border-slate-800 flex flex-col md:flex-row items-center justify-between gap-3 text-xs">
-        <div className="flex items-center gap-2">
-          <span className="font-extrabold uppercase text-[10px] tracking-wider text-slate-400">Configured API target:</span>
-          <code className="font-mono text-slate-700 dark:text-slate-300">{API_BASE}</code>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={handlePingAllIntegrations}
-            disabled={isPingingIntegrations}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 rounded-xl font-bold cursor-pointer transition-all shadow-xs"
-          >
-            <RotateCwIcon size={12} className={isPingingIntegrations ? 'animate-spin' : ''} />
-            <span>Check API Catalogue</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Tab Navigation */}
-      <div className="flex border-b border-slate-200 dark:border-slate-800 overflow-x-auto scrollbar-none gap-2">
-        {[
-          { id: 'explorer', label: 'API Explorer & Try-It-Out', icon: <CodeIcon size={16} /> },
-          { id: 'keys', label: externalApiAccessEnabled ? 'Scoped API Keys' : 'API Keys · approval required', icon: <LockIcon size={16} /> },
-          { id: 'webhooks', label: externalApiAccessEnabled ? 'Webhook Tools' : 'Webhooks · approval required', icon: <SlidersIcon size={16} /> },
-          { id: 'snippets', label: 'SDK Code Snippets', icon: <CopyIcon size={16} /> },
-          { id: 'edge_diagnostics', label: 'Edge Spooler Daemon (:8765)', icon: <PrinterIcon size={16} /> },
-          { id: 'openapi', label: 'OpenAPI Contract Tree', icon: <ShieldIcon size={16} /> },
-        ].map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => setActiveTab(tab.id as DevTab)}
-            disabled={!externalApiAccessEnabled && ['keys', 'webhooks'].includes(tab.id)}
-            className={`flex items-center gap-2 px-4 py-3 font-semibold text-xs whitespace-nowrap border-b-2 transition-all cursor-pointer ${
-              activeTab === tab.id
-                ? 'border-brand text-brand bg-brand-soft/50 dark:bg-brand-dark-soft/30 font-bold'
-                : 'border-transparent text-ink-text-secondary dark:text-ink-dark-text-secondary hover:text-ink-text dark:hover:text-ink-dark-text'
-            } disabled:cursor-not-allowed disabled:opacity-50`}
-          >
-            {tab.icon}
-            <span>{tab.label}</span>
-          </button>
-        ))}
-      </div>
+          )}
 
       {/* ═══════════════════════════════════════════════════════════════
           TAB 1: INTERACTIVE API EXPLORER ("TRY IT OUT")
@@ -747,8 +728,8 @@ class Program
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Left Column: Endpoints Catalog (5 cols) */}
           <div className="lg:col-span-5 space-y-3">
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs">
-              <h2 className="text-xs font-black uppercase tracking-wider text-slate-400 mb-3">
+            <div className="bg-white dark:bg-ink-dark-surface border border-ink-border dark:border-ink-dark-border rounded-2xl p-4 shadow-sm">
+              <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-text-muted mb-3">
                 API Endpoint Catalog
               </h2>
               <div className="space-y-2">
@@ -768,8 +749,8 @@ class Program
                       onClick={() => setSelectedEndpoint(ep)}
                       className={`w-full text-left p-3 rounded-xl border transition-all cursor-pointer flex flex-col gap-1.5 ${
                         isSelected
-                          ? 'border-[#4D64E6] bg-indigo-50/70 dark:bg-indigo-950/40 shadow-xs'
-                          : 'border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                          ? 'border-[#4D64E6] bg-indigo-50/70 dark:bg-indigo-950/40 shadow-sm'
+                          : 'border-ink-border dark:border-ink-dark-border hover:bg-slate-50 dark:hover:bg-slate-800/50'
                       }`}
                     >
                       <div className="flex items-center justify-between gap-2">
@@ -783,7 +764,7 @@ class Program
                         </div>
                         <span className="text-[10px] font-bold text-slate-400 shrink-0">{ep.domain}</span>
                       </div>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-1">
+                      <p className="text-[11px] text-ink-text-secondary dark:text-ink-dark-text-secondary line-clamp-1">
                         {ep.summary}
                       </p>
                     </button>
@@ -795,8 +776,8 @@ class Program
 
           {/* Right Column: Try-It-Out Console (7 cols) */}
           <div className="lg:col-span-7 space-y-4">
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+            <div className="bg-white dark:bg-ink-dark-surface border border-ink-border dark:border-ink-dark-border rounded-2xl p-5 shadow-sm space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-ink-border dark:border-ink-dark-border">
                 <div>
                   <div className="flex items-center gap-2">
                     <span
@@ -808,18 +789,18 @@ class Program
                     >
                       {selectedEndpoint.method}
                     </span>
-                    <h3 className="font-extrabold text-sm text-slate-900 dark:text-white">
+                    <h3 className="font-extrabold text-sm text-ink-text dark:text-ink-dark-text">
                       {selectedEndpoint.summary}
                     </h3>
                   </div>
-                  <p className="text-xs text-slate-500 mt-1">{selectedEndpoint.description}</p>
+                  <p className="text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary mt-1">{selectedEndpoint.description}</p>
                 </div>
 
                 <button
                   type="button"
                   onClick={handleExecuteRequest}
                   disabled={isExecuting || !canExecuteSelectedEndpoint}
-                  className="flex items-center gap-2 px-5 py-2.5 bg-[#4D64E6] hover:bg-indigo-600 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-[#4D64E6]/25 cursor-pointer disabled:opacity-50"
+                  className="flex items-center gap-2 px-5 py-2.5 bg-brand hover:bg-brand-hover text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer disabled:opacity-50"
                 >
                   {isExecuting ? <RotateCwIcon size={14} className="animate-spin" /> : <ArrowRightIcon size={14} />}
                   <span>{canExecuteSelectedEndpoint ? 'Execute Request' : 'Not executable here'}</span>
@@ -832,15 +813,15 @@ class Program
               )}
 
               {/* Endpoint URL Bar */}
-              <div className="flex items-center gap-2 bg-slate-50 dark:bg-slate-800/80 p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 font-mono text-xs">
-                <span className="font-bold text-[#4D64E6] shrink-0">{selectedEndpoint.method}</span>
+              <div className="flex items-center gap-2 bg-ink-surface-subtle dark:bg-ink-dark-elevated/80 p-2.5 rounded-xl border border-ink-border-strong dark:border-ink-dark-border-strong font-mono text-xs">
+                <span className="font-bold text-brand shrink-0">{selectedEndpoint.method}</span>
                 <span className="text-slate-400 shrink-0">{API_BASE}</span>
                 <span className="font-bold text-slate-800 dark:text-slate-200">{selectedEndpoint.path}</span>
               </div>
 
               {/* Request Headers Editor */}
               <div>
-                <label className="block text-[11px] font-extrabold uppercase tracking-wider text-slate-400 mb-1.5">
+                <label className="block text-[11px] font-semibold uppercase tracking-wide text-ink-text-muted mb-1.5">
                   Request Headers (JSON)
                 </label>
                 <textarea
@@ -854,7 +835,7 @@ class Program
               {/* Request Body Editor (if POST/PATCH) */}
               {selectedEndpoint.method !== 'GET' && (
                 <div>
-                  <label className="block text-[11px] font-extrabold uppercase tracking-wider text-slate-400 mb-1.5">
+                  <label className="block text-[11px] font-semibold uppercase tracking-wide text-ink-text-muted mb-1.5">
                     Request Payload Body (JSON)
                   </label>
                   <textarea
@@ -873,10 +854,10 @@ class Program
                     <div className="flex items-center gap-3">
                       <span
                         className={`px-2 py-0.5 rounded-md font-extrabold ${
-                          executionResult.status < 300 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
+                          executionResult.status > 0 && executionResult.status < 300 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
                         }`}
                       >
-                        HTTP {executionResult.status} {executionResult.statusText}
+                        {executionResult.status ? `HTTP ${executionResult.status} ` : ''}{executionResult.statusText}
                       </span>
                       <span className="text-slate-400">{executionResult.timeMs} ms</span>
                     </div>
@@ -905,19 +886,19 @@ class Program
       {activeTab === 'keys' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Left Column: Generate Key Form (5 cols) */}
-          <div className="lg:col-span-5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-4">
+          <div className="lg:col-span-5 bg-white dark:bg-ink-dark-surface border border-ink-border dark:border-ink-dark-border rounded-2xl p-5 shadow-sm space-y-4">
             <div>
-              <h2 className="text-sm font-extrabold text-slate-900 dark:text-white">
+              <h2 className="text-sm font-bold text-ink-text dark:text-ink-dark-text">
                 Generate Scoped API Key
               </h2>
-              <p className="text-xs text-slate-500 mt-0.5">
+              <p className="text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary mt-0.5">
                 Create cryptographically secure tokens bound to least-privilege scopes for external POS or ERP billing.
               </p>
             </div>
 
             <form onSubmit={handleCreateKey} className="space-y-4">
               <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                <label className="block text-xs font-bold text-ink-text-secondary dark:text-ink-dark-text-secondary mb-1">
                   Key Name / Integration Label
                 </label>
                 <input
@@ -926,12 +907,12 @@ class Program
                   placeholder="e.g. Campus POS Terminal 1"
                   value={newKeyName}
                   onChange={(e) => setNewKeyName(e.target.value)}
-                  className="w-full text-xs p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100"
+                  className="w-full text-xs p-2.5 rounded-xl border border-ink-border-strong dark:border-ink-dark-border-strong bg-ink-surface-subtle dark:bg-ink-dark-elevated text-slate-800 dark:text-slate-100"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                <label className="block text-xs font-bold text-ink-text-secondary dark:text-ink-dark-text-secondary mb-1">
                   Environment Context
                 </label>
                 <div className="grid grid-cols-2 gap-2">
@@ -940,8 +921,8 @@ class Program
                     onClick={() => setNewKeyEnv('TEST')}
                     className={`py-2 text-xs font-bold rounded-xl border text-center transition-all cursor-pointer ${
                       newKeyEnv === 'TEST'
-                        ? 'border-[#4D64E6] bg-indigo-50 dark:bg-indigo-950 text-[#4D64E6]'
-                        : 'border-slate-200 dark:border-slate-700 text-slate-500'
+                        ? 'border-[#4D64E6] bg-indigo-50 dark:bg-indigo-950 text-brand'
+                        : 'border-ink-border-strong dark:border-ink-dark-border-strong text-slate-500'
                     }`}
                   >
                     Sandbox / Test (ink_test_...)
@@ -952,7 +933,7 @@ class Program
                     className={`py-2 text-xs font-bold rounded-xl border text-center transition-all cursor-pointer ${
                       newKeyEnv === 'LIVE'
                         ? 'border-emerald-600 bg-emerald-50 dark:bg-emerald-950 text-emerald-700'
-                        : 'border-slate-200 dark:border-slate-700 text-slate-500'
+                        : 'border-ink-border-strong dark:border-ink-dark-border-strong text-slate-500'
                     }`}
                   >
                     Production (ink_live_...)
@@ -961,10 +942,10 @@ class Program
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                <label className="block text-xs font-bold text-ink-text-secondary dark:text-ink-dark-text-secondary mb-1">
                   Authorized Resource Scopes
                 </label>
-                <div className="space-y-1.5 bg-slate-50 dark:bg-slate-800/50 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                <div className="space-y-1.5 bg-ink-surface-subtle dark:bg-ink-dark-elevated/50 p-3 rounded-xl border border-ink-border dark:border-ink-dark-border">
                   {[
                     { id: 'orders:read', label: 'orders:read (List & inspect print orders)' },
                     { id: 'orders:write', label: 'orders:write (Create & modify order statuses)' },
@@ -986,9 +967,9 @@ class Program
                               setSelectedScopes(selectedScopes.filter((s) => s !== scope.id));
                             }
                           }}
-                          className="rounded text-[#4D64E6]"
+                          className="rounded text-brand"
                         />
-                        <span className="font-mono text-slate-700 dark:text-slate-300">{scope.label}</span>
+                        <span className="font-mono text-ink-text-secondary dark:text-ink-dark-text-secondary">{scope.label}</span>
                       </label>
                     );
                   })}
@@ -997,7 +978,7 @@ class Program
 
               <button
                 type="submit"
-                className="w-full py-2.5 bg-[#4D64E6] hover:bg-indigo-600 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-[#4D64E6]/25 cursor-pointer"
+                className="w-full py-2.5 bg-brand hover:bg-brand-hover text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
               >
                 Generate Scoped Key
               </button>
@@ -1005,10 +986,10 @@ class Program
           </div>
 
           {/* Right Column: Active Keys Table (7 cols) */}
-          <div className="lg:col-span-7 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xs overflow-hidden">
-            <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
+          <div className="lg:col-span-7 bg-white dark:bg-ink-dark-surface border border-ink-border dark:border-ink-dark-border rounded-2xl shadow-sm overflow-hidden">
+            <div className="p-4 border-b border-ink-border dark:border-ink-dark-border flex justify-between items-center">
               <div>
-                <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">
+                <h3 className="text-sm font-bold text-ink-text dark:text-ink-dark-text">
                   Active API Credentials ({keys.length})
                 </h3>
                 <p className="text-xs text-slate-400">Tokens hashed with SHA-256 server-side</p>
@@ -1018,13 +999,13 @@ class Program
 
             <div className="divide-y divide-slate-100 dark:divide-slate-800">
               {keys.length === 0 && (
-                <p className="p-5 text-xs text-slate-500" role="status">No API key records are available in this environment.</p>
+                <p className="p-5 text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary" role="status">No API key records are available in this environment.</p>
               )}
               {keys.map((k) => (
                 <div key={k.id} className="p-4 flex items-center justify-between gap-4 hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
-                      <span className="font-bold text-xs text-slate-900 dark:text-white">{k.keyName}</span>
+                      <span className="font-bold text-xs text-ink-text dark:text-ink-dark-text">{k.keyName}</span>
                       <span
                         className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
                           k.environment === 'LIVE'
@@ -1035,7 +1016,7 @@ class Program
                         {k.environment}
                       </span>
                     </div>
-                    <div className="font-mono text-xs text-[#4D64E6] font-semibold">{k.keyPrefix}••••••••</div>
+                    <div className="font-mono text-xs text-brand font-semibold">{k.keyPrefix}••••••••</div>
                     <div className="flex flex-wrap gap-1 mt-1">
                       {k.scopes?.map((sc: string) => (
                         <span key={sc} className="px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-[10px] text-slate-500 font-mono">
@@ -1064,14 +1045,14 @@ class Program
       {/* Generated Secret One-Time Reveal Modal */}
       {showKeyModal && generatedSecret && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl">
+          <div className="bg-white dark:bg-ink-dark-surface border border-ink-border dark:border-ink-dark-border rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl">
             <div className="flex items-center gap-3 text-amber-600">
               <ShieldIcon size={24} />
-              <h3 className="font-extrabold text-base text-slate-900 dark:text-white">
+              <h3 className="font-extrabold text-base text-ink-text dark:text-ink-dark-text">
                 Store Your API Key Securely
               </h3>
             </div>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary">
               For security, this secret token will <strong>never be shown again</strong>. Store it in your environment variables or password vault immediately.
             </p>
             <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 font-mono text-xs text-slate-800 dark:text-slate-200 break-all select-all flex justify-between items-center gap-2">
@@ -1079,7 +1060,7 @@ class Program
               <button
                 type="button"
                 onClick={() => copyToClipboard(generatedSecret, 'API Secret')}
-                className="text-[#4D64E6] hover:text-indigo-600 p-1 cursor-pointer"
+                className="text-brand hover:text-indigo-600 p-1 cursor-pointer"
               >
                 <CopyIcon size={16} />
               </button>
@@ -1090,7 +1071,7 @@ class Program
                 setShowKeyModal(false);
                 setGeneratedSecret(null);
               }}
-              className="w-full py-2.5 bg-[#4D64E6] hover:bg-indigo-600 text-white font-bold text-xs rounded-xl cursor-pointer"
+              className="w-full py-2.5 bg-brand hover:bg-brand-hover text-white font-bold text-xs rounded-xl cursor-pointer"
             >
               I have stored this token safely
             </button>
@@ -1100,15 +1081,15 @@ class Program
 
       {generatedWebhookSecret && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl">
+          <div className="bg-white dark:bg-ink-dark-surface border border-ink-border dark:border-ink-dark-border rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl">
             <div className="flex items-center gap-3 text-amber-600">
               <ShieldIcon size={24} />
-              <h3 className="font-extrabold text-base text-slate-900 dark:text-white">Save your webhook signing secret</h3>
+              <h3 className="font-extrabold text-base text-ink-text dark:text-ink-dark-text">Save your webhook signing secret</h3>
             </div>
-            <p className="text-xs text-slate-500">This secret is shown once. Store it securely and use it to verify each `X-Inklly-Signature` header.</p>
+            <p className="text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary">This secret is shown once. Store it securely and use it to verify each `X-Inklly-Signature` header.</p>
             <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 font-mono text-xs text-slate-800 dark:text-slate-200 break-all select-all flex justify-between items-center gap-2">
               <span>{generatedWebhookSecret}</span>
-              <button type="button" aria-label="Copy webhook secret" onClick={() => copyToClipboard(generatedWebhookSecret, 'Webhook secret')} className="text-[#4D64E6] p-1">
+              <button type="button" aria-label="Copy webhook secret" onClick={() => copyToClipboard(generatedWebhookSecret, 'Webhook secret')} className="text-brand p-1">
                 <CopyIcon size={16} />
               </button>
             </div>
@@ -1124,12 +1105,12 @@ class Program
       ═══════════════════════════════════════════════════════════════ */}
       {activeTab === 'webhooks' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <form onSubmit={handleCreateWebhook} className="lg:col-span-12 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-4">
+          <form onSubmit={handleCreateWebhook} className="lg:col-span-12 bg-white dark:bg-ink-dark-surface border border-ink-border dark:border-ink-dark-border rounded-2xl p-5 shadow-sm space-y-4">
             <div>
-              <h2 className="text-sm font-extrabold text-slate-900 dark:text-white">Register a webhook destination</h2>
-              <p className="text-xs text-slate-500 mt-1">Inklly sends signed event envelopes to HTTPS destinations with public DNS addresses. The signing secret is shown once.</p>
+              <h2 className="text-sm font-bold text-ink-text dark:text-ink-dark-text">Register a webhook destination</h2>
+              <p className="text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary mt-1">Inklly sends signed event envelopes to HTTPS destinations with public DNS addresses. The signing secret is shown once.</p>
             </div>
-            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+            <label className="block text-xs font-bold text-ink-text-secondary dark:text-ink-dark-text-secondary">
               Destination URL
               <input
                 type="url"
@@ -1142,7 +1123,7 @@ class Program
               />
             </label>
             <fieldset>
-              <legend className="mb-2 text-xs font-bold text-slate-700 dark:text-slate-300">Events</legend>
+              <legend className="mb-2 text-xs font-bold text-ink-text-secondary dark:text-ink-dark-text-secondary">Events</legend>
               <div className="flex flex-wrap gap-3">
                 {['order.created', 'order.status_changed', 'payment.succeeded'].map((eventType) => (
                   <label key={eventType} className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs dark:border-slate-700">
@@ -1165,19 +1146,19 @@ class Program
           </form>
 
           {/* Left Column: Dispatch Simulator (6 cols) */}
-          <div className="lg:col-span-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-4">
+          <div className="lg:col-span-6 bg-white dark:bg-ink-dark-surface border border-ink-border dark:border-ink-dark-border rounded-2xl p-5 shadow-sm space-y-4">
             <div>
-              <h2 className="text-sm font-extrabold text-slate-900 dark:text-white">
+              <h2 className="text-sm font-bold text-ink-text dark:text-ink-dark-text">
                 Webhook Event Dispatch Simulator
               </h2>
-              <p className="text-xs text-slate-500 mt-0.5">
+              <p className="text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary mt-0.5">
                 Preview a synthetic event payload. This tool does not contact a destination or create a signature.
               </p>
             </div>
 
             <div className="space-y-3">
               <div className="grid grid-cols-1 gap-3">
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  <label className="block text-xs font-bold text-ink-text-secondary dark:text-ink-dark-text-secondary mb-1">
                     Event Type
                   </label>
                   <select
@@ -1188,21 +1169,21 @@ class Program
                       setWebhookPayloadJson(
                         JSON.stringify(
                           {
-                            eventId: `evt_${Date.now()}`,
+                            eventId: '<eventId>',
                             eventType,
                             timestamp: new Date().toISOString(),
                             data: eventType === 'order.created'
                               ? {
-                                orderId: 'ord_example', orderNumber: 'INK-20261029-EXAMPLE', shopId: 'shop-campus-1',
+                                orderId: '<orderId>', orderNumber: '<orderNumber>', shopId: '<your shop id>',
                                 status: 'AWAITING_REVIEW', totalAmountPaise: 1200, currency: 'INR', createdAt: new Date().toISOString(),
                               }
                               : eventType === 'order.status_changed'
                                 ? {
-                                  orderId: 'ord_example', orderNumber: 'INK-20261029-EXAMPLE', shopId: 'shop-campus-1',
+                                  orderId: '<orderId>', orderNumber: '<orderNumber>', shopId: '<your shop id>',
                                   previousStatus: 'IN_PROGRESS', status: 'READY_FOR_COLLECTION', updatedAt: new Date().toISOString(),
                                 }
                                 : {
-                                  paymentId: 'pay_example', orderId: 'ord_example', amountPaise: 1200,
+                                  paymentId: '<paymentId>', orderId: '<orderId>', amountPaise: 1200,
                                   currency: 'INR', provider: 'MANUAL_CASH', capturedAt: new Date().toISOString(),
                                 },
                           },
@@ -1211,7 +1192,7 @@ class Program
                         )
                       );
                     }}
-                    className="w-full text-xs p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
+                    className="w-full text-xs p-2.5 rounded-xl border border-ink-border-strong dark:border-ink-dark-border-strong bg-ink-surface-subtle dark:bg-ink-dark-elevated"
                   >
                     <option value="order.created">order.created</option>
                     <option value="order.status_changed">order.status_changed</option>
@@ -1220,7 +1201,7 @@ class Program
               </div>
 
               <div>
-                <label className="block text-[11px] font-extrabold uppercase tracking-wider text-slate-400 mb-1.5">
+                <label className="block text-[11px] font-semibold uppercase tracking-wide text-ink-text-muted mb-1.5">
                   Payload JSON Preview
                 </label>
                 <textarea
@@ -1234,7 +1215,7 @@ class Program
               <button
                 type="button"
                 onClick={handleDispatchWebhook}
-                className="w-full py-2.5 bg-[#4D64E6] hover:bg-indigo-600 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-[#4D64E6]/25 cursor-pointer flex items-center justify-center gap-2"
+                className="w-full py-2.5 bg-brand hover:bg-brand-hover text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer flex items-center justify-center gap-2"
               >
                 <ArrowRightIcon size={14} />
                 <span>Generate Synthetic Preview</span>
@@ -1243,10 +1224,10 @@ class Program
           </div>
 
           {/* Right Column: Durable Webhook Delivery History (6 cols) */}
-          <div className="lg:col-span-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xs overflow-hidden">
-            <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
+          <div className="lg:col-span-6 bg-white dark:bg-ink-dark-surface border border-ink-border dark:border-ink-dark-border rounded-2xl shadow-sm overflow-hidden">
+            <div className="p-4 border-b border-ink-border dark:border-ink-dark-border flex justify-between items-center">
               <div>
-                <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">
+                <h3 className="text-sm font-bold text-ink-text dark:text-ink-dark-text">
                   Delivery History
                 </h3>
                 <p className="text-xs text-slate-400">Persisted signed delivery attempts for this destination.</p>
@@ -1289,7 +1270,7 @@ class Program
 
             <div className="divide-y divide-slate-100 dark:divide-slate-800">
               {webhookHistory.length === 0 && (
-                <p className="p-5 text-xs text-slate-500" role="status">No webhook deliveries have been recorded for this destination.</p>
+                <p className="p-5 text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary" role="status">No webhook deliveries have been recorded for this destination.</p>
               )}
               {webhookHistory.map((item) => (
                 <div key={item.deliveryId} className="p-4 space-y-2 hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
@@ -1319,13 +1300,13 @@ class Program
           TAB 4: SDK CODE SNIPPETS
       ═══════════════════════════════════════════════════════════════ */}
       {activeTab === 'snippets' && (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-xs space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
+        <div className="bg-white dark:bg-ink-dark-surface border border-ink-border dark:border-ink-dark-border rounded-2xl p-6 shadow-sm space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-ink-border dark:border-ink-dark-border">
             <div>
-              <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
+              <h2 className="text-base font-bold text-ink-text dark:text-ink-dark-text">
                 Multi-Language Integration Snippets
               </h2>
-              <p className="text-xs text-slate-500 mt-0.5">
+              <p className="text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary mt-0.5">
                 Pre-configured client code for {selectedEndpoint.summary}
               </p>
             </div>
@@ -1338,7 +1319,7 @@ class Program
                   onClick={() => setSnippetLanguage(lang)}
                   className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer uppercase ${
                     snippetLanguage === lang
-                      ? 'bg-white dark:bg-slate-900 text-[#4D64E6] shadow-xs'
+                      ? 'bg-white dark:bg-slate-900 text-brand shadow-sm'
                       : 'text-slate-500 hover:text-slate-900'
                   }`}
                 >
@@ -1370,44 +1351,44 @@ class Program
       {activeTab === 'edge_diagnostics' && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs">
+            <div className="bg-white dark:bg-ink-dark-surface border border-ink-border dark:border-ink-dark-border rounded-2xl p-4 shadow-sm">
               <span className="text-[10px] font-black uppercase text-slate-400">Daemon Architecture</span>
-              <div className="text-base font-extrabold text-slate-900 dark:text-white mt-1">
+              <div className="text-base font-bold text-ink-text dark:text-ink-dark-text mt-1">
                 Loopback HTTP :8765
               </div>
-              <p className="text-xs text-slate-500 mt-1">
+              <p className="text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary mt-1">
                 Receives authenticated print tickets and reports dispatch state. Physical printing is disabled in the current pilot.
               </p>
             </div>
 
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs">
+            <div className="bg-white dark:bg-ink-dark-surface border border-ink-border dark:border-ink-dark-border rounded-2xl p-4 shadow-sm">
               <span className="text-[10px] font-black uppercase text-slate-400">Offline Resilience</span>
-              <div className="text-base font-extrabold text-emerald-600 mt-1">
+              <div className="text-base font-bold text-emerald-600 mt-1">
                 Local SQLite Spooler
               </div>
-              <p className="text-xs text-slate-500 mt-1">
+              <p className="text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary mt-1">
                 Buffered at <code>C:\ProgramData\Inklly\agent_queue.db</code> during internet cuts.
               </p>
             </div>
 
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs">
+            <div className="bg-white dark:bg-ink-dark-surface border border-ink-border dark:border-ink-dark-border rounded-2xl p-4 shadow-sm">
               <span className="text-[10px] font-black uppercase text-slate-400">Driver Compatibility</span>
-              <div className="text-base font-extrabold text-indigo-600 mt-1">
+              <div className="text-base font-bold text-indigo-600 mt-1">
                 Hardware support status
               </div>
-              <p className="text-xs text-slate-500 mt-1">
+              <p className="text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary mt-1">
                 No hardware-tested printer compatibility matrix is available yet.
               </p>
             </div>
           </div>
 
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-xs space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
+          <div className="bg-white dark:bg-ink-dark-surface border border-ink-border dark:border-ink-dark-border rounded-2xl p-6 shadow-sm space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-ink-border dark:border-ink-dark-border">
               <div>
-                <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
+                <h2 className="text-base font-bold text-ink-text dark:text-ink-dark-text">
                   Local Windows Edge Agent Diagnostic Probe
                 </h2>
-                <p className="text-xs text-slate-500 mt-0.5">
+                <p className="text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary mt-0.5">
                   Direct connection check to <code>http://localhost:8765/health</code>
                 </p>
               </div>
@@ -1416,7 +1397,7 @@ class Program
                 type="button"
                 onClick={handleProbeEdgeAgent}
                 disabled={isProbingAgent}
-                className="flex items-center gap-2 px-4 py-2.5 bg-[#4D64E6] hover:bg-indigo-600 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-[#4D64E6]/25 cursor-pointer disabled:opacity-50"
+                className="flex items-center gap-2 px-4 py-2.5 bg-brand hover:bg-brand-hover text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer disabled:opacity-50"
               >
                 <RotateCwIcon size={14} className={isProbingAgent ? 'animate-spin' : ''} />
                 <span>Test Local Daemon Connection</span>
@@ -1425,7 +1406,7 @@ class Program
 
             {edgeProbeResult && (
               <div className="space-y-4">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50 dark:bg-slate-800/40 p-4 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-mono">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-ink-surface-subtle dark:bg-ink-dark-elevated/40 p-4 rounded-xl border border-ink-border-strong dark:border-ink-dark-border-strong text-xs font-mono">
                   <div>
                     <span className="text-slate-400 block text-[10px]">DAEMON STATUS</span>
                     <span className={`font-bold flex items-center gap-1.5 mt-0.5 ${edgeProbeResult.status === 'ONLINE' ? 'text-emerald-600' : 'text-rose-600'}`}>
@@ -1452,12 +1433,12 @@ class Program
                 </div>
 
                 <div>
-                  <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300 mb-2">
+                  <h4 className="text-xs font-bold text-ink-text-secondary dark:text-ink-dark-text-secondary mb-2">
                     Detected Hardware Print Queues:
                   </h4>
                   <div className="space-y-2">
                     {edgeProbeResult.printers.length === 0 && (
-                      <p className="text-xs text-slate-500" role="status">This health response did not include printer inventory.</p>
+                      <p className="text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary" role="status">This health response did not include printer inventory.</p>
                     )}
                     {edgeProbeResult.printers.map((prn) => (
                       <div
@@ -1465,7 +1446,7 @@ class Program
                         className="flex items-center justify-between p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs font-mono"
                       >
                         <div className="flex items-center gap-2">
-                          <PrinterIcon size={16} className="text-[#4D64E6]" />
+                          <PrinterIcon size={16} className="text-brand" />
                           <span className="font-bold text-slate-800 dark:text-slate-200">{prn}</span>
                         </div>
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700">
@@ -1479,9 +1460,9 @@ class Program
             )}
 
             {/* PowerShell Script Snippet */}
-            <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+            <div className="mt-4 pt-4 border-t border-ink-border dark:border-ink-dark-border">
               <div className="flex justify-between items-center mb-2">
-                <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                <span className="text-xs font-bold text-ink-text-secondary dark:text-ink-dark-text-secondary">
                   PowerShell Diagnostic Command for Counter PC:
                 </span>
                 <button
@@ -1492,7 +1473,7 @@ class Program
                       'PowerShell command'
                     )
                   }
-                  className="text-xs text-[#4D64E6] font-bold hover:underline cursor-pointer flex items-center gap-1"
+                  className="text-xs text-brand font-bold hover:underline cursor-pointer flex items-center gap-1"
                 >
                   <CopyIcon size={12} />
                   <span>Copy PowerShell Command</span>
@@ -1510,13 +1491,13 @@ class Program
           TAB 6: OPENAPI CONTRACT TREE
       ═══════════════════════════════════════════════════════════════ */}
       {activeTab === 'openapi' && (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-xs space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
+        <div className="bg-white dark:bg-ink-dark-surface border border-ink-border dark:border-ink-dark-border rounded-2xl p-6 shadow-sm space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-ink-border dark:border-ink-dark-border">
             <div>
-              <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
+              <h2 className="text-base font-bold text-ink-text dark:text-ink-dark-text">
                 OpenAPI 3.0.3 Specification Contract
               </h2>
-              <p className="text-xs text-slate-500 mt-0.5">
+              <p className="text-xs text-ink-text-secondary dark:text-ink-dark-text-secondary mt-0.5">
                 Versioned machine-readable schema for client generation, CI validation, and Swagger UI
               </p>
             </div>
@@ -1524,7 +1505,7 @@ class Program
             <button
               type="button"
               onClick={handleDownloadOpenApi}
-              className="flex items-center gap-2 px-4 py-2 bg-[#4D64E6] hover:bg-indigo-600 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-[#4D64E6]/25 cursor-pointer"
+              className="flex items-center gap-2 px-4 py-2 bg-brand hover:bg-brand-hover text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
             >
               <DownloadIcon size={14} />
               <span>Download Inklly-OpenAPI-v1.json</span>
@@ -1536,6 +1517,8 @@ class Program
           </pre>
         </div>
       )}
+        </main>
+      </div>
     </div>
   );
 };

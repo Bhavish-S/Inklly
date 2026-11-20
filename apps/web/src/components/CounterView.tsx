@@ -45,6 +45,7 @@ interface Order {
   createdAt: string;
   files: OrderFile[];
   printJobs?: PrintJob[];
+  upiClaim?: { upiReference: string | null; payerApp: string | null; claimedAt: string } | null;
 }
 interface Printer {
   id: string;
@@ -473,7 +474,7 @@ export const CounterView: React.FC<CounterViewProps> = ({ shop, onOpenPrinterSet
                     <span>{order.files.length} file{order.files.length > 1 ? 's' : ''} · {pages} pages</span>
                     {colour && <span className="rounded bg-fuchsia-100 text-fuchsia-700 px-1.5 font-bold">Colour</span>}
                     <span className="ml-auto font-bold text-slate-800 dark:text-slate-100">{formatInr(order.totalAmountPaise)}</span>
-                    <span className={isPaid(order) ? 'text-emerald-600 font-bold' : 'text-amber-600 font-bold'}>{isPaid(order) ? 'Paid' : 'Due'}</span>
+                    <span className={isPaid(order) ? 'text-emerald-600 font-bold' : order.upiClaim ? 'text-violet-600 font-bold' : 'text-amber-600 font-bold'}>{isPaid(order) ? 'Paid' : order.upiClaim ? 'UPI sent' : order.paymentMethod === 'UPI_DIRECT' ? 'UPI' : 'Due'}</span>
                   </div>
                 </button>
               </li>
@@ -588,10 +589,10 @@ const OrderPanel: React.FC<OrderPanelProps> = (props) => {
 
   return (
     <div className="max-w-3xl mx-auto space-y-4 animate-fadeIn">
-      <header className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 flex flex-wrap items-center gap-4">
-        <div className="rounded-2xl bg-indigo-600 text-white px-5 py-3 text-center">
+      <header className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 sm:p-5 grid grid-cols-[auto_1fr] sm:flex sm:flex-wrap items-center gap-3 sm:gap-4">
+        <div className="rounded-2xl bg-indigo-600 text-white px-4 sm:px-5 py-2.5 sm:py-3 text-center">
           <p className="text-[10px] font-bold uppercase tracking-widest opacity-80">Token</p>
-          <p className="font-mono text-4xl font-black leading-none">{token(order)}</p>
+          <p className="font-mono text-3xl sm:text-4xl font-black leading-none">{token(order)}</p>
         </div>
         <div className="min-w-0 flex-1">
           <p className="text-xl font-extrabold text-slate-900 dark:text-white truncate">{order.customerName || 'Customer'}</p>
@@ -599,10 +600,10 @@ const OrderPanel: React.FC<OrderPanelProps> = (props) => {
             {order.customerPhone ? <a className="hover:underline" href={`tel:${order.customerPhone}`}>{order.customerPhone}</a> : 'No phone'} · {minutesAgo(order.createdAt)}
           </p>
         </div>
-        <div className="text-right">
+        <div className="col-span-2 flex items-baseline justify-between gap-3 sm:block sm:text-right border-t border-slate-100 dark:border-slate-800 pt-3 sm:border-0 sm:pt-0">
           <p className="text-3xl font-extrabold text-slate-900 dark:text-white">{formatInr(order.totalAmountPaise)}</p>
           <p className={`text-xs font-bold ${paid ? 'text-emerald-600' : 'text-amber-600'}`}>
-            {paid ? (order.paymentMethod === 'ONLINE_RAZORPAY' ? '✓ Paid online' : '✓ Paid at counter') : order.paymentMethod === 'ONLINE_RAZORPAY' ? 'Online payment pending' : 'Collect at counter'}
+            {paid ? (order.paymentMethod === 'ONLINE_RAZORPAY' ? '✓ Paid online' : '✓ Paid') : order.paymentMethod === 'ONLINE_RAZORPAY' ? 'Online payment pending' : order.paymentMethod === 'UPI_DIRECT' ? (order.upiClaim ? 'Says paid by UPI — check your app' : 'Paying by UPI') : 'Collect at counter'}
           </p>
         </div>
       </header>
@@ -761,13 +762,26 @@ const OrderPanel: React.FC<OrderPanelProps> = (props) => {
             </button>
           ) : (
             <>
+              {order.paymentMethod === 'UPI_DIRECT' && (
+                <div className="rounded-2xl border border-violet-200 bg-violet-50 dark:bg-violet-950/40 dark:border-violet-800 p-3 text-sm text-violet-900 dark:text-violet-100">
+                  {order.upiClaim ? (
+                    <>
+                      <p className="font-extrabold">📱 Customer says they paid {formatInr(order.totalAmountPaise)} by UPI{order.upiClaim.payerApp ? ` (${order.upiClaim.payerApp === 'gpay' ? 'Google Pay' : order.upiClaim.payerApp === 'phonepe' ? 'PhonePe' : order.upiClaim.payerApp})` : ''}</p>
+                      {order.upiClaim.upiReference && <p className="mt-0.5">UTR <span className="font-mono font-bold">{order.upiClaim.upiReference}</span></p>}
+                      <p className="mt-1 text-xs opacity-80">Check the credit in your UPI app or SMS, then press <b>UPI received</b>.</p>
+                    </>
+                  ) : (
+                    <p>Customer chose UPI. If they haven’t paid yet, show your UPI QR below.</p>
+                  )}
+                </div>
+              )}
               <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">Collect <span className="text-2xl font-extrabold text-slate-900 dark:text-white">{formatInr(order.totalAmountPaise)}</span> and hand over</p>
               <div className="grid grid-cols-2 gap-2">
                 <button type="button" onClick={() => props.onCollect('CASH')} disabled={Boolean(busy)} className="min-h-[60px] rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white text-lg font-extrabold shadow-md disabled:opacity-50">
                   {busy === 'CASH' ? 'Saving…' : '💵 Cash received'} <span className="ml-1 text-xs font-mono opacity-70">C</span>
                 </button>
-                <button type="button" onClick={props.showUpi ? () => props.onCollect('UPI') : props.onShowUpi} disabled={Boolean(busy)} className="min-h-[60px] rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-lg font-extrabold shadow-md disabled:opacity-50">
-                  {busy === 'UPI' ? 'Saving…' : props.showUpi ? '✓ UPI received' : '📱 UPI'} <span className="ml-1 text-xs font-mono opacity-70">U</span>
+                <button type="button" onClick={props.showUpi || order.upiClaim ? () => props.onCollect('UPI') : props.onShowUpi} disabled={Boolean(busy)} className="min-h-[60px] rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-lg font-extrabold shadow-md disabled:opacity-50">
+                  {busy === 'UPI' ? 'Saving…' : props.showUpi || order.upiClaim ? '✓ UPI received' : '📱 UPI'} <span className="ml-1 text-xs font-mono opacity-70">U</span>
                 </button>
               </div>
               {props.showUpi && (

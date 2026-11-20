@@ -41,6 +41,21 @@ export function createAdminRoutes(db: DatabaseService, fileStorage: PrivateFileS
   router.post('/incidents', requirePermission('support:manage'), controller.createIncident);
   router.patch('/incidents/:id', requirePermission('support:manage'), controller.updateIncident);
 
+  // Control centre: shops, orders, customers and platform settings.
+  // Reads need platform:view; every write needs platform:manage and is audited.
+  router.get('/shops', requirePermission('platform:view'), controller.listShops);
+  router.get('/shops/:id', requirePermission('platform:view'), controller.getShop);
+  router.patch('/shops/:id', requirePermission('platform:manage'), controller.updateShop);
+  router.post('/shops/:id/status', requirePermission('platform:manage'), controller.setShopStatus);
+  router.post('/shops/:id/agent-pairing/reset', requirePermission('platform:manage'), controller.resetShopAgentPairing);
+  router.get('/orders', requirePermission('platform:view'), controller.listOrders);
+  router.get('/orders/:id', requirePermission('platform:view'), controller.getOrder);
+  router.post('/orders/:id/cancel', requirePermission('platform:manage'), controller.cancelOrder);
+  router.post('/orders/:id/mark-paid', requirePermission('platform:manage'), controller.markOrderPaid);
+  router.get('/customers', requirePermission('platform:view'), controller.listCustomers);
+  router.get('/settings', requirePermission('platform:view'), controller.getPlatformSettings);
+  router.put('/settings', requirePermission('platform:manage'), controller.updatePlatformSettings);
+
   // Subscription management
   router.get('/subscriptions', requirePermission('billing:view'), controller.listSubscriptions);
   router.post('/subscriptions', requirePermission('billing:manage'), controller.createSubscription);

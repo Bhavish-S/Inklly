@@ -7,6 +7,7 @@ interface NavbarProps {
 }
 
 const navLinks = [
+  { label: 'Find a print shop', path: '/shops' },
   { label: 'How it works', path: '/how-it-works' },
   { label: 'Pricing', path: '/pricing' },
   { label: 'Contact', path: '/contact' },

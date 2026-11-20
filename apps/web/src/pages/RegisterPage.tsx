@@ -54,8 +54,8 @@ const PLANS: Record<string, PlanInfo> = {
     annualPrice: 999,
     orderLimit: 300,
     printers: 1,
-    tagline: 'QR and WhatsApp portal for a small single-printer shop',
-    features: ['300 orders/month', '1 printer', 'Manual print release'],
+    tagline: 'QR ordering and a one-click counter for a small shop',
+    features: ['300 QR orders a month', '1 printer', 'Counter, quick sale and receipts', 'Daily reports'],
   },
   'plan-growth': {
     id: 'plan-growth',
@@ -65,8 +65,8 @@ const PLANS: Record<string, PlanInfo> = {
     annualPrice: 1999,
     orderLimit: 1500,
     printers: 2,
-    tagline: 'Payment-triggered automation for growing shops',
-    features: ['1,500 orders/month', '2 printers', 'Payment-received auto print', '7-day trial available'],
+    tagline: 'For growing shops with staff and a busy counter',
+    features: ['1,500 QR orders a month', 'Up to 2 printers', 'Staff accounts', '“Now serving” TV screen', '7-day free trial'],
     popular: true,
   },
   'plan-pro': {
@@ -77,8 +77,8 @@ const PLANS: Record<string, PlanInfo> = {
     annualPrice: 4999,
     orderLimit: 6000,
     printers: 5,
-    tagline: 'Full automatic printing with multiple printers and staff',
-    features: ['6,000 orders/month', '5 printers', 'All-document auto print'],
+    tagline: 'Several printers, staff and UPI payments at scale',
+    features: ['6,000 QR orders a month', 'Up to 5 printers', 'UPI straight to your account', 'Everything in Growth'],
   },
   'plan-scale': {
     id: 'plan-scale',
@@ -88,8 +88,8 @@ const PLANS: Record<string, PlanInfo> = {
     annualPrice: 8999,
     orderLimit: 50000,
     printers: 10,
-    tagline: 'High-volume automation for busy shops and branches',
-    features: ['50,000 orders/month', '10 printers', 'All-document auto print'],
+    tagline: 'For busy campus shops and multi-counter stores',
+    features: ['50,000 QR orders a month', 'Up to 10 printers', 'Multi-counter shops', 'Priority support'],
   },
   'plan-lifetime': {
     id: 'plan-lifetime',
@@ -100,7 +100,7 @@ const PLANS: Record<string, PlanInfo> = {
     orderLimit: 100000,
     printers: 100,
     tagline: 'One payment. Permanent access to every Inklly feature.',
-    features: ['Unlimited orders/month', 'Unlimited printers', 'All-document auto print', 'Permanent lifetime access'],
+    features: ['One-time payment', 'All Scale features', 'No monthly bill', '0% commission on prints'],
   },
 };
 

@@ -91,7 +91,7 @@ export interface Order {
   channel: 'QR_PORTAL' | 'WHATSAPP';
   status: OrderStatus;
   paymentStatus: PaymentStatus;
-  paymentMethod: 'ONLINE_RAZORPAY' | 'ONLINE_STRIPE' | 'CASH_ON_COLLECTION';
+  paymentMethod: 'ONLINE_RAZORPAY' | 'ONLINE_STRIPE' | 'CASH_ON_COLLECTION' | 'UPI_DIRECT';
   totalAmountPaise: number;
   currency: string;
   quoteVersion: string;

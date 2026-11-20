@@ -1,3 +1,5 @@
+import type { NearbyShop, NearbyShopsQuery, ShopProfile, ShopProfileUpdate } from './shop-map-types';
+
 const isProduction = typeof window !== 'undefined' && !['localhost', '127.0.0.1'].includes(window.location.hostname);
 export const API_BASE = (import.meta.env.VITE_API_BASE as string) || (isProduction ? 'https://inklly.onrender.com/api/v1' : 'http://localhost:4000/api/v1');
 
@@ -78,6 +80,17 @@ export const api = {
       throw error;
     }
     return res.json();
+  },
+
+  async claimUpiPayment(orderId: string, details: { upiReference?: string; payerApp?: string }) {
+    const res = await fetch(`${API_BASE}/portal/orders/${encodeURIComponent(orderId)}/upi-claim`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(details),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not save your UPI payment.');
+    return body;
   },
 
   async getOrderStatus(orderId: string) {
@@ -236,6 +249,32 @@ export const api = {
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || 'Could not load the report');
     return body;
+  },
+
+  // Shop map: public nearby search and the merchant's location profile
+  async getNearbyShops(query: NearbyShopsQuery = {}, signal?: AbortSignal): Promise<{ shops: NearbyShop[] }> {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) {
+      if (value !== undefined && value !== null && value !== '') params.set(key, String(value));
+    }
+    const res = await fetch(`${API_BASE}/portal/shops/nearby${params.toString() ? `?${params}` : ''}`, { signal });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not load nearby shops.');
+    return { shops: Array.isArray(body.shops) ? body.shops : [] };
+  },
+
+  async getShopProfile(): Promise<ShopProfile> {
+    const res = await fetch(`${API_BASE}/merchant/shop-profile`, { headers: getHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not load the shop location.');
+    return body as ShopProfile;
+  },
+
+  async updateShopProfile(profile: ShopProfileUpdate): Promise<ShopProfile> {
+    const res = await fetch(`${API_BASE}/merchant/shop-profile`, { method: 'PUT', headers: getHeaders(), body: JSON.stringify(profile) });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Could not save the shop location.');
+    return body as ShopProfile;
   },
 
   async counterRequest(path: string, init: RequestInit = {}) {
