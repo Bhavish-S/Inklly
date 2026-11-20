@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { currentPlatformSettings } from '../services/platform-settings';
 import { DatabaseService, ShopRepository, UserRepository, PricingRepository, LedgerRepository, hashPassword, verifyPassword } from '@inklly/db';
 import { UserRole, ROLE_PRESETS } from '@inklly/shared';
 import { createSessionToken } from '../middleware/session-token';
@@ -161,6 +162,7 @@ export class AuthController {
   }
 
   public signupCheckout = async (req: Request, res: Response) => {
+    if (!currentPlatformSettings(this.db).signupsOpen) return res.status(403).json({ error: 'New shop sign-ups are paused right now. Please contact Inklly support.', signupsClosed: true });
     try {
       const { planId, billingCycle, email } = req.body || {};
       const { plan, amountPaise, cycle } = this.resolveSignupPlan(planId, billingCycle);
@@ -277,6 +279,7 @@ export class AuthController {
   }
 
   public register = async (req: Request, res: Response) => {
+    if (!currentPlatformSettings(this.db).signupsOpen) return res.status(403).json({ error: 'New shop sign-ups are paused right now. Please contact Inklly support.', signupsClosed: true });
     try {
       const {
         orgName,

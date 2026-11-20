@@ -1,4 +1,6 @@
 import React, { lazy, Suspense, useState, useEffect } from 'react';
+import { MapGate, SignupGate } from './components/PlatformGates';
+import { PlatformBanner } from './components/PlatformBanner';
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
 import { FloatingWhatsApp } from './components/FloatingWhatsApp';
@@ -157,6 +159,7 @@ export const App: React.FC = () => {
   return (
     <div className="min-h-screen flex flex-col bg-ink-app dark:bg-ink-dark-app text-ink-text dark:text-ink-dark-text transition-colors duration-150">
       {/* Primary Sticky Website Navbar (Hidden in Standalone Workspace/Portal mode) */}
+      <PlatformBanner />
       {!isStandaloneApp && <Navbar currentPath={currentPath} onNavigate={navigate} />}
 
       {/* Main Content Router */}
@@ -181,7 +184,7 @@ export const App: React.FC = () => {
         )}
 
         {/* Find a print shop near you (map) */}
-        {currentPath === '/shops' && <FindShopsPage onNavigate={navigate} />}
+        {currentPath === '/shops' && <MapGate onHome={() => navigate('/')}><FindShopsPage onNavigate={navigate} /></MapGate>}
 
         {/* Route 7: Contact */}
         {currentPath === '/contact' && (
@@ -195,7 +198,7 @@ export const App: React.FC = () => {
 
         {/* Route 9: Register */}
         {currentPath === '/register' && (
-          <RegisterPage onNavigate={navigate} onRegisterSuccess={() => navigate('/merchant')} />
+          <SignupGate onHome={() => navigate('/')}><RegisterPage onNavigate={navigate} onRegisterSuccess={() => navigate('/merchant')} /></SignupGate>
         )}
         {(currentPath === '/activate-owner' || currentPath === '/accept-invitation') && <AcceptInvitationPage onNavigate={navigate} />}
 

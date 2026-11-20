@@ -31,6 +31,7 @@ export interface PublicPlatformConfig {
   featureFlags: Record<FeatureFlagKey, boolean>;
   supportContacts: { phone: string; whatsapp: string };
   mapDefaults: { city: string; latitude: number; longitude: number };
+  signupsOpen: boolean;
 }
 
 // Geographic centre of India: a neutral starting point until the owner sets a city.
@@ -230,9 +231,19 @@ export function toPublicPlatformConfig(settings: PlatformSettings): PublicPlatfo
     featureFlags: { ...settings.featureFlags },
     supportContacts: { ...settings.supportContacts },
     mapDefaults: { ...settings.mapDefaults },
+    signupsOpen: settings.signupsOpen,
   };
 }
 
 export function getPublicPlatformConfig(db: DatabaseService): PublicPlatformConfig {
   return toPublicPlatformConfig(readPlatformSettings(db).settings);
+}
+
+/** Settings as they apply right now; falls back to defaults if the table cannot be read. */
+export function currentPlatformSettings(db: DatabaseService): PlatformSettings {
+  try { return readPlatformSettings(db).settings; } catch { return clone(DEFAULT_PLATFORM_SETTINGS); }
+}
+
+export function maintenanceMessage(settings: PlatformSettings): string {
+  return settings.maintenance.message.trim() || 'Inklly is under maintenance. Please try again shortly.';
 }

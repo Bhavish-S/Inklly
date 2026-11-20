@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { currentPlatformSettings } from '../services/platform-settings';
 import { PortalController } from '../controllers/portal-controller';
 import { DatabaseService, OrderRepository, PricingRepository, ShopRepository } from '@inklly/db';
 import { ShopPaymentCredentialsService } from '../services/shop-payment-credentials';
@@ -13,7 +14,10 @@ export function createPortalRoutes(db: DatabaseService, fileStorage: PrivateFile
 
   const controller = new PortalController(db, shopRepo, pricingRepo, orderRepo, new ShopPaymentCredentialsService(db), fileStorage);
 
-  router.get('/shops/nearby', createNearbyRateLimit(), createNearbyShopsHandler(db));
+  router.get('/shops/nearby', createNearbyRateLimit(), (req, res, next) => {
+    if (!currentPlatformSettings(db).featureFlags.map_discovery) return res.json({ shops: [], disabled: true });
+    return next();
+  }, createNearbyShopsHandler(db));
   router.get('/platform-config', controller.getPlatformConfig);
   router.get('/shop/:shop_code/display', controller.getDisplayBoard);
   router.get('/shop/:shop_code', controller.getShopByCode);

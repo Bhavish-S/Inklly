@@ -189,6 +189,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
           counter: data.address || '',
           rates: data.rates,
           onlinePaymentAvailable: Boolean(data.onlinePaymentAvailable),
+          maxUploadMb: Number(data.maxUploadMb) || 25,
           upiDirectAvailable: Boolean(data.upiDirectAvailable),
           acceptCashOnCollection: data.acceptCashOnCollection !== false,
           acceptingOrders: data.acceptingOrders !== false,
@@ -295,9 +296,9 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
 
     setUploadError(null);
     const fileList = Array.from(files);
-    const oversized = fileList.find((file) => file.size > 25 * 1024 * 1024);
+    const oversized = fileList.find((file) => file.size > (shop?.maxUploadMb || 25) * 1024 * 1024);
     if (oversized) {
-      setUploadError(`File "${oversized.name}" exceeds the 25 MB limit. Please select a smaller file.`);
+      setUploadError(`File "${oversized.name}" exceeds the ${shop?.maxUploadMb || 25} MB limit. Please select a smaller file.`);
       return false;
     }
 
@@ -482,7 +483,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
     const sourceFile = document.originalFile || document.file;
     if (!sourceFile) throw new Error('The original file is no longer available. Remove it and upload it again.');
     const { file: transformed, upload: uploaded } = await transformAndConfirmUpload(sourceFile, edits, async (file) => {
-      if (file.size > 25 * 1024 * 1024) throw new Error('The edited file exceeds the 25 MB upload limit. Choose a smaller crop or use the original file.');
+      if (file.size > (shop?.maxUploadMb || 25) * 1024 * 1024) throw new Error('The edited file is over the upload limit. Choose a smaller crop or use the original file.');
       return api.uploadDocument({
         fileName: file.name,
         fileData: await fileToDataUrl(file),
@@ -1233,7 +1234,7 @@ export const CustomerPortalOrderView: React.FC<CustomerPortalOrderViewProps> = (
             <h2 className="text-[15px] font-extrabold text-slate-900 dark:text-white">
               {documents.length ? 'Add more files' : 'What would you like to print?'}
             </h2>
-            <p className="text-xs text-slate-500 mt-0.5 mb-3">PDF, photos or screenshots · up to 25 MB each</p>
+            <p className="text-xs text-slate-500 mt-0.5 mb-3">PDF, photos or screenshots · up to {shop.maxUploadMb || 25} MB each</p>
             <input
               ref={fileInputRef}
               type="file"

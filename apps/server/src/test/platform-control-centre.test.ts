@@ -83,9 +83,9 @@ describe('platform control centre: settings, shops, orders, customers', { concur
     assert.equal(config.announcement, null);
     assert.deepEqual(config.featureFlags, { map_discovery: true, upi_direct: true, razorpay_online: true });
     assert.equal(typeof config.mapDefaults.latitude, 'number');
-    assert.deepEqual(Object.keys(config).sort(), ['announcement', 'featureFlags', 'maintenance', 'mapDefaults', 'supportContacts']);
+    assert.deepEqual(Object.keys(config).sort(), ['announcement', 'featureFlags', 'maintenance', 'mapDefaults', 'signupsOpen', 'supportContacts']);
     assert.equal(config.maxUploadMb, undefined, 'internal limits are not public');
-    assert.equal(config.signupsOpen, undefined);
+    assert.equal(config.signupsOpen, true, 'the sign-up page needs to know whether sign-ups are open');
   });
 
   it('protects the settings endpoints by role and permission', async () => {

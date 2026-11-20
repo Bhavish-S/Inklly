@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { usePlatformConfig } from '../platform-config';
 import { Logo } from './icons';
 
 interface NavbarProps {
@@ -16,6 +17,8 @@ const navLinks = [
 /** Site header: three links, sign in, and one primary action. */
 export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const platform = usePlatformConfig();
+  const links = navLinks.filter((link) => link.path !== '/shops' || platform?.featureFlags.map_discovery !== false);
   const [isScrolled, setIsScrolled] = useState(false);
 
   useEffect(() => {
@@ -39,7 +42,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate }) => {
         </button>
 
         <div className="hidden md:flex items-center gap-1">
-          {navLinks.map((link) => (
+          {links.map((link) => (
             <button
               key={link.path}
               type="button"
@@ -72,7 +75,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate }) => {
 
       {mobileMenuOpen && (
         <div className="md:hidden border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-5 py-4 space-y-1 animate-fadeIn">
-          {navLinks.map((link) => (
+          {links.map((link) => (
             <button key={link.path} type="button" onClick={() => go(link.path)} className="w-full text-left min-h-[48px] px-3 rounded-xl text-base font-semibold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-900">
               {link.label}
             </button>

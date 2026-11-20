@@ -7,6 +7,7 @@ import { ShopPaymentCredentialsService } from '../services/shop-payment-credenti
 import { PrivateFileStorage } from '../services/private-file-storage';
 import { inspectDocument } from '../services/document-page-count';
 import { getPublicPlatformConfig } from '../services/platform-settings';
+import { currentPlatformSettings, maintenanceMessage } from '../services/platform-settings';
 import { buildUpiDetails, getUpiClaim, recordUpiClaim, upiDirectAvailable } from '../services/upi-direct';
 
 const AGENT_SUPPORTED_PAPER_SIZES = new Set(['A4', 'A3', 'PLAIN']);
@@ -111,7 +112,8 @@ export class PortalController {
       acceptCashOnCollection: shop.acceptCashOnCollection,
       upiDirectAvailable: shop.currency === 'INR' && upiDirectAvailable(this.db, shop.id),
       portalSettings,
-      onlinePaymentAvailable: shop.currency === 'INR' && paymentStatus.configured && paymentStatus.webhookConfigured && paymentStatus.verified,
+      maxUploadMb: Math.min(Math.max(1, Math.min(35, Number(process.env.MAX_FILE_SIZE_MB) || 25)), currentPlatformSettings(this.db).maxUploadMb),
+      onlinePaymentAvailable: currentPlatformSettings(this.db).featureFlags.razorpay_online && shop.currency === 'INR' && paymentStatus.configured && paymentStatus.webhookConfigured && paymentStatus.verified,
       acceptingOrders: operating.acceptingOrders,
       pauseMessage: operating.pauseMessage,
       queue: getQueueEstimate(this.db, shop.id),
@@ -236,6 +238,11 @@ export class PortalController {
       return res.status(402).json({ error: 'This shop is not currently accepting orders.' });
     }
     const shopId = shop.id;
+    const platform = currentPlatformSettings(this.db);
+    if (platform.maintenance.active) return res.status(503).json({ error: maintenanceMessage(platform), maintenance: true });
+    if (normalizedPaymentMethod === 'ONLINE_RAZORPAY' && !platform.featureFlags.razorpay_online) {
+      return res.status(422).json({ error: 'Online card checkout is switched off. Pay by UPI or at the counter.' });
+    }
 
     if (!['CASH_ON_COLLECTION', 'ONLINE_RAZORPAY', 'UPI_DIRECT'].includes(normalizedPaymentMethod)) {
       return res.status(400).json({ error: 'Unsupported payment method.' });
@@ -467,12 +474,15 @@ export class PortalController {
 
       // Strip Base64 header if present (e.g. "data:application/pdf;base64,")
       const base64Content = fileData.includes('base64,') ? fileData.split('base64,')[1] : fileData;
-      const maxFileBytes = Math.max(1, Math.min(35, Number(process.env.MAX_FILE_SIZE_MB) || 25)) * 1024 * 1024;
+      const platform = currentPlatformSettings(this.db);
+      if (platform.maintenance.active) return res.status(503).json({ error: maintenanceMessage(platform), maintenance: true });
+      const maxUploadMb = Math.min(Math.max(1, Math.min(35, Number(process.env.MAX_FILE_SIZE_MB) || 25)), platform.maxUploadMb);
+      const maxFileBytes = maxUploadMb * 1024 * 1024;
       if (base64Content.length > Math.ceil(maxFileBytes * 4 / 3) + 8 || !/^[A-Za-z0-9+/]*={0,2}$/.test(base64Content)) {
         return res.status(413).json({ error: 'File is too large or has invalid encoding.' });
       }
       const buffer = Buffer.from(base64Content, 'base64');
-      if (buffer.length === 0 || buffer.length > maxFileBytes) return res.status(413).json({ error: 'File exceeds the upload size limit.' });
+      if (buffer.length === 0 || buffer.length > maxFileBytes) return res.status(413).json({ error: `Files can be up to ${maxUploadMb} MB.` });
       let inspected;
       try { inspected = await inspectDocument(buffer); }
       catch (error: any) { return res.status(415).json({ error: error.message || 'Upload a valid PDF, JPEG, or PNG file.' }); }

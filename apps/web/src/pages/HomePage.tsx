@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { usePlatformConfig } from '../platform-config';
 import { Reveal } from '../components/motion';
 
 interface HomePageProps {
@@ -133,6 +134,7 @@ const FAQS = [
 ];
 
 export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
+  const platform = usePlatformConfig();
   const [openFaq, setOpenFaq] = useState<number | null>(0);
 
   return (
@@ -165,7 +167,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
                 <li key={item} className="flex items-center gap-1.5"><span className="text-emerald-500">✓</span>{item}</li>
               ))}
             </ul>
-            <button
+            {platform?.featureFlags.map_discovery !== false && <button
               type="button"
               onClick={() => onNavigate('/shops')}
               className="group mt-8 w-full sm:w-auto flex items-center gap-3 rounded-2xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50/80 dark:bg-emerald-950/30 px-4 py-3 text-left hover:border-emerald-400 hover:shadow-md transition"
@@ -178,7 +180,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
                 <span className="block text-xs text-slate-600 dark:text-slate-400">Need prints? See nearby shops on the map, upload and pay from your phone.</span>
               </span>
               <span className="ml-auto text-emerald-600 dark:text-emerald-400 font-black transition-transform group-hover:translate-x-1" aria-hidden="true">→</span>
-            </button>
+            </button>}
           </div>
           <HeroScene />
         </div>

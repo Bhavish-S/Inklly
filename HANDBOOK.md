@@ -161,7 +161,16 @@ Sections: Overview (live KPIs, GMV, alerts), Shops (search, drawer with owner/pl
 
 Key endpoints: `GET /overview`, `GET|PATCH /shops/:id`, `POST /shops/:id/status`, `POST /shops/:id/agent-pairing/reset`, `GET /orders`, `POST /orders/:id/cancel`, `POST /orders/:id/mark-paid`, `GET /customers`, `GET|PUT /settings`. Public subset: `GET /api/v1/portal/platform-config` (announcement, maintenance, feature flags, support contacts, map defaults; cached 60 s).
 
-Settings stored in `platform_settings` (one row per key, JSON value): `announcement`, `maintenance`, `map_defaults`, `support_contacts`, `max_upload_mb`, `signups_open`, `feature_flags {map_discovery, upi_direct, razorpay_online}`. **Currently enforced:** `upi_direct`, and `map_defaults` (used by `/shops`). **Stored but not yet enforced** (next task): announcement banner display, maintenance mode, `max_upload_mb`, `signups_open`, `map_discovery`, `razorpay_online`.
+Settings stored in `platform_settings` (one row per key, JSON value): `announcement`, `maintenance`, `map_defaults`, `support_contacts`, `max_upload_mb`, `signups_open`, `feature_flags {map_discovery, upi_direct, razorpay_online}`. All settings take effect (`services/platform-settings.ts` → `currentPlatformSettings(db)`):
+- `announcement` → dismissible banner on every page (`components/PlatformBanner.tsx`).
+- `maintenance` → banner, and the API refuses uploads and new orders with HTTP 503 and the admin's message.
+- `max_upload_mb` → upload limit (never above the server's `MAX_FILE_SIZE_MB`, max 35); the portal shows and checks it.
+- `signups_open` → `POST /auth/register` and `/auth/signup-checkout` return 403; `/register` shows a "paused" notice.
+- `feature_flags.map_discovery` → nearby API returns `{shops:[], disabled:true}`; map links hidden; `/shops` shows a notice.
+- `feature_flags.upi_direct` → hides/refuses Pay-by-UPI.
+- `feature_flags.razorpay_online` → `onlinePaymentAvailable:false` and Razorpay orders refused.
+- `map_defaults`, `support_contacts` → `/shops` start position, sign-up notice contact.
+Tested in `apps/server/src/test/platform-settings-enforced.test.ts`.
 
 ## 7. Deploy
 
